@@ -1,5 +1,5 @@
-# KMI-JobShopSim
-**Gym Simulation Environment for Job Shop Problems using Salabim**
+# PyForceSim
+**Gym Simulation Environments for Manufacturing Systems using Salabim**
 
 *currently in progress*
 
