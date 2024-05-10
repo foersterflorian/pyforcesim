@@ -8,5 +8,5 @@ class NoAllocationAgentAssignedError(Exception):
     """error that describes that a system has no assigned allocation agent"""
     pass
 
-class ViolateStartingCondition(Exception):
-    """error occuring if a starting condition of a ConditionSetter is not met"""
+class ViolationStartingConditionError(Exception):
+    """error occurring if a starting condition of a ConditionSetter is not met"""

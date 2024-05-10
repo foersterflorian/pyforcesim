@@ -1,48 +1,19 @@
 from __future__ import annotations
-from typing import Any
-from collections.abc import Generator
+from typing import Final
 import datetime
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
 from datetime import tzinfo as TZInfo
-from datetime import timezone
+from datetime import timezone as Timezone
 from zoneinfo import ZoneInfo
 
 from pandas import DataFrame
 
 # local time-zone, currently static
-TIMEZONE_CEST = ZoneInfo('Europe/Berlin')
-TIMEZONE_UTC = timezone.utc
-DEFAULT_DATETIME: Datetime = Datetime(datetime.MINYEAR, 1, 1, tzinfo=TIMEZONE_UTC)
+TIMEZONE_CEST: Final[ZoneInfo] = ZoneInfo('Europe/Berlin')
+TIMEZONE_UTC: Final[Timezone] = Timezone.utc
+DEFAULT_DATETIME: Final[Datetime] = Datetime(datetime.MINYEAR, 1, 1, tzinfo=TIMEZONE_UTC)
 
-
-# utility functions
-def flatten(
-    lst_tpl: list[Any] | tuple[Any, ...]
-) -> Generator[Any, None, None]:
-    """flattens an arbitrarily nested list or tuple
-    https://stackoverflow.com/questions/2158395/flatten-an-irregular-arbitrarily-nested-list-of-lists 
-
-    Parameters
-    ----------
-    lst_tpl : list[Any] | tuple[Any, ...]
-        arbitrarily nested list or tuple
-
-    Yields
-    ------
-    Generator[Any, None, None]
-        non-nested list or tuple
-    """
-    
-    for x in lst_tpl:
-        # only flatten lists and tuples
-        if isinstance(x, (list, tuple)):
-            yield from flatten(x)
-        else:
-            yield x
-
-
-### date and time handling ###
 
 class DTManager:
     

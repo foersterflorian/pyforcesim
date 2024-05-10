@@ -1,0 +1,33 @@
+[project]
+name = "pyforcesim"
+version = "0.1.0"
+description = "Discrete-event simulation package for reinforcement learning environments based on Salabim"
+authors = [
+    {name = "Florian Förster", email = "florian.foerster@mb.tu-chemnitz.de"},
+]
+dependencies = [
+    "numpy>=1.26.4",
+    "pandas>=2.2.2",
+    "salabim<=24.0.2",
+    "plotly>=5.22.0",
+    "quart>=0.19.5",
+    "dash-extensions>=1.0.15",
+    "websocket-client>=1.8.0",
+]
+requires-python = ">=3.11"
+readme = "README.md"
+license = {text = "MIT"}
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+
+[tool.pdm]
+distribution = true
+
+[tool.pdm.dev-dependencies]
+notebooks = [
+    "jupyterlab>=4.2.0",
+    "ipywidgets>=8.1.2",
+]

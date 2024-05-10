@@ -1,30 +1,31 @@
-from dash_extensions.enrich import Dash, DashProxy, html, dcc, Output, Input
-from dash_extensions import WebSocket
-from plotly.graph_objs._figure import Figure as PlotlyFigure
-import plotly.io
+from typing import Final
 import webbrowser
 import time
 import threading
-import logging
-from .websocket_server import WS_HOST, WS_PORT, WS_ROUTE
+
+from dash_extensions.enrich import DashProxy, html, dcc, Output, Input
+from dash_extensions import WebSocket
+import plotly.io
+
+from pyforcesim.dashboard.websocket_server import WS_HOST, WS_PORT, WS_ROUTE
 
 # ** configuration
-HOST: str = '127.0.0.1'
-PORT: int = 8081
-URL: str = f'http://{HOST}:{PORT}'
-WS_URL: str = f'ws://{WS_HOST}:{WS_PORT}/{WS_ROUTE}'
+HOST: Final[str] = '127.0.0.1'
+PORT: Final[str] = '8081'
+URL: Final[str] = f'http://{HOST}:{PORT}'
+WS_URL: Final[str] = f'ws://{WS_HOST}:{WS_PORT}/{WS_ROUTE}'
 
 
 # ** Dash Application
-app = DashProxy(__name__, prevent_initial_callbacks=True)
+app = DashProxy(__name__, prevent_initial_callbacks=True) # type: ignore (error in DashProxy definition)
 
-gantt_chart = dcc.Graph(id='gantt_chart')
-gantt_chart.figure = PlotlyFigure()
+# TODO remove
+#gantt_chart = dcc.Graph(id='gantt_chart')
+#gantt_chart.figure = PlotlyFigure()
 
 app.layout = html.Div([
     html.H1(children='Dashboard SimRL', style={'textAlign':'center'}),
-    gantt_chart,
-    #WebSocket(id="ws", url="ws://127.0.0.1:5000/gantt_chart"),
+    dcc.Graph(id='gantt_chart'),
     WebSocket(id="ws", url=WS_URL),
 ])
 
@@ -37,9 +38,7 @@ def update_gantt_chart(
     message: dict[str, str],
 ):
     gantt_chart_json = message['data']
-    #print(f"{type(gantt_chart_json)=}")
     gantt_chart = plotly.io.from_json(gantt_chart_json)
-    #print(f"Response from websocket")
     return gantt_chart
 
 # ** dashboard management

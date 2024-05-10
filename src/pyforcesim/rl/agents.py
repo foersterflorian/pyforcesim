@@ -1,17 +1,17 @@
 from __future__ import annotations
-import numpy as np
-import numpy.typing as npt
-from typing import TYPE_CHECKING
-import typing
-from datetime import timedelta as Timedelta
-import logging
-import statistics
+from typing import TYPE_CHECKING, cast
 # TODO: remove later if not needed
 import random
 import sys
+from datetime import timedelta as Timedelta
+import logging
+import statistics
+
+import numpy as np
+import numpy.typing as npt
 
 if TYPE_CHECKING:
-    from .sim_env import (
+    from pyforcesim.simulation.environment import (
         SimulationEnvironment, 
         System,
         InfStructMonitor,
@@ -221,7 +221,7 @@ class AllocationAgent(Agent):
         for i, res in enumerate(self._assoc_proc_stations):
             # T1 build feature vector for one machine
             # !! type of stats monitor not clear
-            monitor = typing.cast(InfStructMonitor, res.stat_monitor)
+            monitor = cast('InfStructMonitor', res.stat_monitor)
             # station group identifier should be the system's one 
             # because custom IDs can be non-numeric which is bad for an agent
             # use only first identifier although multiple values are possible
@@ -306,6 +306,7 @@ class AllocationAgent(Agent):
             logger_agents.debug(f"++++++ {stations=}")
             # calculate mean utilisation of all processing stations associated
             # with the corresponding operation and agent's action
+            # !! inheritance scheme not sufficient, couple of type mismatches arising
             util_vals: list[float] = [ps.stat_monitor.utilisation for ps in stations]
             logger_agents.debug(f"++++++ {util_vals=}")
             util_mean = statistics.mean(util_vals)

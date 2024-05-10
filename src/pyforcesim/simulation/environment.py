@@ -1,13 +1,17 @@
 # typing and data structures
 from __future__ import annotations
-import salabim as sim
-from salabim import Queue, State
-from typing import TypeAlias, Self, Any, NewType, Literal, overload
 import typing
+from typing import (
+    TypeAlias,
+    Self,
+    Any,
+    NewType, 
+    Literal,
+    cast,
+    overload,
+)
 from collections import OrderedDict, deque
 from collections.abc import Iterable, Sequence, Generator, Iterator
-from pandas import DataFrame, Series
-# packages: standard library
 import sys
 import logging
 import random
@@ -16,22 +20,40 @@ from datetime import timedelta as Timedelta
 from operator import attrgetter
 from functools import lru_cache
 import multiprocessing as mp
-# packages: external
-import numpy as np
+
+import salabim as sim
+from salabim import Queue, State
+from pandas import DataFrame, Series
 import pandas as pd
 import plotly.express as px
 from plotly.graph_objs._figure import Figure as PlotlyFigure
 import plotly.io
 from websocket import create_connection
-# packages: internal
-from .loads import RandomJobGenerator, OrderTime, ProductionSequence
-from .utils import (flatten, DTManager, 
-                    TIMEZONE_UTC, TIMEZONE_CEST, 
-                    DEFAULT_DATETIME, adjust_db_dates_local_tz)
-from .agents import Agent, AllocationAgent, SequencingAgent
-from .errors import AssociationError, ViolateStartingCondition
-from .dashboard.dashboard import URL, WS_URL, start_dashboard
-from .dashboard.websocket_server import start_websocket_server
+
+from pyforcesim.errors import (
+    AssociationError,
+    ViolationStartingConditionError,
+)
+from pyforcesim.common import flatten
+from pyforcesim.datetime import (
+    DTManager,
+    adjust_db_dates_local_tz,
+    TIMEZONE_UTC,
+    TIMEZONE_CEST,
+    DEFAULT_DATETIME,
+)
+from pyforcesim.simulation.loads import (
+    RandomJobGenerator,
+    OrderTime, 
+    ProductionSequence,
+)
+from pyforcesim.rl.agents import Agent, AllocationAgent, SequencingAgent
+from pyforcesim.dashboard.dashboard import (
+    URL,
+    WS_URL,
+    start_dashboard,
+)
+from pyforcesim.dashboard.websocket_server import start_websocket_server
 
 
 # set Salabim to yield mode (using yield is mandatory)
@@ -797,7 +819,7 @@ class InfrastructureManager:
             case 'Resource':
                 id_prop = 'res_id'
         
-        custom_id = typing.cast(CustomID, self.lookup_subsystem_info(
+        custom_id = cast(CustomID, self.lookup_subsystem_info(
             subsystem_type=subsystem_type,
             lookup_val=system_ID,
             lookup_property=id_prop,
@@ -812,7 +834,7 @@ class InfrastructureManager:
         custom_ID: CustomID,
     ) -> SystemID:
         
-        system = typing.cast(System, self.lookup_subsystem_info(
+        system = cast(System, self.lookup_subsystem_info(
             subsystem_type=subsystem_type,
             lookup_val=custom_ID,
             lookup_property='custom_id',
@@ -1383,15 +1405,17 @@ class Dispatcher:
         
         # corresponding execution system in which the operation is performed
         # no pre-determined assignment of processing stations
-        exec_system = typing.cast(ProductionArea, infstruct_mgr.lookup_subsystem_info(
-                                                    subsystem_type=EXEC_SYSTEM_TYPE,
-                                                    lookup_val=exec_system_identifier))
+        exec_system = cast(ProductionArea, 
+                           infstruct_mgr.lookup_subsystem_info(
+                               subsystem_type=EXEC_SYSTEM_TYPE,
+                               lookup_val=exec_system_identifier))
         # if target station group is specified, get instance
         target_station_group: StationGroup | None
         if target_station_group_identifier is not None:
-            target_station_group = typing.cast(StationGroup, infstruct_mgr.lookup_subsystem_info(
-                                                    subsystem_type='StationGroup',
-                                                    lookup_val=target_station_group_identifier))
+            target_station_group = cast(StationGroup,
+                                        infstruct_mgr.lookup_subsystem_info(
+                                            subsystem_type='StationGroup',
+                                            lookup_val=target_station_group_identifier))
             # validity check: only target stations allowed which are 
             # part of the current execution system
             if target_station_group.system_id not in exec_system:
@@ -1899,44 +1923,44 @@ class Dispatcher:
             case 'FIFO':
                 # salabim queue pops first entry if no index is specified, 
                 # not last like in Python
-                job = typing.cast(Job, queue.pop())
+                job = cast(Job, queue.pop())
             # last in, last out
             case 'LIFO':
                 # salabim queue pops first entry if no index is specified, 
                 # not last like in Python
-                job = typing.cast(Job, queue.pop(-1))
+                job = cast(Job, queue.pop(-1))
             # shortest processing time
             case 'SPT':
                 # choose job with shortest processing time
-                temp = queue.as_list()
-                job = typing.cast(Job, min(temp, key=attrgetter('current_proc_time')))
+                temp = cast(list[Job], queue.as_list())
+                job = min(temp, key=attrgetter('current_proc_time'))
                 # remove job from original queue
                 queue.remove(job)
             # longest processing time
             case 'LPT':
                 # choose job with longest processing time
-                temp = queue.as_list()
-                job = typing.cast(Job, max(temp, key=attrgetter('current_proc_time')))
+                temp = cast(list[Job], queue.as_list())
+                job = max(temp, key=attrgetter('current_proc_time'))
                 # remove job from original queue
                 queue.remove(job)
             # shortest setup time
             case 'SST':
                 # choose job with shortest setup time
-                temp = queue.as_list()
-                job = typing.cast(Job, min(temp, key=attrgetter('current_setup_time')))
+                temp = cast(list[Job], queue.as_list())
+                job = min(temp, key=attrgetter('current_setup_time'))
                 # remove job from original queue
                 queue.remove(job)
             # longest setup time
             case 'LST':
                 # choose job with longest setup time
-                temp = queue.as_list()
-                job = typing.cast(Job, max(temp, key=attrgetter('current_setup_time')))
+                temp = cast(list[Job], queue.as_list())
+                job = max(temp, key=attrgetter('current_setup_time'))
                 # remove job from original queue
                 queue.remove(job)
             case 'PRIO':
                 # choose job with highest priority
-                temp = queue.as_list()
-                job = typing.cast(Job, max(temp, key=attrgetter('prio')))
+                temp = cast(list[Job], queue.as_list())
+                job = max(temp, key=attrgetter('prio'))
                 # remove job from original queue
                 queue.remove(job)
         
@@ -2070,7 +2094,10 @@ class Dispatcher:
 
         if self._env.debug_dashboard:
             # send by websocket
-            fig_json = plotly.io.to_json(fig=fig)
+            fig_json = cast(str | None, plotly.io.to_json(fig=fig))
+            if fig_json is None:
+                raise ValueError(("Could not convert figure to JSON. "
+                                  "Returned >>None<<."))
             self._env.ws_con.send(fig_json)
         else:
             fig.show()
@@ -2297,6 +2324,16 @@ class System(OrderedDict):
         """
         return tuple(self.values())
     
+    def as_set(self) -> set[System]:
+        """output the associated subsystems as set
+
+        Returns
+        -------
+        set[System]
+            set of associated subsystems
+        """
+        return set(self.values())
+    
     def add_supersystem(
         self,
         supersystem: System,
@@ -2368,6 +2405,20 @@ class System(OrderedDict):
     ) -> tuple[InfrastructureObject, ...] | tuple[ProcessingStation, ...]:
         ...
     
+    @overload
+    def lowest_level_subsystems(
+        self,
+        only_processing_stations: Literal[True],
+    ) -> tuple[ProcessingStation, ...]:
+        ...
+    
+    @overload
+    def lowest_level_subsystems(
+        self,
+        only_processing_stations: Literal[False] = ...,
+    ) -> tuple[InfrastructureObject, ...]:
+        ...
+    
     #@lru_cache(maxsize=3)
     def lowest_level_subsystems(
         self,
@@ -2393,30 +2444,32 @@ class System(OrderedDict):
         """
         
         if self._abstraction_level == 0:
-            raise RuntimeError(f"Can not obtain lowest level subsystems from lowest hierarchy level objects.")
+            raise RuntimeError(("Can not obtain lowest level subsystems from "
+                               "lowest hierarchy level objects."))
         
         remaining_abstraction_level = self._abstraction_level - 1
-        subsystems = self.as_list()
+        subsystems = self.as_set()
         
         while remaining_abstraction_level > 0:
-            temp: list[System] = []
+            temp: set[System] = set()
             
             for subsystem in subsystems:
-                children = subsystem.as_list()
-                temp.append(children)
-                
-            subsystems = temp.copy()
+                children = subsystem.as_set()
+                temp |= children
+            
+            #subsystems = cast(set[System], set(flatten(temp)))
+            subsystems = temp
             remaining_abstraction_level -= 1
         
         # flatten list and remove duplicates by making a set
-        low_lev_subsystems_set: set[InfrastructureObject] = set(flatten(subsystems))
+        low_lev_subsystems_set = cast(set[InfrastructureObject], set(flatten(subsystems)))
         # filter only processing stations if option chosen
+        low_lev_subsystems_lst: list[InfrastructureObject] | list[ProcessingStation]
         if only_processing_stations:
             low_lev_subsystems_lst = filter_processing_stations(
                                         infstruct_obj_collection=low_lev_subsystems_set)
         else:
-            # obtain list and 
-            low_lev_subsystems_lst: list[InfrastructureObject] = list(low_lev_subsystems_set)
+            low_lev_subsystems_lst = list(low_lev_subsystems_set)
         
         # sort list by system ID (ascending), so that the order is always the same
         low_lev_subsystems_lst = sorted(low_lev_subsystems_lst, 
@@ -2538,18 +2591,19 @@ class Monitor:
         # all possible/allowed states
         self.states_possible: set[str] = set(possible_states)
         # always add states 'INIT', 'FINISH', 'TEMP' for control flow
-        if not 'INIT' in self.states_possible:
+        if 'INIT' not in self.states_possible:
             self.states_possible.add('INIT')
-        if not 'FINISH' in self.states_possible:
+        if 'FINISH' not in self.states_possible:
             self.states_possible.add('FINISH')
-        if not 'TEMP' in self.states_possible:
+        if 'TEMP' not in self.states_possible:
             self.states_possible.add('TEMP')
             
         # check integrity of the given state
         if init_state in self.states_possible:
             self.state_current: str = init_state
         else:
-            raise ValueError(f"The state {state} is not allowed. Must be one of {self.states_possible}")
+            raise ValueError((f"The state {init_state} is not allowed. "
+                             f"Must be one of {self.states_possible}"))
         
         # boolean indicator if a state is set
         self.state_status: dict[str, bool] = {}
@@ -2687,6 +2741,8 @@ class Monitor:
             self.state_durations = self.state_durations_as_df()
         
         # [TOTAL ACTIVE TIME]
+        if self.state_durations is None:
+            raise RuntimeError("State durations are not available. Can not calculate KPIs.")
         self.time_active = self.state_durations.loc[:, 'abs [seconds]'].sum()
     
     def state_durations_as_df(self) -> DataFrame:
@@ -2734,10 +2790,10 @@ class Monitor:
         # Plotly can not handle Timedelta objects properly, only Datetimes
         calc_td = dt_mgr.timedelta_from_val(val=1., time_unit=time_unit)
         calc_col: str = f'total time [{time_unit}]'
-        data[calc_col] = data['total time'] / calc_td
+        data[calc_col] = data['total time'] / calc_td # type: ignore
         data = data.sort_index(axis=0, kind='stable')
         
-        fig: PlotlyFigure = px.bar(data, y=calc_col, text_auto='.2f')
+        fig: PlotlyFigure = px.bar(data, y=calc_col, text_auto='.2f') # type: ignore wrong type hint in Plotly
         fig.update_layout(title=f'State Time Distribution of {self._target_object}', showlegend=False)
         fig.update_yaxes(title=dict({'text': calc_col}))
         
@@ -2769,7 +2825,7 @@ class Monitor:
         # Plotly can not handle Timedelta objects properly, only Datetimes
         calc_td = dt_mgr.timedelta_from_val(val=1., time_unit=time_unit)
         calc_col: str = f'total time [{time_unit}]'
-        data[calc_col] = data['total time'] / calc_td
+        data[calc_col] = data['total time'] / calc_td # type: ignore
         data = data.sort_index(axis=0, kind='stable')
         data = data.loc[data[calc_col] > 0., :]
         
@@ -2826,7 +2882,7 @@ class BufferMonitor(Monitor):
         self._current_fill_level = obj.start_fill_level
         #self._fill_level_starting_time: float = self.env.now()
         self._fill_level_starting_time: Datetime = self.env.t_as_dt()
-        self._wei_avg_fill_level: float | None = None
+        self._wei_avg_fill_level: float = 0.
         
     @property
     def wei_avg_fill_level(self) -> float:
@@ -2885,7 +2941,7 @@ class BufferMonitor(Monitor):
         temp1['mul'] = temp1['duration_seconds'] * temp1['level']
         sums: Series = temp1.filter(items=['duration_seconds', 'mul']).sum(axis=0)
         #sums: Series = temp1.sum(axis=0)
-        self._wei_avg_fill_level: float = sums['mul'] / sums['duration_seconds']
+        self._wei_avg_fill_level = cast(float, sums['mul'] / sums['duration_seconds'])
         
         
     ### ANALYSE AND CHARTS ###
@@ -4625,7 +4681,7 @@ class TransientCondition(ConditionSetter):
         # validate that starting condition is met
         # check transient phase of environment
         if self.env.is_transient_cond != True:
-            raise ViolateStartingCondition(f"Environment {self.env.name()} not in transient state!")
+            raise ViolationStartingConditionError(f"Environment {self.env.name()} not in transient state!")
     
     def sim_control(self) -> None:
         # convert transient duration to simulation time
@@ -4694,7 +4750,7 @@ class JobGenDurationCondition(ConditionSetter):
         # validate that starting condition is met
         # check transient phase of environment
         if self.target_obj.stop_job_gen_state.get() != False:
-            raise ViolateStartingCondition(f"Target object {self.target_obj}: Flag not unset!")
+            raise ViolationStartingConditionError(f"Target object {self.target_obj}: Flag not unset!")
     
     def sim_control(self) -> None:
         # convert transient duration to simulation time
@@ -4727,7 +4783,7 @@ class TriggerAgentCondition(ConditionSetter):
         # validate that starting condition is met
         # check transient phase of environment
         if self.env.transient_cond_state.get() != False:
-            raise ViolateStartingCondition((f"Environment {self.env.name()} transient state: "
+            raise ViolationStartingConditionError((f"Environment {self.env.name()} transient state: "
                                             "sim.State already set!"))
     
     def sim_control(self) -> None:

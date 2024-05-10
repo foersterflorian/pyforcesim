@@ -1,15 +1,28 @@
 # data sets or data sources which could contain sensitive information
+keys.toml
 *.xls
 *.xlsx
 *.xlsm
 *.csv
+!SJR*.csv
+data/
 datasets/
 dataset/
 input/
 output/
 
+# results are user- and data-specific
+results/
+
 # temp files
 file_system_backend/
+
+# PDM files
+*.pdm-python
+.pdm-build/
+
+# VSCode
+.vscode/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
