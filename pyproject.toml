@@ -13,6 +13,7 @@ dependencies = [
     "quart>=0.19.5",
     "dash-extensions>=1.0.15",
     "websocket-client>=1.8.0",
+    "gymnasium>=0.29.1",
 ]
 requires-python = ">=3.11"
 readme = "README.md"

@@ -1,4 +1,5 @@
-# user-defined errors
+"""This module contains custom exceptions that are raised within the pyforcesim package."""
+
 class AssociationError(Exception):
     """error that describes cases in which systems are 
     created but not added to supersystems"""

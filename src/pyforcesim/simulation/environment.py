@@ -1,4 +1,5 @@
-# typing and data structures
+"""Module with several building blocks for simulation environments"""
+
 from __future__ import annotations
 from typing import (
     TypeAlias,
