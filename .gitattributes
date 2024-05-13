@@ -1,2 +1,2 @@
 # results should only be counted as documentation
-results/ linguist-documentation
+test-notebooks/** linguist-documentation

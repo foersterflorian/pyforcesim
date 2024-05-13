@@ -2,19 +2,27 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 import typing
 from collections.abc import Sequence, Iterator
+import sys
+import logging
 from dataclasses import dataclass
 from datetime import timedelta as Timedelta
+
 import numpy as np
 import numpy.typing as npt
 from numpy.random._generator import Generator as NPRandomGenerator
 import random
-from .utils import DTManager
-import sys
-import logging
+
+from pyforcesim.datetime import DTManager
+
 
 if TYPE_CHECKING:
-    from .sim_env import (CustomID, SystemID, SimulationEnvironment, 
-                          ProductionArea, StationGroup)
+    from pyforcesim.simulation.environment import (
+        CustomID, 
+        SystemID, 
+        SimulationEnvironment,
+        ProductionArea, 
+        StationGroup
+    )
 
 # ** logging
 logging.basicConfig(stream=sys.stdout)
@@ -61,6 +69,7 @@ class BaseGenerator:
     def seed(self) -> int:
         return self._seed
 
+# TODO: cleanup and remove outdated methods
 class RandomJobGenerator(BaseGenerator):
     
     def __init__(

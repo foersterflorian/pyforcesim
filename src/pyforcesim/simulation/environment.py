@@ -1,13 +1,17 @@
-# typing and data structures
+"""Module with several building blocks for simulation environments"""
+
 from __future__ import annotations
-import salabim as sim
-from salabim import Queue, State
-from typing import TypeAlias, Self, Any, NewType, Literal, overload
-import typing
+from typing import (
+    TypeAlias,
+    Self,
+    Any,
+    NewType, 
+    Literal,
+    cast,
+    overload,
+)
 from collections import OrderedDict, deque
 from collections.abc import Iterable, Sequence, Generator, Iterator
-from pandas import DataFrame, Series
-# packages: standard library
 import sys
 import logging
 import random
@@ -16,22 +20,36 @@ from datetime import timedelta as Timedelta
 from operator import attrgetter
 from functools import lru_cache
 import multiprocessing as mp
-# packages: external
-import numpy as np
+
+import salabim as sim
+from pandas import DataFrame, Series
 import pandas as pd
 import plotly.express as px
 from plotly.graph_objs._figure import Figure as PlotlyFigure
 import plotly.io
 from websocket import create_connection
-# packages: internal
-from .loads import RandomJobGenerator, OrderTime, ProductionSequence
-from .utils import (flatten, DTManager, 
-                    TIMEZONE_UTC, TIMEZONE_CEST, 
-                    DEFAULT_DATETIME, adjust_db_dates_local_tz)
-from .agents import Agent, AllocationAgent, SequencingAgent
-from .errors import AssociationError, ViolateStartingCondition
-from .dashboard.dashboard import URL, WS_URL, start_dashboard
-from .dashboard.websocket_server import start_websocket_server
+
+from pyforcesim.errors import (
+    AssociationError,
+    ViolationStartingConditionError,
+)
+from pyforcesim.common import flatten
+from pyforcesim.datetime import (
+    DTManager,
+    adjust_db_dates_local_tz,
+    TIMEZONE_UTC,
+    DEFAULT_DATETIME,
+)
+from pyforcesim.simulation.loads import (
+    RandomJobGenerator,
+    OrderTime,
+)
+from pyforcesim.rl.agents import Agent, AllocationAgent
+from pyforcesim.dashboard.dashboard import (
+    WS_URL,
+    start_dashboard,
+)
+from pyforcesim.dashboard.websocket_server import start_websocket_server
 
 
 # set Salabim to yield mode (using yield is mandatory)
@@ -160,7 +178,7 @@ class SimulationEnvironment(sim.Environment):
         # transient condition
         # state allows direct waiting for flag changes
         self.is_transient_cond: bool = True
-        self.transient_cond_state: State = sim.State('trans_cond', env=self)
+        self.transient_cond_state = sim.State('trans_cond', env=self)
         
         # ** debug dashboard
         self.debug_dashboard = debug_dashboard
@@ -797,7 +815,7 @@ class InfrastructureManager:
             case 'Resource':
                 id_prop = 'res_id'
         
-        custom_id = typing.cast(CustomID, self.lookup_subsystem_info(
+        custom_id = cast(CustomID, self.lookup_subsystem_info(
             subsystem_type=subsystem_type,
             lookup_val=system_ID,
             lookup_property=id_prop,
@@ -812,7 +830,7 @@ class InfrastructureManager:
         custom_ID: CustomID,
     ) -> SystemID:
         
-        system = typing.cast(System, self.lookup_subsystem_info(
+        system = cast(System, self.lookup_subsystem_info(
             subsystem_type=subsystem_type,
             lookup_val=custom_ID,
             lookup_property='custom_id',
@@ -1322,6 +1340,8 @@ class Dispatcher:
             job.current_order_time = op.order_time
             # only reset job prio if there are OP-wise defined priorities
             if job.op_wise_prio:
+                if op.prio is None:
+                    raise ValueError(f"Operation {op} has no priority defined.")
                 job.prio = op.prio # use setter function to catch possible errors
                 self.update_job_db(job=job, property='prio', val=job.prio)
             if job.op_wise_starting_date:
@@ -1383,15 +1403,17 @@ class Dispatcher:
         
         # corresponding execution system in which the operation is performed
         # no pre-determined assignment of processing stations
-        exec_system = typing.cast(ProductionArea, infstruct_mgr.lookup_subsystem_info(
-                                                    subsystem_type=EXEC_SYSTEM_TYPE,
-                                                    lookup_val=exec_system_identifier))
+        exec_system = cast(ProductionArea, 
+                           infstruct_mgr.lookup_subsystem_info(
+                               subsystem_type=EXEC_SYSTEM_TYPE,
+                               lookup_val=exec_system_identifier))
         # if target station group is specified, get instance
         target_station_group: StationGroup | None
         if target_station_group_identifier is not None:
-            target_station_group = typing.cast(StationGroup, infstruct_mgr.lookup_subsystem_info(
-                                                    subsystem_type='StationGroup',
-                                                    lookup_val=target_station_group_identifier))
+            target_station_group = cast(StationGroup,
+                                        infstruct_mgr.lookup_subsystem_info(
+                                            subsystem_type='StationGroup',
+                                            lookup_val=target_station_group_identifier))
             # validity check: only target stations allowed which are 
             # part of the current execution system
             if target_station_group.system_id not in exec_system:
@@ -1857,7 +1879,7 @@ class Dispatcher:
     
     def request_job_sequencing(
         self,
-        req_obj: ProcessingStation,
+        req_obj: InfrastructureObject,
     ) -> tuple[Job, Timedelta, Timedelta | None]:
         """
         request a sequencing decision for a given queue of the requesting resource
@@ -1891,7 +1913,7 @@ class Dispatcher:
     
     def seq_priority_rule(
         self,
-        queue: Queue,
+        queue: sim.Queue,
     ) -> Job:
         """apply priority rules to a pool of jobs"""
         match self._curr_prio_rule:
@@ -1899,44 +1921,44 @@ class Dispatcher:
             case 'FIFO':
                 # salabim queue pops first entry if no index is specified, 
                 # not last like in Python
-                job = typing.cast(Job, queue.pop())
+                job = cast(Job, queue.pop())
             # last in, last out
             case 'LIFO':
                 # salabim queue pops first entry if no index is specified, 
                 # not last like in Python
-                job = typing.cast(Job, queue.pop(-1))
+                job = cast(Job, queue.pop(-1))
             # shortest processing time
             case 'SPT':
                 # choose job with shortest processing time
-                temp = queue.as_list()
-                job = typing.cast(Job, min(temp, key=attrgetter('current_proc_time')))
+                temp = cast(list[Job], queue.as_list())
+                job = min(temp, key=attrgetter('current_proc_time'))
                 # remove job from original queue
                 queue.remove(job)
             # longest processing time
             case 'LPT':
                 # choose job with longest processing time
-                temp = queue.as_list()
-                job = typing.cast(Job, max(temp, key=attrgetter('current_proc_time')))
+                temp = cast(list[Job], queue.as_list())
+                job = max(temp, key=attrgetter('current_proc_time'))
                 # remove job from original queue
                 queue.remove(job)
             # shortest setup time
             case 'SST':
                 # choose job with shortest setup time
-                temp = queue.as_list()
-                job = typing.cast(Job, min(temp, key=attrgetter('current_setup_time')))
+                temp = cast(list[Job], queue.as_list())
+                job = min(temp, key=attrgetter('current_setup_time'))
                 # remove job from original queue
                 queue.remove(job)
             # longest setup time
             case 'LST':
                 # choose job with longest setup time
-                temp = queue.as_list()
-                job = typing.cast(Job, max(temp, key=attrgetter('current_setup_time')))
+                temp = cast(list[Job], queue.as_list())
+                job = max(temp, key=attrgetter('current_setup_time'))
                 # remove job from original queue
                 queue.remove(job)
             case 'PRIO':
                 # choose job with highest priority
-                temp = queue.as_list()
-                job = typing.cast(Job, max(temp, key=attrgetter('prio')))
+                temp = cast(list[Job], queue.as_list())
+                job = max(temp, key=attrgetter('prio'))
                 # remove job from original queue
                 queue.remove(job)
         
@@ -2070,7 +2092,10 @@ class Dispatcher:
 
         if self._env.debug_dashboard:
             # send by websocket
-            fig_json = plotly.io.to_json(fig=fig)
+            fig_json = cast(str | None, plotly.io.to_json(fig=fig))
+            if fig_json is None:
+                raise ValueError(("Could not convert figure to JSON. "
+                                  "Returned >>None<<."))
             self._env.ws_con.send(fig_json)
         else:
             fig.show()
@@ -2098,10 +2123,11 @@ class Dispatcher:
         self._op_db_date_adjusted = adjust_db_dates_local_tz(db=self._op_db)
     
     def dashboard_update(self) -> None:
-        # update gantt chart in dashboard
-        fig = self.draw_gantt_chart(
-            dates_to_local_tz=True,
-        )
+        """
+        method to be called by the environment's "update_dashboard" method
+        """
+        # !! Placeholder, do nothing at the moment
+        pass
 
 
 # SYSTEMS
@@ -2119,7 +2145,7 @@ class System(OrderedDict):
     ) -> None:
         # [BASIC INFO]
         # environment
-        self.env = env
+        self._env = env
         # subsystem information
         self._subsystem_type: str = subsystem_type
         # supersystem information
@@ -2147,7 +2173,11 @@ class System(OrderedDict):
         self._alloc_agent_registered: bool = False
         # assignment
         self._alloc_agent: AllocationAgent | None = None
-        
+    
+    @property
+    def env(self) -> SimulationEnvironment:
+        return self._env
+    
     @property
     def assoc_proc_stations(self) -> tuple[ProcessingStation, ...]:
         return self._assoc_proc_stations
@@ -2170,19 +2200,21 @@ class System(OrderedDict):
             case 'ALLOC':
                 # allocation agents on lowest hierarchy level not allowed
                 if self._abstraction_level == 0:
-                    raise RuntimeError(f"Can not register allocation agents for lowest hierarchy level objects.")
+                    raise RuntimeError(("Can not register allocation agents "
+                                        "for lowest hierarchy level objects."))
                 # registration, type and existence check
                 if not self._alloc_agent_registered and isinstance(agent, AllocationAgent):
                     self._alloc_agent = agent
                     self._alloc_agent_registered = True
                     logger_env.info(f"Successfully registered Allocation Agent in {self}")
                 elif not isinstance(agent, AllocationAgent):
-                    raise TypeError(f"The object must be of type >>AllocationAgent<< but is type >>{type(agent)}<<")
+                    raise TypeError(("The object must be of type >>AllocationAgent<< "
+                                    f"but is type >>{type(agent)}<<"))
                 else:
                     raise AttributeError(("There is already a registered AllocationAgent instance "
                                         "Only one instance per system is allowed."))
             case 'SEQ':
-                raise NotImplementedError(f"Registration of sequencing agents not supported yet!")
+                raise NotImplementedError("Registration of sequencing agents not supported yet!")
             
         return self, self.env
     
@@ -2199,7 +2231,8 @@ class System(OrderedDict):
     ) -> None:
         
         if self._abstraction_level == 0:
-            raise RuntimeError(f"Can not register allocation agents for lowest hierarchy level objects.")
+            raise RuntimeError(("Can not register allocation agents "
+                               "for lowest hierarchy level objects."))
         
         if not self._alloc_agent_registered and isinstance(alloc_agent, AllocationAgent):
             self._alloc_agent = alloc_agent
@@ -2297,6 +2330,16 @@ class System(OrderedDict):
         """
         return tuple(self.values())
     
+    def as_set(self) -> set[System]:
+        """output the associated subsystems as set
+
+        Returns
+        -------
+        set[System]
+            set of associated subsystems
+        """
+        return set(self.values())
+    
     def add_supersystem(
         self,
         supersystem: System,
@@ -2368,6 +2411,20 @@ class System(OrderedDict):
     ) -> tuple[InfrastructureObject, ...] | tuple[ProcessingStation, ...]:
         ...
     
+    @overload
+    def lowest_level_subsystems(
+        self,
+        only_processing_stations: Literal[True],
+    ) -> tuple[ProcessingStation, ...]:
+        ...
+    
+    @overload
+    def lowest_level_subsystems(
+        self,
+        only_processing_stations: Literal[False] = ...,
+    ) -> tuple[InfrastructureObject, ...]:
+        ...
+    
     #@lru_cache(maxsize=3)
     def lowest_level_subsystems(
         self,
@@ -2393,30 +2450,32 @@ class System(OrderedDict):
         """
         
         if self._abstraction_level == 0:
-            raise RuntimeError(f"Can not obtain lowest level subsystems from lowest hierarchy level objects.")
+            raise RuntimeError(("Can not obtain lowest level subsystems from "
+                               "lowest hierarchy level objects."))
         
         remaining_abstraction_level = self._abstraction_level - 1
-        subsystems = self.as_list()
+        subsystems = self.as_set()
         
         while remaining_abstraction_level > 0:
-            temp: list[System] = []
+            temp: set[System] = set()
             
             for subsystem in subsystems:
-                children = subsystem.as_list()
-                temp.append(children)
-                
-            subsystems = temp.copy()
+                children = subsystem.as_set()
+                temp |= children
+            
+            #subsystems = cast(set[System], set(flatten(temp)))
+            subsystems = temp
             remaining_abstraction_level -= 1
         
         # flatten list and remove duplicates by making a set
-        low_lev_subsystems_set: set[InfrastructureObject] = set(flatten(subsystems))
+        low_lev_subsystems_set = cast(set[InfrastructureObject], set(flatten(subsystems)))
         # filter only processing stations if option chosen
+        low_lev_subsystems_lst: list[InfrastructureObject] | list[ProcessingStation]
         if only_processing_stations:
             low_lev_subsystems_lst = filter_processing_stations(
                                         infstruct_obj_collection=low_lev_subsystems_set)
         else:
-            # obtain list and 
-            low_lev_subsystems_lst: list[InfrastructureObject] = list(low_lev_subsystems_set)
+            low_lev_subsystems_lst = list(low_lev_subsystems_set)
         
         # sort list by system ID (ascending), so that the order is always the same
         low_lev_subsystems_lst = sorted(low_lev_subsystems_lst, 
@@ -2538,18 +2597,19 @@ class Monitor:
         # all possible/allowed states
         self.states_possible: set[str] = set(possible_states)
         # always add states 'INIT', 'FINISH', 'TEMP' for control flow
-        if not 'INIT' in self.states_possible:
+        if 'INIT' not in self.states_possible:
             self.states_possible.add('INIT')
-        if not 'FINISH' in self.states_possible:
+        if 'FINISH' not in self.states_possible:
             self.states_possible.add('FINISH')
-        if not 'TEMP' in self.states_possible:
+        if 'TEMP' not in self.states_possible:
             self.states_possible.add('TEMP')
             
         # check integrity of the given state
         if init_state in self.states_possible:
             self.state_current: str = init_state
         else:
-            raise ValueError(f"The state {state} is not allowed. Must be one of {self.states_possible}")
+            raise ValueError((f"The state {init_state} is not allowed. "
+                             f"Must be one of {self.states_possible}"))
         
         # boolean indicator if a state is set
         self.state_status: dict[str, bool] = {}
@@ -2622,12 +2682,12 @@ class Monitor:
             raise ValueError(f"The state {target_state} is not allowed. Must be one of {self.states_possible}")
         
         # check if state is already set
-        if self.state_status[target_state] == True and target_state != 'TEMP':
+        if self.state_status[target_state] and target_state != 'TEMP':
             logger_monitors.info(f"Tried to set state of {self._target_object} to >>{target_state}<<, but this state was already set.\
                 The object's state was not changed.")
         # check if the 'TEMP' state was already set, this should never happen
         # if it happens raise an error to catch wrong behaviour
-        elif self.state_status[target_state] == True and target_state == 'TEMP':
+        elif self.state_status[target_state] and target_state == 'TEMP':
             raise RuntimeError(f"Tried to set state of {self._target_object} to >>TEMP<<, but this state was already set.")
         
         # calculate time for which the object was in the current state before changing it
@@ -2687,6 +2747,8 @@ class Monitor:
             self.state_durations = self.state_durations_as_df()
         
         # [TOTAL ACTIVE TIME]
+        if self.state_durations is None:
+            raise RuntimeError("State durations are not available. Can not calculate KPIs.")
         self.time_active = self.state_durations.loc[:, 'abs [seconds]'].sum()
     
     def state_durations_as_df(self) -> DataFrame:
@@ -2734,10 +2796,10 @@ class Monitor:
         # Plotly can not handle Timedelta objects properly, only Datetimes
         calc_td = dt_mgr.timedelta_from_val(val=1., time_unit=time_unit)
         calc_col: str = f'total time [{time_unit}]'
-        data[calc_col] = data['total time'] / calc_td
+        data[calc_col] = data['total time'] / calc_td # type: ignore
         data = data.sort_index(axis=0, kind='stable')
         
-        fig: PlotlyFigure = px.bar(data, y=calc_col, text_auto='.2f')
+        fig: PlotlyFigure = px.bar(data, y=calc_col, text_auto='.2f') # type: ignore wrong type hint in Plotly
         fig.update_layout(title=f'State Time Distribution of {self._target_object}', showlegend=False)
         fig.update_yaxes(title=dict({'text': calc_col}))
         
@@ -2769,7 +2831,7 @@ class Monitor:
         # Plotly can not handle Timedelta objects properly, only Datetimes
         calc_td = dt_mgr.timedelta_from_val(val=1., time_unit=time_unit)
         calc_col: str = f'total time [{time_unit}]'
-        data[calc_col] = data['total time'] / calc_td
+        data[calc_col] = data['total time'] / calc_td # type: ignore
         data = data.sort_index(axis=0, kind='stable')
         data = data.loc[data[calc_col] > 0., :]
         
@@ -2828,8 +2890,11 @@ class BufferMonitor(Monitor):
         self._fill_level_starting_time: Datetime = self.env.t_as_dt()
         self._wei_avg_fill_level: float | None = None
         
+        # !! Remove later
+        self._target_object = cast(Buffer, self._target_object)
+        
     @property
-    def wei_avg_fill_level(self) -> float:
+    def wei_avg_fill_level(self) -> float | None:
         return self._wei_avg_fill_level
     
     @property
@@ -2885,7 +2950,7 @@ class BufferMonitor(Monitor):
         temp1['mul'] = temp1['duration_seconds'] * temp1['level']
         sums: Series = temp1.filter(items=['duration_seconds', 'mul']).sum(axis=0)
         #sums: Series = temp1.sum(axis=0)
-        self._wei_avg_fill_level: float = sums['mul'] / sums['duration_seconds']
+        self._wei_avg_fill_level = cast(float, sums['mul'] / sums['duration_seconds'])
         
         
     ### ANALYSE AND CHARTS ###
@@ -2940,7 +3005,7 @@ class InfStructMonitor(Monitor):
     
     def __init__(
         self,
-        obj: ProcessingStation,
+        obj: InfrastructureObject,
         **kwargs,
     ) -> None:
         # initialise parent class
@@ -2990,11 +3055,11 @@ class InfStructMonitor(Monitor):
         self._WIP_load_num_jobs_last: int = 0
     
     @property
-    def wei_avg_WIP_level_time(self) -> float:
+    def wei_avg_WIP_level_time(self) -> Timedelta | None:
         return self._wei_avg_WIP_level_time
     
     @property
-    def wei_avg_WIP_level_num(self) -> float:
+    def wei_avg_WIP_level_num(self) -> float | None:
         return self._wei_avg_WIP_level_num
     
     @property
@@ -3059,7 +3124,7 @@ class InfStructMonitor(Monitor):
         # properties which count as occupied
         # paused counts in because pausing the processing station is an external factor
         util_props = ['PROCESSING', 'SETUP', 'PAUSED']
-        self.time_occupied = self.state_durations.loc[util_props, 'abs [seconds]'].sum()
+        self.time_occupied = self.state_durations.loc[util_props, 'abs [seconds]'].sum()  # type: ignore
         
         # [UTILISATION]
         # avoid division by 0
@@ -3071,6 +3136,10 @@ class InfStructMonitor(Monitor):
         job: Job,
         remove: bool,
     ) -> None:
+        if job.last_order_time is None:
+            raise ValueError(f"Last order time of job {job} is not set.")
+        if job.current_order_time is None:
+            raise ValueError(f"Current order time of job {job} is not set.")
         # removing WIP
         if remove:
             # next operation of the job already assigned
@@ -3105,7 +3174,7 @@ class InfStructMonitor(Monitor):
         temp1['mul'] = temp1['duration_seconds'] * temp1['level_seconds']
         sums: Series = temp1.filter(items=['duration_seconds', 'mul']).sum(axis=0)
         wei_avg_time_sec: float = sums['mul'] / sums['duration_seconds']
-        self._wei_avg_WIP_level_time: Timedelta = Timedelta(seconds=wei_avg_time_sec)
+        self._wei_avg_WIP_level_time = Timedelta(seconds=wei_avg_time_sec)
         
         # post-process WIP num level databases
         self._WIP_num_db['level'] = self._WIP_num_db['level'].shift(periods=1, fill_value=Timedelta())
@@ -3116,7 +3185,7 @@ class InfStructMonitor(Monitor):
         temp1['duration_seconds'] = temp1['duration'].apply(func= lambda x: x.total_seconds())
         temp1['mul'] = temp1['duration_seconds'] * temp1['level']
         sums: Series = temp1.filter(items=['duration_seconds', 'mul']).sum(axis=0)
-        self._wei_avg_WIP_level_num: float = sums['mul'] / sums['duration_seconds']
+        self._wei_avg_WIP_level_num = sums['mul'] / sums['duration_seconds']
     
     ### ANALYSE AND CHARTS ###
     def draw_WIP_level(
@@ -3130,7 +3199,15 @@ class InfStructMonitor(Monitor):
         """
         method to draw and display the fill level expansion of the corresponding buffer
         """
+        if self._wei_avg_WIP_level_num is None:
+            raise ValueError("Weighted average WIP level is not set.")
+        if self._wei_avg_WIP_level_time is None:
+            raise ValueError("Weighted average WIP level is not set.")
         # add starting point to start chart at t = init time
+        title: str
+        yaxis: str
+        avg_WIP_level: float
+        last_WIP_level: float
         if use_num_jobs_metric:
             data = self._WIP_num_db.copy()
             title = f'WIP Level Num Jobs of {self._target_object}'
@@ -3143,20 +3220,20 @@ class InfStructMonitor(Monitor):
             # change WIP load time from Timedelta to any time unit possible --> float
             # Plotly can not handle Timedelta objects properly, only Datetimes
             calc_td = dt_mgr.timedelta_from_val(val=1., time_unit=time_unit_load_time)
-            data['level'] = data['level'] / calc_td
+            data['level'] = data['level'] / calc_td # type: ignore
             title = f'WIP Level Time of {self._target_object}'
             yaxis = 'WIP Level Time [time units]'
-            avg_WIP_level: float = self._wei_avg_WIP_level_time / calc_td
-            last_WIP_level: float = self.WIP_load_time / calc_td
-        f_val1: Datetime = data.at[0, 'sim_time'] - data.at[0, 'duration']
-        f_val2: Timedelta = Timedelta()
-        f_val3: float = data.at[0, 'level']
-        first_entry: DataFrame = pd.DataFrame(columns=data.columns, data=[[f_val1, f_val2, f_val3]])
-        l_val1: Datetime = data.iat[-1, 0]
-        l_val2: Timedelta = Timedelta()
-        l_val3: float = last_WIP_level # REWORK type hint
-        last_entry: DataFrame = pd.DataFrame(columns=data.columns, data=[[l_val1, l_val2, l_val3]])
-        temp1: DataFrame = pd.concat([first_entry, data, last_entry], ignore_index=True)
+            avg_WIP_level = cast(float, self._wei_avg_WIP_level_time / calc_td)
+            last_WIP_level = cast(float, self.WIP_load_time / calc_td)
+        f_val1 = cast(Datetime, data.at[0, 'sim_time'] - data.at[0, 'duration'])
+        f_val2 = Timedelta()
+        f_val3 = cast(float, data.at[0, 'level'])
+        first_entry = pd.DataFrame(columns=data.columns, data=[[f_val1, f_val2, f_val3]])
+        l_val1 = cast(Datetime, data.iat[-1, 0])
+        l_val2 = Timedelta()
+        l_val3 = last_WIP_level
+        last_entry= pd.DataFrame(columns=data.columns, data=[[l_val1, l_val2, l_val3]])
+        temp1 = pd.concat([first_entry, data, last_entry], ignore_index=True)
         
         fig: PlotlyFigure = px.line(x=temp1['sim_time'], y=temp1['level'], line_shape="vh")
         fig.update_traces(line=dict(width=3))
@@ -3262,7 +3339,7 @@ class InfrastructureObject(System, sim.Component):
         # add logic queues
         # each resource uses one associated logic queue, logic queues are not physically available
         queue_name: str = f"queue_{self.name()}"
-        self.logic_queue: Queue = sim.Queue(name=queue_name, env=self.env)
+        self.logic_queue = sim.Queue(name=queue_name, env=self.env)
         
         # currently available jobs on that resource
         self.contents: OrderedDict[LoadID, Job] = OrderedDict()
@@ -3277,11 +3354,12 @@ class InfrastructureObject(System, sim.Component):
         self._proc_time: Timedelta = Timedelta.min
         # setup time: if a setup time is provided use always this time and ignore job-related setup times
         #self._setup_time = setup_time
-        self._setup_time = setup_time
+        self._setup_time = setup_time # ?? error not comprehensible
+        self._use_const_setup_time: bool
         if self._setup_time is not None:
-            self._use_const_setup_time: bool = True
+            self._use_const_setup_time = True
         else:
-            self._use_const_setup_time: bool = False
+            self._use_const_setup_time = False
     
     # override for corresponding classes
     @property
@@ -3314,13 +3392,13 @@ class InfrastructureObject(System, sim.Component):
                              f"but it is >>{type(new_proc_time)}<<"))
     
     @property
-    def setup_time(self) -> float:
+    def setup_time(self) -> Timedelta | None:
         return self._setup_time
     
     @setup_time.setter
     def setup_time(
         self, 
-        new_setup_time: float,
+        new_setup_time: Timedelta,
     ) -> None:
         if self._use_const_setup_time:
             raise RuntimeError((f"Tried to change setup time of >>{self}<<, but it is "
@@ -3330,7 +3408,7 @@ class InfrastructureObject(System, sim.Component):
             self._setup_time = new_setup_time
         else:
             raise TypeError(("The setup time must be of type >>Timedelta<<, "
-                             f"but it is >>{type(new_proc_time)}<<"))
+                             f"but it is >>{type(new_setup_time)}<<"))
     
     def add_content(
         self,
@@ -3357,7 +3435,7 @@ class InfrastructureObject(System, sim.Component):
     def put_job(
         self,
         job: Job,
-    ) -> Generator[Any, Any, Any]:
+    ) -> Generator[Any, None, InfrastructureObject]:
         """
         placing
         """
@@ -3379,8 +3457,9 @@ class InfrastructureObject(System, sim.Component):
         # resets current feasibility status
         yield self.hold(0)
         is_agent, alloc_agent = dispatcher.check_alloc_dispatch(job=job)
-            
-        if is_agent:
+        if is_agent and alloc_agent is None:
+            raise ValueError("Agent is set, but no agent is provided.")
+        elif is_agent and alloc_agent is not None:
             # if agent is set, set flags and calculate feature vector
             # as long as there is no feasible action
             while not alloc_agent.action_feasible:
@@ -3429,7 +3508,7 @@ class InfrastructureObject(System, sim.Component):
         # check if the target is a sink
         if isinstance(target_station, Sink):
             pass
-        else:
+        elif isinstance(target_station, ProcessingStation):
             # check if associated buffers exist
             logger_prodStations.debug(f"[{self}] Check for buffers")
             buffers = target_station.buffers
@@ -3487,7 +3566,7 @@ class InfrastructureObject(System, sim.Component):
         
         return target_station
     
-    def get_job(self) -> Generator[None | InfrastructureObject, None, Job]:
+    def get_job(self) -> Generator[Any, Any, Job]:
         """
         getting jobs from associated predecessor resources
         """
@@ -3506,7 +3585,7 @@ class InfrastructureObject(System, sim.Component):
         ### UPDATE JOB PROCESS INFO IN REQUEST FUNCTION???
         
         # update time characteristics of the infrastructure object
-        # contains additonal checks if the target values are allowed
+        # contains additional checks if the target values are allowed
         self.proc_time = job_proc_time
         if job_setup_time is not None:
             logger_prodStations.debug(f"-------->>>>> [SETUP TIME DETECTED] job ID {job.job_id} at {self.env.now()} on machine ID {self.custom_identifier} \
@@ -3514,9 +3593,9 @@ class InfrastructureObject(System, sim.Component):
             self.setup_time = job_setup_time
         
         # request and get job from associated buffer if it exists
-        if self._buffers:
-            yield self.from_store(store=self._buffers, filter=lambda item: item.job_id == job.job_id)
-            buffer = self.from_store_store()
+        if isinstance(self, ProcessingStation) and self._buffers:
+            yield self.from_store(store=self._buffers, filter=lambda item: item.job_id==job.job_id)
+            buffer = cast(Buffer, self.from_store_store())
             # [STATS:Buffer] count number of outputs
             buffer.num_outputs += 1
             # [CONTENT:Buffer] remove content
@@ -3555,19 +3634,19 @@ class InfrastructureObject(System, sim.Component):
     
     ### PROCESS LOGIC
     # each method of 'pre_process', 'sim_control', 'post_process' must be implemented in the child classes
-    def pre_process(self) -> None:
+    def pre_process(self) -> Any | None:
         """return type: tuple with parameters or None"""
         raise NotImplementedError(f"No pre-process method for {self} of type {self.__class__.__name__} defined.")
     
-    def sim_control(self) -> None:
+    def sim_control(self) -> Generator[Any, Any, Any]:
         """return type: tuple with parameters or None"""
         raise NotImplementedError(f"No sim-control method for {self} of type {self.__class__.__name__} defined.")
     
-    def post_process(self) -> None:
+    def post_process(self) -> Any | None:
         """return type: tuple with parameters or None"""
         raise NotImplementedError(f"No post-process method for {self} of type {self.__class__.__name__} defined.")
     
-    def main_logic(self) -> Generator[Any, None, None]:
+    def main_logic(self) -> Generator[Any, Any, None]:
         """main logic loop for all resources in the simulation environment"""
         logger_infstrct.debug(f"----> Process logic of {self}")
         # pre control logic
@@ -3606,7 +3685,7 @@ class ProcessingStation(InfrastructureObject):
         capacity: capacity of the infrastructure object, if multiple processing \
             slots available at the same time > 1, default=1
         """
-        # intialize base class
+        # initialise base class
         super().__init__(**kwargs)
         
         # add physical buffers, more than one allowed
@@ -3646,7 +3725,8 @@ class ProcessingStation(InfrastructureObject):
         """
         # only buffer types allowed
         if not isinstance(buffer, Buffer):
-            raise TypeError(f"Object is no Buffer type. Only objects of type Buffer can be added as buffers.")
+            raise TypeError(("Object is no Buffer type. Only objects "
+                             "of type Buffer can be added as buffers."))
         # check if already present
         if buffer not in self._buffers:
             self._buffers.add(buffer)
@@ -3674,7 +3754,7 @@ class ProcessingStation(InfrastructureObject):
         infstruct_mgr = self.env.infstruct_mgr
         infstruct_mgr.update_res_state(obj=self, state='WAITING')
     
-    def sim_control(self) -> Generator[None | Job, None, None]:
+    def sim_control(self) -> Generator[Any, None, None]:
         dispatcher = self.env.dispatcher
         while True:
             # initialise state by passivating machines
@@ -3699,7 +3779,7 @@ class ProcessingStation(InfrastructureObject):
             logger_prodStations.debug(f"[END] job ID {job.job_id} at {self.env.now()} on machine ID {self.custom_identifier}")
             # only place job if there are open operations left
             # maybe add to 'put_job' method
-            target_proc_station = yield from self.put_job(job=job)
+            _ = yield from self.put_job(job=job)
             # [CONTENT:ProdStation] remove content
             self.remove_content(job=job)
             
@@ -3734,7 +3814,7 @@ class Buffer(sim.Store, InfrastructureObject):
     
     def __init__(
         self,
-        capacity: float,
+        capacity: int,
         possible_states: Iterable[str] = (
             'INIT',
             'FINISH',
@@ -3772,9 +3852,8 @@ class Buffer(sim.Store, InfrastructureObject):
         return self._stat_monitor.level_db
     
     @property
-    def wei_avg_fill_level(self) -> float:
+    def wei_avg_fill_level(self) -> float | None:
         return self._stat_monitor.wei_avg_fill_level
-    
     
     ### MATERIAL FLOW RELATIONSHIP
     def add_prod_station(
@@ -3897,7 +3976,7 @@ class Source(InfrastructureObject):
         # triggers and flags
         # indicator if a corresponding ConditionSetter was regsitered
         self.stop_job_gen_cond_reg: bool = False
-        self.stop_job_gen_state: State = sim.State('stop_job_gen', env=self.env)
+        self.stop_job_gen_state = sim.State('stop_job_gen', env=self.env)
     
     def _obtain_proc_time(self) -> float:
         """
@@ -3958,6 +4037,8 @@ class Source(InfrastructureObject):
         
         # ** new: job generation by sequence
         # !! currently only one production area
+        if self.job_sequence is None:
+            raise ValueError("Job sequence is not set")
         for (prod_area_id, station_group_id, order_times) in self.job_sequence:
             
             if not self.use_stop_time:
@@ -3967,7 +4048,7 @@ class Source(InfrastructureObject):
             else:
                 # stop if stopping time is reached
                 # flag set by corresponding ConditionSetter
-                if self.stop_job_gen_state.get() == True:
+                if self.stop_job_gen_state.get():
                     break
             
             # start at t=0 with generation
@@ -4076,14 +4157,13 @@ class Sink(InfrastructureObject):
     
     def sim_control(self) -> Generator[None, None, None]:
         dispatcher = self.env.dispatcher
-        infstruct_mgr = self.env.infstruct_mgr
         while True:
             # in analogy to ProcessingStations
             if len(self.logic_queue) == 0:
                 yield self.passivate()
             logger_sinks.debug(f"[SINK: {self}] is getting job from queue")
             # get job, simple FIFO
-            job: Job = self.logic_queue.pop()
+            job = cast(Job, self.logic_queue.pop())
             # [Call:DISPATCHER] data collection: finalise job
             dispatcher.finish_job(job=job)
             #job.finalise()
@@ -4172,7 +4252,7 @@ class Operation:
         if planned_starting_date is not None:
             dt_mgr.validate_dt_UTC(planned_starting_date)
         self.time_planned_starting = planned_starting_date
-        if planned_starting_date is not None:
+        if planned_ending_date is not None:
             dt_mgr.validate_dt_UTC(planned_ending_date)
         self.time_planned_ending = planned_ending_date
         # in future setting starting points in advance possible
@@ -4234,7 +4314,7 @@ class Operation:
         return self._target_station_group_identifier
     
     @property
-    def prio(self) -> int:
+    def prio(self) -> int | None:
         return self._prio
     
     @prio.setter
@@ -4552,7 +4632,7 @@ class BaseComponent(sim.Component):
     def __init__(
         self,
         env: SimulationEnvironment,
-        name: str | None = None,
+        name: str,
         **kwargs,
     ) -> None:
         
@@ -4565,19 +4645,19 @@ class BaseComponent(sim.Component):
     
     ### PROCESS LOGIC
     # each method of 'pre_process', 'sim_control', 'post_process' must be implemented in the child classes
-    def pre_process(self) -> None:
+    def pre_process(self) -> Any | None:
         """return type: tuple with parameters or None"""
         raise NotImplementedError(f"No pre-process method for {self} of type {self.__class__.__name__} defined.")
     
-    def sim_control(self) -> None:
+    def sim_control(self) -> Generator[Any, Any, Any]:
         """return type: tuple with parameters or None"""
         raise NotImplementedError(f"No sim-control method for {self} of type {self.__class__.__name__} defined.")
     
-    def post_process(self) -> None:
+    def post_process(self) -> Any | None:
         """return type: tuple with parameters or None"""
         raise NotImplementedError(f"No post-process method for {self} of type {self.__class__.__name__} defined.")
     
-    def main_logic(self) -> Generator[Any, None, None]:
+    def main_logic(self) -> Generator[Any, Any, Any]:
         """main logic loop for all resources in the simulation environment"""
         logger_infstrct.debug(f"----> Process logic of {self}")
         # pre control logic
@@ -4624,10 +4704,10 @@ class TransientCondition(ConditionSetter):
     def pre_process(self) -> None:
         # validate that starting condition is met
         # check transient phase of environment
-        if self.env.is_transient_cond != True:
-            raise ViolateStartingCondition(f"Environment {self.env.name()} not in transient state!")
+        if not self.env.is_transient_cond:
+            raise ViolationStartingConditionError(f"Environment {self.env.name()} not in transient state!")
     
-    def sim_control(self) -> None:
+    def sim_control(self) -> Generator[None, None, None]:
         # convert transient duration to simulation time
         sim_time = self.env.td_to_simtime(timedelta=self.duration_transient)
         # wait for the given time interval
@@ -4664,7 +4744,7 @@ class JobGenDurationCondition(ConditionSetter):
         
         # get starting datetime of environment
         starting_dt = self.env.starting_datetime
-        
+        self.sim_run_duration: Timedelta
         if sim_run_until is not None:
             # check if point in time is provided with UTC time zone
             dt_mgr.validate_dt_UTC(dt=sim_run_until)
@@ -4676,9 +4756,11 @@ class JobGenDurationCondition(ConditionSetter):
             # calculate duration from starting datetime
             # duration after which the condition is set
             self.sim_run_duration = sim_run_until - starting_dt
-        else:
+        elif sim_run_duration is not None:
             # duration after which the condition is set
             self.sim_run_duration = sim_run_duration
+        else:
+            raise ValueError("No valid point in time or duration provided")
         
         # point in time after which the condition is set
         self.sim_run_until = sim_run_until
@@ -4693,15 +4775,14 @@ class JobGenDurationCondition(ConditionSetter):
     def pre_process(self) -> None:
         # validate that starting condition is met
         # check transient phase of environment
-        if self.target_obj.stop_job_gen_state.get() != False:
-            raise ViolateStartingCondition(f"Target object {self.target_obj}: Flag not unset!")
+        if self.target_obj.stop_job_gen_state.get():
+            raise ViolationStartingConditionError(f"Target object {self.target_obj}: Flag not unset!")
     
-    def sim_control(self) -> None:
+    def sim_control(self) -> Generator[None, None, None]:
         # convert transient duration to simulation time
         sim_time = self.env.td_to_simtime(timedelta=self.sim_run_duration)
         # wait for the given time interval
         yield self.hold(sim_time, priority=-10)
-        
         # [TARGET]
         # set flag or state
         self.target_obj.stop_job_gen_state.set()
@@ -4726,11 +4807,11 @@ class TriggerAgentCondition(ConditionSetter):
     def pre_process(self) -> None:
         # validate that starting condition is met
         # check transient phase of environment
-        if self.env.transient_cond_state.get() != False:
-            raise ViolateStartingCondition((f"Environment {self.env.name()} transient state: "
+        if self.env.transient_cond_state.get():
+            raise ViolationStartingConditionError((f"Environment {self.env.name()} transient state: "
                                             "sim.State already set!"))
     
-    def sim_control(self) -> None:
+    def sim_control(self) -> Generator[None, None, None]:
         # wait for the given time interval
         yield self.wait(self.env.transient_cond_state, priority=-9)
         # change allocation rule of dispatcher

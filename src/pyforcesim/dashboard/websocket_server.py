@@ -1,25 +1,30 @@
-from quart import websocket, Quart
+from typing import Final
+from collections.abc import AsyncIterator
 import asyncio
 from asyncio import Queue as AsyncQueue
-from collections.abc import AsyncGenerator
+
+from quart import Quart, websocket
 
 # ** network properties
-WS_HOST: str = '127.0.0.1'
-WS_PORT: int = 5000
-WS_ROUTE: str = 'gantt_chart'
+WS_HOST: Final[str] = '127.0.0.1'
+WS_PORT: Final[int] = 5000
+WS_ROUTE: Final[str] = 'gantt_chart'
 
 # publish-subscribe pattern based on Quart tutorial
 # https://quart.palletsprojects.com/en/latest/tutorials/chat_tutorial.html
 class Broker:
     def __init__(self) -> None:
-        self.connections: set[AsyncQueue] = set()
+        self.connections: set[AsyncQueue[str]] = set()
 
-    async def publish(self, message: str) -> None:
+    async def publish(
+        self,
+        message: str
+    ) -> None:
         for connection in self.connections:
             await connection.put(message)
 
-    async def subscribe(self) -> AsyncGenerator[str, None]:
-        connection = asyncio.Queue()
+    async def subscribe(self) -> AsyncIterator[str]:
+        connection: AsyncQueue[str] = asyncio.Queue()
         self.connections.add(connection)
         try:
             while True:
@@ -38,17 +43,17 @@ async def receive() -> None:
 
 @app.websocket(f"/{WS_ROUTE}")
 async def ws() -> None:
+    task = asyncio.create_task(receive())
     try:
-        task = asyncio.create_task(receive())
         async for message in broker.subscribe():
             await websocket.send(message)
     finally:
         task.cancel()
         await task
-        
+
 def start_websocket_server() -> None:
     app.run(host=WS_HOST, port=WS_PORT, debug=True)
 
-
+# should not be called as main
 if __name__ == "__main__":
     start_websocket_server()
