@@ -1,10 +1,10 @@
 from __future__ import annotations
-from typing import TypeAlias, Any
+from typing import TypeAlias, Any, TypeVar
 from collections.abc import Iterator
 
 
 FlattableObject: TypeAlias = (
-    list['FlattableObject' | Any] | tuple['FlattableObject' | Any, ...] | set['FlattableObject' | Any]
+    list['FlattableObject | Any'] | tuple['FlattableObject | Any', ...] | set['FlattableObject | Any']
 )
 
 def flatten(
@@ -29,3 +29,4 @@ def flatten(
             yield from flatten(x)
         else:
             yield x
+

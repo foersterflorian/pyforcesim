@@ -5,7 +5,7 @@ from typing import (
     TypeAlias,
     Self,
     Any,
-    NewType, 
+    Final,
     Literal,
     cast,
     overload,
@@ -29,6 +29,7 @@ from plotly.graph_objs._figure import Figure as PlotlyFigure
 import plotly.io
 from websocket import create_connection
 
+from pyforcesim.simulation.types import SystemID, CustomID, LoadID
 from pyforcesim.errors import (
     AssociationError,
     ViolationStartingConditionError,
@@ -40,6 +41,7 @@ from pyforcesim.datetime import (
     TIMEZONE_UTC,
     DEFAULT_DATETIME,
 )
+from pyforcesim.simulation.base_components import SimulationComponent
 from pyforcesim.simulation.loads import (
     RandomJobGenerator,
     OrderTime,
@@ -51,24 +53,27 @@ from pyforcesim.dashboard.dashboard import (
 )
 from pyforcesim.dashboard.websocket_server import start_websocket_server
 
-
+# TODO: check if still necessary, call in base component module
 # set Salabim to yield mode (using yield is mandatory)
 sim.yieldless(False)
 
 # type aliases
 SalabimEnv: TypeAlias = sim.Environment
+Infinite: TypeAlias = float
+"""
 SystemID = NewType('SystemID', int)
 CustomID = NewType('CustomID', str)
 LoadID = NewType('LoadID', int)
+"""
 #PlotlyFigure: TypeAlias = Figure
 
 # constants
 # infinity
-INF: float = float('inf')
+INF: Final[float] = float('inf')
 # definition of routing system level
-EXEC_SYSTEM_TYPE: str = 'ProductionArea'
+EXEC_SYSTEM_TYPE: Final[str] = 'ProductionArea'
 # time after a store request is failed
-FAIL_DELAY: float = 20.
+FAIL_DELAY: Final[float] = 20.
 
 # logging
 # IPython compatibility
@@ -424,7 +429,7 @@ class InfrastructureManager:
         self._env = env
         self._env.register_infrastructure_manager(infstruct_mgr=self)
         # subsystem types
-        self._subsystem_types: set[str] = set([
+        self._system_types: set[str] = set([
             'ProductionArea',
             'StationGroup',
             'Resource',
@@ -516,8 +521,8 @@ class InfrastructureManager:
         # any open references (NA values as secondary key)
         relevant_subsystems = ('StationGroup', 'Resource')
         
-        for subsystem_type in relevant_subsystems:
-            match subsystem_type:
+        for system_type in relevant_subsystems:
+            match system_type:
                 case 'StationGroup':
                     target_db = self._station_group_db
                     secondary_key: str = 'prod_area_id'
@@ -525,10 +530,10 @@ class InfrastructureManager:
                     target_db = self._res_db
                     secondary_key: str = 'station_group_id'
             # check if there are any NA values as secondary key
-            check_val: bool = target_db[secondary_key].isna().any()
+            check_val = target_db[secondary_key].isna().any()
             if check_val:
                 # there are NA values
-                logger_infstrct.error(f"There are non-associated systems for system type >>{subsystem_type}<<. \
+                logger_infstrct.error(f"There are non-associated systems for system type >>{system_type}<<. \
                     Please check these systems and add them to a corresponding supersystem.")
                 return False
         
@@ -544,7 +549,7 @@ class InfrastructureManager:
     ### REWORK TO MULTIPLE SUBSYSTEMS
     def _obtain_system_id(
         self,
-        subsystem_type: str,
+        system_type: str,
     ) -> SystemID:
         """Simple counter function for managing system IDs
 
@@ -553,11 +558,11 @@ class InfrastructureManager:
         SystemID
             unique system ID
         """
-        if subsystem_type not in self._subsystem_types:
-            raise ValueError(f"The subsystem type >>{subsystem_type}<< is not allowed. Choose from {self._subsystem_types}")
+        if system_type not in self._system_types:
+            raise ValueError(f"The subsystem type >>{system_type}<< is not allowed. Choose from {self._system_types}")
         
         system_id: SystemID
-        match subsystem_type:
+        match system_type:
             case 'ProductionArea':
                 system_id = self._prod_area_counter
                 self._prod_area_counter += 1
@@ -572,7 +577,7 @@ class InfrastructureManager:
     
     def register_subsystem(
         self,
-        subsystem_type: str,
+        system_type: str,
         obj: System,
         custom_identifier: CustomID,
         name: str | None,
@@ -590,10 +595,10 @@ class InfrastructureManager:
             SystemID: assigned resource ID
             str: assigned resource's name
         """
-        if subsystem_type not in self._subsystem_types:
-            raise ValueError(f"The subsystem type >>{subsystem_type}<< is not allowed. Choose from {self._subsystem_types}")
+        if system_type not in self._system_types:
+            raise ValueError(f"The subsystem type >>{system_type}<< is not allowed. Choose from {self._system_types}")
         
-        match subsystem_type:
+        match system_type:
             case 'ProductionArea':
                 custom_identifiers = self._prod_area_custom_identifiers
             case 'StationGroup':
@@ -601,17 +606,17 @@ class InfrastructureManager:
             case 'Resource':
                 custom_identifiers = self._res_custom_identifiers
             case _:
-                raise ValueError(f"Unknown subsystem type of {subsystem_type}")
+                raise ValueError(f"Unknown subsystem type of {system_type}")
         
         # check if value already exists
         if custom_identifier in custom_identifiers:
-            raise ValueError((f"The custom identifier {custom_identifier} provided for subsystem type {subsystem_type} "
+            raise ValueError((f"The custom identifier {custom_identifier} provided for subsystem type {system_type} "
                             "already exists, but has to be unique."))
         else:
             custom_identifiers.add(custom_identifier)
         
         # obtain system ID
-        system_id = self._obtain_system_id(subsystem_type=subsystem_type)
+        system_id = self._obtain_system_id(system_type=system_type)
         
         # [RESOURCES] resource related data
         # register sinks
@@ -628,7 +633,7 @@ class InfrastructureManager:
             name = f'{type(obj).__name__}_env_{system_id}'
         
         # new entry for corresponding database
-        match subsystem_type:
+        match system_type:
             case 'ProductionArea':
                 new_entry: DataFrame = pd.DataFrame({
                                         'prod_area_id': [system_id],
@@ -682,9 +687,9 @@ class InfrastructureManager:
             system which is added to the supersystem and to whose database the entry is made
         """
         # target subsystem type -> identify appropriate database
-        subsystem_type = subsystem.subsystem_type
+        system_type = subsystem.system_type
         
-        match subsystem_type:
+        match system_type:
             case 'StationGroup':
                 target_db = self._station_group_db
                 target_property: str = 'prod_area_id'
@@ -702,7 +707,7 @@ class InfrastructureManager:
         system: System,
     ) -> None:
         
-        match system.subsystem_type:
+        match system.system_type:
             case 'ProductionArea':
                 lookup_db = self._prod_area_db
             case 'StationGroup':
@@ -718,7 +723,7 @@ class InfrastructureManager:
     
     def lookup_subsystem_info(
         self,
-        subsystem_type: str,
+        system_type: str,
         lookup_val: SystemID | CustomID,
         lookup_property: str | None = None,
         target_property: str | None = None,
@@ -727,11 +732,11 @@ class InfrastructureManager:
         obtain a subsystem by its property and corresponding value
         properties: Subsystem ID, Custom ID, Name
         """
-        if subsystem_type not in self._subsystem_types:
-            raise ValueError(f"The subsystem type >>{subsystem_type}<< is not allowed. Choose from {self._subsystem_types}")
+        if system_type not in self._system_types:
+            raise ValueError(f"The subsystem type >>{system_type}<< is not allowed. Choose from {self._system_types}")
         
         id_prop: str
-        match subsystem_type:
+        match system_type:
             case 'ProductionArea':
                 allowed_lookup_props = self._prod_area_lookup_props
                 lookup_db = self._prod_area_db
@@ -763,10 +768,10 @@ class InfrastructureManager:
         
         # check if property is a filter criterion
         if lookup_property not in allowed_lookup_props:
-            raise IndexError(f"Lookup Property '{lookup_property}' is not allowed for subsystem type {subsystem_type}. Choose from {allowed_lookup_props}")
+            raise IndexError(f"Lookup Property '{lookup_property}' is not allowed for subsystem type {system_type}. Choose from {allowed_lookup_props}")
         # check if target property is allowed
         if target_property not in allowed_target_props:
-            raise IndexError(f"Target Property >>{target_property}<< is not allowed for subsystem type {subsystem_type}. Choose from {allowed_target_props}")
+            raise IndexError(f"Target Property >>{target_property}<< is not allowed for subsystem type {system_type}. Choose from {allowed_target_props}")
         # None type value can not be looked for
         if lookup_val is None:
             raise TypeError("The lookup value can not be of type >>None<<.")
@@ -803,11 +808,11 @@ class InfrastructureManager:
     
     def lookup_custom_ID(
         self,
-        subsystem_type: str,
+        system_type: str,
         system_ID: SystemID,
     ) -> CustomID:
         id_prop: str
-        match subsystem_type:
+        match system_type:
             case 'ProductionArea':
                 id_prop = 'prod_area_id'
             case 'StationGroup':
@@ -816,7 +821,7 @@ class InfrastructureManager:
                 id_prop = 'res_id'
         
         custom_id = cast(CustomID, self.lookup_subsystem_info(
-            subsystem_type=subsystem_type,
+            system_type=system_type,
             lookup_val=system_ID,
             lookup_property=id_prop,
             target_property='custom_id',
@@ -826,12 +831,12 @@ class InfrastructureManager:
     
     def lookup_system_ID(
         self,
-        subsystem_type: str,
+        system_type: str,
         custom_ID: CustomID,
     ) -> SystemID:
         
         system = cast(System, self.lookup_subsystem_info(
-            subsystem_type=subsystem_type,
+            system_type=system_type,
             lookup_val=custom_ID,
             lookup_property='custom_id',
         ))
@@ -1405,14 +1410,14 @@ class Dispatcher:
         # no pre-determined assignment of processing stations
         exec_system = cast(ProductionArea, 
                            infstruct_mgr.lookup_subsystem_info(
-                               subsystem_type=EXEC_SYSTEM_TYPE,
+                               system_type=EXEC_SYSTEM_TYPE,
                                lookup_val=exec_system_identifier))
         # if target station group is specified, get instance
         target_station_group: StationGroup | None
         if target_station_group_identifier is not None:
             target_station_group = cast(StationGroup,
                                         infstruct_mgr.lookup_subsystem_info(
-                                            subsystem_type='StationGroup',
+                                            system_type='StationGroup',
                                             lookup_val=target_station_group_identifier))
             # validity check: only target stations allowed which are 
             # part of the current execution system
@@ -1431,8 +1436,8 @@ class Dispatcher:
                                 'prio': [op.prio],
                                 'execution_system': [exec_system],
                                 'execution_system_custom_id': [exec_system.custom_identifier],
-                                'execution_system_name': [exec_system.name()],
-                                'execution_system_type': [exec_system.subsystem_type],
+                                'execution_system_name': [exec_system.name],
+                                'execution_system_type': [exec_system.system_type],
                                 'target_station_custom_id': [None],
                                 'target_station_name': [None],
                                 'proc_time': [op.proc_time],
@@ -1514,7 +1519,7 @@ class Dispatcher:
                     val=target_station.custom_identifier)
         self.update_operation_db(
                     op=op, property='target_station_name', 
-                    val=target_station.name())
+                    val=target_station.name)
     
     def enter_operation(
         self,
@@ -2137,7 +2142,7 @@ class System(OrderedDict):
     def __init__(
         self,
         env: SimulationEnvironment,
-        subsystem_type: str,
+        system_type: str,
         custom_identifier: CustomID,
         abstraction_level: int,
         name: str | None = None,
@@ -2147,7 +2152,7 @@ class System(OrderedDict):
         # environment
         self._env = env
         # subsystem information
-        self._subsystem_type: str = subsystem_type
+        self._type: str = system_type
         # supersystem information
         self._supersystems: dict[SystemID, System] = {}
         self._supersystems_ids: set[SystemID] = set()
@@ -2163,7 +2168,7 @@ class System(OrderedDict):
         
         infstruct_mgr = self.env.infstruct_mgr
         self._system_id, self._name = infstruct_mgr.register_subsystem(
-                                        subsystem_type=self._subsystem_type,
+                                        system_type=self._type,
                                         obj=self, custom_identifier=custom_identifier,
                                         name=name, state=state)
         self._custom_identifier = custom_identifier
@@ -2237,7 +2242,7 @@ class System(OrderedDict):
         if not self._alloc_agent_registered and isinstance(alloc_agent, AllocationAgent):
             self._alloc_agent = alloc_agent
             self._alloc_agent_registered = True
-            logger_env.info(f"Successfully registered Allocation Agent in Env = {self.name()}")
+            logger_env.info(f"Successfully registered Allocation Agent in Area = {self.name}")
         elif not isinstance(alloc_agent, AllocationAgent):
             raise TypeError(f"The object must be of type >>AllocationAgent<< but is type >>{type(alloc_agent)}<<")
         else:
@@ -2253,20 +2258,20 @@ class System(OrderedDict):
             return False
     
     def __str__(self) -> str:
-        return f'System (type: {self._subsystem_type}, custom_id: {self._custom_identifier}, name: {self._name})'
+        return f'System (type: {self._type}, custom_id: {self._custom_identifier}, name: {self._name})'
     
     def __repr__(self) -> str:
-        return f'System (type: {self._subsystem_type}, custom_id: {self._custom_identifier}, name: {self._name})'
+        return f'System (type: {self._type}, custom_id: {self._custom_identifier}, name: {self._name})'
     
     def __key(self) -> tuple[SystemID, str]:
-        return (self._system_id, self._subsystem_type)
+        return (self._system_id, self._type)
     
     def __hash__(self) -> int:
         return hash(self.__key())
     
     @property
-    def subsystem_type(self) -> str:
-        return self._subsystem_type
+    def system_type(self) -> str:
+        return self._type
     
     @property
     def system_id(self) -> SystemID:
@@ -2276,8 +2281,8 @@ class System(OrderedDict):
     def custom_identifier(self) -> CustomID:
         return self._custom_identifier
     
-    # compatibility to Salabim component --> declaration as property not allowed
-    def name(self) -> str | None:
+    @property
+    def name(self) -> str:
         return self._name
     
     @property
@@ -2498,7 +2503,7 @@ class ProductionArea(System):
         """
         
         # initialise base class
-        super().__init__(subsystem_type='ProductionArea', abstraction_level=2, **kwargs)
+        super().__init__(system_type='ProductionArea', abstraction_level=2, **kwargs)
     
     def add_subsystem(
         self,
@@ -2533,7 +2538,7 @@ class StationGroup(System):
         """
         
         # initialise base class
-        super().__init__(subsystem_type='StationGroup', abstraction_level=1, **kwargs)
+        super().__init__(system_type='StationGroup', abstraction_level=1, **kwargs)
         
         return None
     
@@ -2581,13 +2586,12 @@ class Monitor:
             'FAILED', 
             'PAUSED',
         ),
-        **kwargs,
     ) -> None:
         """
         Class to monitor associated objects (load and resource)
         """
         # initialise parent class if available
-        super().__init__(**kwargs)
+        #super().__init__(**kwargs)
         
         # [REGISTRATION]
         self._env = env
@@ -2856,11 +2860,27 @@ class BufferMonitor(Monitor):
     
     def __init__(
         self,
-        obj: Buffer,
-        **kwargs,
+        env: SimulationEnvironment,
+        obj: BufferLike,
+        init_state: str = 'INIT',
+        possible_states: Iterable[str] = (
+            'INIT',
+            'FINISH',
+            'TEMP',
+            'FULL',
+            'EMPTY',
+            'INTERMEDIATE',
+            'FAILED',
+            'PAUSED',
+        ),
     ) -> None:
         # initialise parent class
-        super().__init__(obj=obj, **kwargs)
+        super().__init__(
+            env=env,
+            obj=obj,
+            init_state=init_state,
+            possible_states=possible_states,
+        )
         
         # fill level tracking
         """
@@ -2882,10 +2902,10 @@ class BufferMonitor(Monitor):
         """
         self._level_db: DataFrame = pd.DataFrame(
                                         columns=['sim_time', 'duration', 'level'], 
-                                        data=[[self.env.t_as_dt(), Timedelta(), obj.start_fill_level]])
+                                        data=[[self.env.t_as_dt(), Timedelta(), obj.fill_level_init]])
         self._level_db = self._level_db.astype(self._level_db_types)
         
-        self._current_fill_level = obj.start_fill_level
+        self._current_fill_level = obj.fill_level_init
         #self._fill_level_starting_time: float = self.env.now()
         self._fill_level_starting_time: Datetime = self.env.t_as_dt()
         self._wei_avg_fill_level: float | None = None
@@ -3005,11 +3025,28 @@ class InfStructMonitor(Monitor):
     
     def __init__(
         self,
+        env: SimulationEnvironment,
         obj: InfrastructureObject,
-        **kwargs,
+        init_state: str = 'INIT',
+        possible_states: Iterable[str] = (
+            'INIT',
+            'FINISH',
+            'TEMP',
+            'WAITING', 
+            'PROCESSING',
+            'SETUP', 
+            'BLOCKED', 
+            'FAILED', 
+            'PAUSED',
+        ),
     ) -> None:
         # initialise parent class
-        super().__init__(obj=obj, **kwargs)
+        super().__init__(
+            env=env,
+            obj=obj,
+            init_state=init_state,
+            possible_states=possible_states,
+        )
         
         # WIP tracking time load
         self._WIP_time_db_types = {
@@ -3262,7 +3299,7 @@ class InfStructMonitor(Monitor):
 
 # INFRASTRUCTURE COMPONENTS
 
-class InfrastructureObject(System, sim.Component):
+class InfrastructureObject(System):
     
     def __init__(
         self,
@@ -3283,7 +3320,6 @@ class InfrastructureObject(System, sim.Component):
             'FAILED', 
             'PAUSED',
         ),
-        **kwargs,
     ) -> None:
         """
         env: simulation environment in which the infrastructure object is embedded
@@ -3294,7 +3330,9 @@ class InfrastructureObject(System, sim.Component):
         """
         # [STATS] Monitoring
         # special monitors for some classes
-        self._stat_monitor : Monitor | BufferMonitor | InfStructMonitor
+        #self._stat_monitor : Monitor | BufferMonitor | InfStructMonitor
+        
+        """
         if isinstance(self, Buffer):
             self._stat_monitor = BufferMonitor(
                                 env=env, obj=self, init_state=state, 
@@ -3303,46 +3341,61 @@ class InfrastructureObject(System, sim.Component):
             self._stat_monitor = InfStructMonitor(
                                 env=env, obj=self, init_state=state, 
                                 possible_states=possible_states, **kwargs)
+        
         # ?? is this even triggered?
         # !! check
         else:
             self._stat_monitor = Monitor(env=env, obj=self, init_state=state, 
                                 possible_states=possible_states, **kwargs)
+        """
         
-        # assert machine information and register object in the environment
-        current_state = self._stat_monitor.get_current_state()
         
         # [HIERARCHICAL SYSTEM INFORMATION]
         # contrary to other system types no bucket because a processing station 
         # is the smallest unit in the system view/analysis
         # initialise base class >>System<<
         # calls to Infrastructure Manager to register object
-        System.__init__(
-            self,
+        super().__init__(
             env=env,
-            subsystem_type='Resource',
+            system_type='Resource',
             custom_identifier=custom_identifier,
             abstraction_level=0,
             name=name,
-            state=current_state,
-            **kwargs
+            state=state,
+        )
+        
+        self._stat_monitor = InfStructMonitor(
+            env=env, 
+            obj=self,
+            init_state=state,
+            possible_states=possible_states,
         )
         
         self.cap = capacity
         self.res_type: str
         
         # [SALABIM COMPONENT] initialise base class
-        process: str = 'main_logic'
-        sim.Component.__init__(self, env=env, name=self._name, 
-                               process=process, suppress_trace=True, **kwargs)
+        # TODO use new composition approach
+        self.sim_control = SimulationComponent(
+            env=env,
+            pre_process=self.pre_process,
+            sim_logic=self.sim_logic,
+            post_process=self.post_process,
+            name=self.name,
+        )
+        """
+        super().__init__(self, env=env, name=self._name, 
+                         process=process, suppress_trace=True, **kwargs)
+        """
         
         # add logic queues
         # each resource uses one associated logic queue, logic queues are not physically available
-        queue_name: str = f"queue_{self.name()}"
+        # TODO: check name property with buffers
+        queue_name: str = f"queue_{self.name}"
         self.logic_queue = sim.Queue(name=queue_name, env=self.env)
         
         # currently available jobs on that resource
-        self.contents: OrderedDict[LoadID, Job] = OrderedDict()
+        self.contents: dict[LoadID, Job] = {}
         
         # [STATS] additional information
         # number of inputs/outputs
@@ -3363,8 +3416,9 @@ class InfrastructureObject(System, sim.Component):
     
     # override for corresponding classes
     @property
-    def stat_monitor(self) -> Monitor | BufferMonitor | InfStructMonitor:
+    def stat_monitor(self) -> InfStructMonitor:
         return self._stat_monitor
+    
     """
     def td_to_simtime(
         self,
@@ -3455,7 +3509,8 @@ class InfrastructureObject(System, sim.Component):
         infstruct_mgr = self.env.infstruct_mgr
         # call dispatcher to check for allocation rule
         # resets current feasibility status
-        yield self.hold(0)
+        #yield self.hold(0)
+        yield self.sim_control.hold(0)
         is_agent, alloc_agent = dispatcher.check_alloc_dispatch(job=job)
         if is_agent and alloc_agent is None:
             raise ValueError("Agent is set, but no agent is provided.")
@@ -3468,7 +3523,8 @@ class InfrastructureObject(System, sim.Component):
                 # ** Break external loop
                 # ** [only step] Calc reward in Gym-Env
                 logger.debug(f'--------------- DEBUG: call before hold(0) at {self.env.t()}, {self.env.t_as_dt()}')
-                yield self.hold(0)
+                #yield self.hold(0)
+                yield self.sim_control.hold(0)
                 # ** make and set decision in Gym-Env --> RESET external Gym flag
                 logger.debug(f'--------------- DEBUG: call after hold(0) at {self.env.t()}')
                 logger_agents.debug((f"current {alloc_agent.action_feasible}, "
@@ -3496,9 +3552,10 @@ class InfrastructureObject(System, sim.Component):
         # agent.past_action_feasible = agent.action_feasible
         
         
-        yield self.hold(0)
+        #yield self.hold(0)
+        yield self.sim_control.hold(0)
         
-        target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
+        #target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
         # feasibility is checked inside method
         
         ### UPDATE JOB PROCESS INFO IN REQUEST FUNCTION???
@@ -3519,12 +3576,15 @@ class InfrastructureObject(System, sim.Component):
                 infstruct_mgr.update_res_state(obj=self, state='BLOCKED')
                 # [STATE:Job] BLOCKED
                 dispatcher.update_job_state(job=job, state='BLOCKED')
-                yield self.to_store(store=buffers, item=job, fail_delay=FAIL_DELAY, fail_priority=1)
-                if self.failed():
+                #yield self.to_store(store=buffers, item=job, fail_delay=FAIL_DELAY, fail_priority=1)
+                yield self.sim_control.to_store(store=buffers, item=job, fail_delay=FAIL_DELAY, fail_priority=1)
+                #if self.failed():
+                if self.sim_control.failed():
                     raise UserWarning((f"Store placement failed after {FAIL_DELAY} time steps. "
                                        "There seems to be deadlock."))
                 # [STATE:Buffer] trigger state setting for target buffer
-                buffer = self.to_store_store()
+                #buffer = self.to_store_store()
+                buffer = self.sim_control.to_store_store()
                 if not isinstance(buffer, Buffer):
                     #logger_prodStations.debug(f"To store store object: {buffer}")
                     raise TypeError(f"From {self}: Job {job} Obj {buffer} is no buffer type at {self.env.now()}")
@@ -3552,11 +3612,13 @@ class InfrastructureObject(System, sim.Component):
             target_station.stat_monitor.change_WIP(job=job, remove=False)
         
         # activate target processing station if passive
-        if target_station.ispassive():
-            target_station.activate()
+        #if target_station.ispassive():
+        #    target_station.activate()
+        if target_station.sim_control.ispassive():
+            target_station.sim_control.activate()
         
         logger_prodStations.debug(f"[{self}] Put Job {job} in queue {logic_queue}")
-    
+
         # [STATE:InfrStructObj] WAITING
         infstruct_mgr.update_res_state(obj=self, state='WAITING')
         # [STATE:Job] successfully placed --> WAITING
@@ -3594,14 +3656,17 @@ class InfrastructureObject(System, sim.Component):
         
         # request and get job from associated buffer if it exists
         if isinstance(self, ProcessingStation) and self._buffers:
-            yield self.from_store(store=self._buffers, filter=lambda item: item.job_id==job.job_id)
-            buffer = cast(Buffer, self.from_store_store())
+            #yield self.from_store(store=self._buffers, filter=lambda item: item.job_id==job.job_id)
+            yield self.sim_control.from_store(store=self._buffers, filter=lambda item: item.job_id==job.job_id)
+            #buffer = cast(Buffer, self.from_store_store())
+            buffer = cast(Buffer, self.sim_control.from_store_store())
             # [STATS:Buffer] count number of outputs
             buffer.num_outputs += 1
             # [CONTENT:Buffer] remove content
             buffer.remove_content(job=job)
             # [STATE:Buffer] trigger state setting for target buffer
-            buffer.activate()
+            #buffer.activate()
+            buffer.sim_control.activate()
         else:
             pass
         
@@ -3623,7 +3688,8 @@ class InfrastructureObject(System, sim.Component):
                 with setup time {self.setup_time}")
             sim_time = self.env.td_to_simtime(timedelta=self.setup_time)
             #yield self.hold(self.setup_time)
-            yield self.hold(sim_time)
+            #yield self.hold(sim_time)
+            yield self.sim_control.hold(sim_time)
         
         # [STATE:InfrStructObj] set state to processing
         infstruct_mgr.update_res_state(obj=self, state='PROCESSING')
@@ -3638,7 +3704,7 @@ class InfrastructureObject(System, sim.Component):
         """return type: tuple with parameters or None"""
         raise NotImplementedError(f"No pre-process method for {self} of type {self.__class__.__name__} defined.")
     
-    def sim_control(self) -> Generator[Any, Any, Any]:
+    def sim_logic(self) -> Generator[Any, Any, Any]:
         """return type: tuple with parameters or None"""
         raise NotImplementedError(f"No sim-control method for {self} of type {self.__class__.__name__} defined.")
     
@@ -3653,9 +3719,9 @@ class InfrastructureObject(System, sim.Component):
         ret = self.pre_process()
         # main control logic
         if ret is not None:
-            ret = yield from self.sim_control(*ret)
+            ret = yield from self.sim_logic(*ret)
         else:
-            ret = yield from self.sim_control()
+            ret = yield from self.sim_logic()
         # post control logic
         if ret is not None:
             ret = self.post_process(*ret)
@@ -3673,12 +3739,73 @@ class InfrastructureObject(System, sim.Component):
         # finalise stat gathering
         self._stat_monitor.finalise_stats()
 
+
+class BufferLike(InfrastructureObject):
+    
+    def __init__(
+        self, 
+        env: SimulationEnvironment, 
+        custom_identifier: CustomID, 
+        name: str | None = None, 
+        setup_time: Timedelta | None = None, 
+        capacity: int | Infinite = INF,
+        state: str = 'INIT',
+        possible_states: Iterable[str] = (
+            'INIT',
+            'FINISH',
+            'TEMP',
+            'FULL',
+            'EMPTY',
+            'INTERMEDIATE',
+            'FAILED',
+            'PAUSED',
+        ),
+        fill_level_init: int = 0,
+    ) -> None:
+        super().__init__(
+            env=env,
+            custom_identifier=custom_identifier,
+            name=name,
+            setup_time=setup_time,
+            capacity=capacity,
+            state=state,
+            possible_states=possible_states,
+        )
+        self.fill_level_init = fill_level_init
+        
+        self._stat_monitor = BufferMonitor(
+            env=env,
+            obj=self,
+            init_state=state,
+            possible_states=possible_states,
+        )
+    
+    @property
+    def stat_monitor(self) -> BufferMonitor:
+        return self._stat_monitor
+
 class ProcessingStation(InfrastructureObject):
     
     def __init__(
         self,
+        env: SimulationEnvironment,
+        custom_identifier: CustomID,
+        name: str | None = None,
+        setup_time: Timedelta | None = None,
+        capacity: float = INF,
+        state: str = 'INIT',
+        possible_states: Iterable[str] = (
+            'INIT',
+            'FINISH',
+            'TEMP',
+            'WAITING', 
+            'PROCESSING',
+            'SETUP', 
+            'BLOCKED', 
+            'FAILED', 
+            'PAUSED',
+        ),
         buffers: Iterable[Buffer] | None = None,
-        **kwargs,
     ) -> None:
         """
         env: simulation environment in which the infrastructure object is embedded
@@ -3686,20 +3813,40 @@ class ProcessingStation(InfrastructureObject):
             slots available at the same time > 1, default=1
         """
         # initialise base class
-        super().__init__(**kwargs)
+        super().__init__(
+            env=env,
+            custom_identifier=custom_identifier,
+            name=name,
+            setup_time=setup_time,
+            capacity=capacity,
+            state=state,
+            possible_states=possible_states,
+        )
+        
+        self._stat_monitor = InfStructMonitor(
+            env=env, 
+            obj=self, 
+            init_state=state, 
+            possible_states=possible_states,
+        )
         
         # add physical buffers, more than one allowed
         # contrary to logic queues buffers are infrastructure objects and exist physically
+        self._buffers: set[Buffer]
         if buffers is None:
-            self._buffers: set[Buffer] = set()
+            self._buffers = set()
         else:
-            self._buffers: set[Buffer] = set(buffers).copy()
+            self._buffers = set(buffers).copy()
         
         # add processing station to the associated ones of each buffer
         # necessary because if the number of resources for one buffer exceeds its capacity
         # deadlocks are possible
         for buffer in self._buffers:
             buffer.add_prod_station(prod_station=self)
+    
+    @property
+    def stat_monitor(self) -> InfStructMonitor:
+        return self._stat_monitor
     
     # TODO: add station group information or delete
     """
@@ -3754,13 +3901,14 @@ class ProcessingStation(InfrastructureObject):
         infstruct_mgr = self.env.infstruct_mgr
         infstruct_mgr.update_res_state(obj=self, state='WAITING')
     
-    def sim_control(self) -> Generator[Any, None, None]:
+    def sim_logic(self) -> Generator[Any, None, None]:
         dispatcher = self.env.dispatcher
         while True:
             # initialise state by passivating machines
             # resources are activated by other resources
             if len(self.logic_queue) == 0:
-                yield self.passivate()
+                #yield self.passivate()
+                yield self.sim_control.passivate()
             logger_prodStations.debug(f"[MACHINE: {self}] is getting job from queue")
             
             # get job function from PARENT CLASS
@@ -3772,7 +3920,8 @@ class ProcessingStation(InfrastructureObject):
                 with proc time {self.proc_time}")
             # PROCESSING
             sim_time = self.env.td_to_simtime(timedelta=self.proc_time)
-            yield self.hold(sim_time)
+            #yield self.hold(sim_time)
+            yield self.sim_control.hold(sim_time)
             # RELEVANT INFORMATION AFTER PROCESSING
             dispatcher.update_job_process_info(job=job, preprocess=False)
             
@@ -3799,7 +3948,24 @@ class Machine(ProcessingStation):
     
     def __init__(
         self,
-        **kwargs,
+        env: SimulationEnvironment,
+        custom_identifier: CustomID,
+        name: str | None = None,
+        setup_time: Timedelta | None = None,
+        capacity: float = INF,
+        state: str = 'INIT',
+        possible_states: Iterable[str] = (
+            'INIT',
+            'FINISH',
+            'TEMP',
+            'WAITING', 
+            'PROCESSING',
+            'SETUP', 
+            'BLOCKED', 
+            'FAILED', 
+            'PAUSED',
+        ),
+        buffers: Iterable[Buffer] | None = None,
     ) -> None:
         """
         ADD LATER
@@ -3808,13 +3974,27 @@ class Machine(ProcessingStation):
         self.res_type = 'Machine'
         
         # initialise base class
-        super().__init__(**kwargs)
+        super().__init__(
+            env=env,
+            custom_identifier=custom_identifier,
+            name=name,
+            setup_time=setup_time,
+            capacity=capacity,
+            state=state,
+            possible_states=possible_states,
+            buffers=buffers,
+        )
 
-class Buffer(sim.Store, InfrastructureObject):
+class Buffer(sim.Store, BufferLike):
     
     def __init__(
         self,
-        capacity: int,
+        env: SimulationEnvironment,
+        custom_identifier: CustomID,
+        name: str | None = None,
+        setup_time: Timedelta | None = None,
+        capacity: int | Infinite = INF,
+        state: str = 'INIT',
         possible_states: Iterable[str] = (
             'INIT',
             'FINISH',
@@ -3825,23 +4005,30 @@ class Buffer(sim.Store, InfrastructureObject):
             'FAILED',
             'PAUSED',
         ),
-        fill_level: int = 0,
-        **kwargs,
+        fill_level_init: int = 0,
     ) -> None:
         """
         capacity: capacity of the buffer, can be infinite
         """
         # assert object information
         self.res_type = 'Buffer'
-        self.start_fill_level = fill_level
+        self.start_fill_level = fill_level_init
         
         # initialise base classes
         # using hard-coded classes because Salabim does not provide 
         # interfaces for multiple inheritance
-        sim.Store.__init__(self, capacity=capacity, env=kwargs['env'])
-        InfrastructureObject.__init__(
-                            self, capacity=capacity, 
-                            possible_states=possible_states, **kwargs)
+        sim.Store.__init__(self, capacity=capacity, env=env) # type: ignore Salabim wrong type hint
+        BufferLike.__init__(
+            self,
+            env=env,
+            custom_identifier=custom_identifier,
+            name=name,
+            setup_time=setup_time,
+            capacity=capacity,
+            state=state,
+            possible_states=possible_states,
+            fill_level_init=fill_level_init,
+        )
         
         # material flow relationships
         self._associated_prod_stations: set[ProcessingStation] = set()
@@ -3900,7 +4087,7 @@ class Buffer(sim.Store, InfrastructureObject):
         infstruct_mgr = self.env.infstruct_mgr
         infstruct_mgr.update_res_state(obj=self, state='EMPTY')
     
-    def sim_control(self) -> Generator[None, None, None]:
+    def sim_logic(self) -> Generator[None, None, None]:
         infstruct_mgr = self.env.infstruct_mgr
         while True:
             logger_prodStations.debug(f"[BUFFER: {self}] Invoking at {self.env.now()}")
@@ -3919,7 +4106,8 @@ class Buffer(sim.Store, InfrastructureObject):
                 infstruct_mgr.update_res_state(obj=self, state='INTERMEDIATE')
                 logger_prodStations.debug(f"[BUFFER: {self}] Neither 'EMPTY' nor 'FULL' at {self.env.now()}")
             
-            yield self.passivate()
+            #yield self.passivate()
+            yield self.sim_control.passivate()
     
     def post_process(self) -> None:
         pass
@@ -3937,17 +4125,43 @@ class Source(InfrastructureObject):
     
     def __init__(
         self,
+        env: SimulationEnvironment,
+        custom_identifier: CustomID,
+        name: str | None = None,
+        setup_time: Timedelta | None = None,
+        capacity: float = INF,
+        state: str = 'INIT',
+        possible_states: Iterable[str] = (
+            'INIT',
+            'FINISH',
+            'TEMP',
+            'WAITING', 
+            'PROCESSING',
+            'SETUP', 
+            'BLOCKED', 
+            'FAILED', 
+            'PAUSED',
+        ),
         proc_time: Timedelta = Timedelta(hours=2),
         job_generator: RandomJobGenerator | None = None,
         job_sequence: Iterator[tuple[SystemID, SystemID, OrderTime]] | None = None,
         num_gen_jobs: int | None = None,
-        **kwargs,
     ) -> None:
         """
         num_gen_jobs: total number of jobs to be generated
         """
         # assert object information and register object in the environment
         self.res_type = 'Source'
+        
+        super().__init__(
+            env=env,
+            custom_identifier=custom_identifier,
+            name=name,
+            setup_time=setup_time,
+            capacity=capacity,
+            state=state,
+            possible_states=possible_states,
+        )
         
         # generation method
         if job_generator is None and job_sequence is None:
@@ -3959,9 +4173,8 @@ class Source(InfrastructureObject):
         self.job_sequence = job_sequence
         
         ################## REWORK
-        # initialize component with necessary process function
+        # initialise component with necessary process function
         random.seed(42)
-        super().__init__(**kwargs)
         
         # parameters
         self.proc_time = proc_time
@@ -3974,7 +4187,7 @@ class Source(InfrastructureObject):
             self.use_stop_time = True
         
         # triggers and flags
-        # indicator if a corresponding ConditionSetter was regsitered
+        # indicator if a corresponding ConditionSetter was registered
         self.stop_job_gen_cond_reg: bool = False
         self.stop_job_gen_state = sim.State('stop_job_gen', env=self.env)
     
@@ -4002,7 +4215,7 @@ class Source(InfrastructureObject):
             raise ValueError((f"[SOURCE {self}]: Stop time condition should be used, "
                               "but no ConditionSetter is registered"))
     
-    def sim_control(self) -> Generator[None, None, None]:
+    def sim_logic(self) -> Generator[None, None, None]:
         # counter for debugging, else endless generation
         count = 0
         infstruct_mgr = self.env.infstruct_mgr
@@ -4124,7 +4337,8 @@ class Source(InfrastructureObject):
             # if hold time elapsed start new generation
             proc_time = self._obtain_proc_time()
             logger_sources.debug(f"[SOURCE: {self}] Hold for >>{proc_time}<< at {self.env.now()}")
-            yield self.hold(proc_time)
+            #yield self.hold(proc_time)
+            yield self.sim_control.hold(proc_time)
             # set counter up
             count += 1
         
@@ -4138,7 +4352,23 @@ class Sink(InfrastructureObject):
     
     def __init__(
         self,
-        **kwargs,
+        env: SimulationEnvironment,
+        custom_identifier: CustomID,
+        name: str | None = None,
+        setup_time: Timedelta | None = None,
+        capacity: float = INF,
+        state: str = 'INIT',
+        possible_states: Iterable[str] = (
+            'INIT',
+            'FINISH',
+            'TEMP',
+            'WAITING', 
+            'PROCESSING',
+            'SETUP', 
+            'BLOCKED', 
+            'FAILED', 
+            'PAUSED',
+        ),
     ) -> None:
         """
         num_gen_jobs: total number of jobs to be generated
@@ -4147,7 +4377,15 @@ class Sink(InfrastructureObject):
         self.res_type = 'Sink'
         
         # initialize parent class
-        super().__init__(**kwargs)
+        super().__init__(
+            env=env,
+            custom_identifier=custom_identifier,
+            name=name,
+            setup_time=setup_time,
+            capacity=capacity,
+            state=state,
+            possible_states=possible_states,
+        )
     
     ### PROCESS LOGIC
     def pre_process(self) -> None:
@@ -4155,12 +4393,13 @@ class Sink(InfrastructureObject):
         infstruct_mgr = self.env.infstruct_mgr
         infstruct_mgr.update_res_state(obj=self, state='PROCESSING')
     
-    def sim_control(self) -> Generator[None, None, None]:
+    def sim_logic(self) -> Generator[None, None, None]:
         dispatcher = self.env.dispatcher
         while True:
             # in analogy to ProcessingStations
             if len(self.logic_queue) == 0:
-                yield self.passivate()
+                #yield self.passivate()
+                yield self.sim_control.passivate()
             logger_sinks.debug(f"[SINK: {self}] is getting job from queue")
             # get job, simple FIFO
             job = cast(Job, self.logic_queue.pop())
@@ -4627,7 +4866,7 @@ class Job(sim.Component):
 # !! code duplicated with InfrastructureObject
 # ?? possible to make ``BaseComponent`` class
 # !! conditions in separate module
-class BaseComponent(sim.Component):
+class Component(sim.Component):
     
     def __init__(
         self,
@@ -4673,7 +4912,7 @@ class BaseComponent(sim.Component):
         else:
             ret = self.post_process()
 
-class ConditionSetter(BaseComponent):
+class ConditionSetter(Component):
     
     def __init__(
         self,

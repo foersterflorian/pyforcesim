@@ -267,7 +267,7 @@ class ProductionSequenceSinglePA(ProductionSequence):
         # associated production area
         self._prod_area_id = prod_area_id
         self._prod_area = typing.cast('ProductionArea', self.env.infstruct_mgr.lookup_subsystem_info(
-            subsystem_type='ProductionArea',
+            system_type='ProductionArea',
             lookup_val=self._prod_area_id,
         ))
     
