@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 from typing import (
-    TypeAlias,
     Self,
     Any,
     Final,
@@ -12,8 +11,6 @@ from typing import (
 )
 from collections import OrderedDict, deque
 from collections.abc import Iterable, Sequence, Generator, Iterator
-import sys
-import logging
 import random
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
@@ -21,15 +18,23 @@ from operator import attrgetter
 from functools import lru_cache
 import multiprocessing as mp
 
-import salabim as sim
-from pandas import DataFrame, Series
+import salabim
+from pandas import DataFrame
 import pandas as pd
 import plotly.express as px
-from plotly.graph_objs._figure import Figure as PlotlyFigure
 import plotly.io
 from websocket import create_connection
 
-from pyforcesim.simulation.types import SystemID, CustomID, LoadID
+from pyforcesim.types import (
+    SystemID,
+    CustomID,
+    LoadID,
+    Infinite,
+    PlotlyFigure,
+    INF,
+)
+from pyforcesim import loggers
+from pyforcesim.simulation import monitors
 from pyforcesim.errors import (
     AssociationError,
     ViolationStartingConditionError,
@@ -41,7 +46,10 @@ from pyforcesim.datetime import (
     TIMEZONE_UTC,
     DEFAULT_DATETIME,
 )
-from pyforcesim.simulation.base_components import SimulationComponent
+from pyforcesim.simulation.base_components import (
+    SimulationComponent,
+    StorageComponent,
+)
 from pyforcesim.simulation.loads import (
     RandomJobGenerator,
     OrderTime,
@@ -55,73 +63,18 @@ from pyforcesim.dashboard.websocket_server import start_websocket_server
 
 # TODO: check if still necessary, call in base component module
 # set Salabim to yield mode (using yield is mandatory)
-sim.yieldless(False)
+salabim.yieldless(False)
 
-# type aliases
-SalabimEnv: TypeAlias = sim.Environment
-Infinite: TypeAlias = float
-"""
-SystemID = NewType('SystemID', int)
-CustomID = NewType('CustomID', str)
-LoadID = NewType('LoadID', int)
-"""
-#PlotlyFigure: TypeAlias = Figure
-
-# constants
-# infinity
-INF: Final[float] = float('inf')
+# ** constants
 # definition of routing system level
 EXEC_SYSTEM_TYPE: Final[str] = 'ProductionArea'
 # time after a store request is failed
 FAIL_DELAY: Final[float] = 20.
 
-# logging
-# IPython compatibility
-logging.basicConfig(stream=sys.stdout)
-LOGGING_LEVEL = 'DEBUG'
-LOGGING_LEVEL_ENV = 'INFO'
-LOGGING_LEVEL_DISPATCHER = 'ERROR'
-LOGGING_LEVEL_INFSTRCT = 'INFO'
-LOGGING_LEVEL_SOURCES = 'ERROR'
-LOGGING_LEVEL_SINKS = 'ERROR'
-LOGGING_LEVEL_PRODSTATIONS = 'ERROR'
-LOGGING_LEVEL_JOBS = 'ERROR'
-LOGGING_LEVEL_OPERATIONS = 'ERROR'
-LOGGING_LEVEL_BUFFERS = 'ERROR'
-LOGGING_LEVEL_MONITORS = 'ERROR'
-LOGGING_LEVEL_AGENTS = 'DEBUG'
-LOGGING_LEVEL_CONDITIONS = 'ERROR'
+# ** utilities
+# UTILITIES: Datetime Manager
+_dt_mgr = DTManager()
 
-logger = logging.getLogger('sim_env.base')
-logger.setLevel(LOGGING_LEVEL)
-logger_env = logging.getLogger('sim_env.env')
-logger_env.setLevel(LOGGING_LEVEL_ENV)
-logger_dispatcher = logging.getLogger('sim_env.dispatcher')
-logger_dispatcher.setLevel(LOGGING_LEVEL_DISPATCHER)
-logger_infstrct = logging.getLogger('sim_env.infstrct')
-logger_infstrct.setLevel(LOGGING_LEVEL_INFSTRCT)
-logger_sources = logging.getLogger('sim_env.sources')
-logger_sources.setLevel(LOGGING_LEVEL_SOURCES)
-logger_sinks = logging.getLogger('sim_env.sinks')
-logger_sinks.setLevel(LOGGING_LEVEL_SINKS)
-logger_prodStations = logging.getLogger('sim_env.prodStations')
-logger_prodStations.setLevel(LOGGING_LEVEL_PRODSTATIONS)
-logger_buffers = logging.getLogger('sim_env.buffers')
-logger_buffers.setLevel(LOGGING_LEVEL_BUFFERS)
-logger_monitors = logging.getLogger('sim_env.monitors')
-logger_monitors.setLevel(LOGGING_LEVEL_MONITORS)
-logger_agents = logging.getLogger('sim_env.agents')
-logger_agents.setLevel(LOGGING_LEVEL_AGENTS)
-logger_conditions = logging.getLogger('sim_env.conditions')
-logger_conditions.setLevel(LOGGING_LEVEL_CONDITIONS)
-
-logger_jobs = logging.getLogger('sim_env.jobs')
-logger_jobs.setLevel(LOGGING_LEVEL_JOBS)
-logger_operations = logging.getLogger('sim_env.operations')
-logger_operations.setLevel(LOGGING_LEVEL_OPERATIONS)
-
-
-# UTILITIES
 def filter_processing_stations(
     infstruct_obj_collection: Iterable[InfrastructureObject]
 ) -> list[ProcessingStation]:
@@ -140,13 +93,9 @@ def filter_processing_stations(
     
     return [x for x in infstruct_obj_collection if isinstance(x, ProcessingStation)]
 
-# UTILITIES: Datetime Manager
-dt_mgr = DTManager()
+# ** environment
 
-
-# ENVIRONMENT
-
-class SimulationEnvironment(sim.Environment):
+class SimulationEnvironment(salabim.Environment):
     
     def __init__(
         self,
@@ -162,11 +111,11 @@ class SimulationEnvironment(sim.Environment):
         self.time_unit = time_unit
         # if starting datetime not provided use current time
         if starting_datetime is None:
-            starting_datetime = dt_mgr.current_time_tz(cut_microseconds=True)
+            starting_datetime = _dt_mgr.current_time_tz(cut_microseconds=True)
         else:
-            dt_mgr.validate_dt_UTC(starting_datetime)
+            _dt_mgr.validate_dt_UTC(starting_datetime)
             # remove microseconds, such accuracy not needed
-            starting_datetime = dt_mgr.cut_dt_microseconds(dt=starting_datetime)
+            starting_datetime = _dt_mgr.cut_dt_microseconds(dt=starting_datetime)
         self.starting_datetime = starting_datetime
         
         super().__init__(trace=False, time_unit=self.time_unit, datetime0=self.starting_datetime, **kwargs)
@@ -183,7 +132,7 @@ class SimulationEnvironment(sim.Environment):
         # transient condition
         # state allows direct waiting for flag changes
         self.is_transient_cond: bool = True
-        self.transient_cond_state = sim.State('trans_cond', env=self)
+        self.transient_cond_state = salabim.State('trans_cond', env=self)
         
         # ** debug dashboard
         self.debug_dashboard = debug_dashboard
@@ -236,7 +185,7 @@ class SimulationEnvironment(sim.Environment):
         if not self._infstruct_mgr_registered and isinstance(infstruct_mgr, InfrastructureManager):
             self._infstruct_mgr = infstruct_mgr
             self._infstruct_mgr_registered = True
-            logger_env.info(f"Successfully registered Infrastructure Manager in Env >>{self.name()}<<")
+            loggers.pyf_env.info(f"Successfully registered Infrastructure Manager in Env >>{self.name()}<<")
         elif not isinstance(infstruct_mgr, InfrastructureManager):
             raise TypeError(f"The object must be of type >>InfrastructureManager<< but is type >>{type(infstruct_mgr)}<<")
         else:
@@ -254,7 +203,7 @@ class SimulationEnvironment(sim.Environment):
         if not self._dispatcher_registered and isinstance(dispatcher, Dispatcher):
             self._dispatcher = dispatcher
             self._dispatcher_registered = True
-            logger_env.info(f"Successfully registered Dispatcher in Env >>{self.name()}<<")
+            loggers.pyf_env.info(f"Successfully registered Dispatcher in Env >>{self.name()}<<")
         elif not isinstance(dispatcher, Dispatcher):
             raise TypeError(f"The object must be of type >>Dispatcher<< but is type >>{type(dispatcher)}<<")
         else:
@@ -304,7 +253,7 @@ class SimulationEnvironment(sim.Environment):
         else:
             self._signal_allocation = signal
         
-        logger_env.debug(f"Dispatching type >>{signal_type}<<: Flag for Env {self.name()} was set to >>{signal}<<.")
+        loggers.pyf_env.debug(f"Dispatching type >>{signal_type}<<: Flag for Env {self.name()} was set to >>{signal}<<.")
     
     # ?? adding to Dispatcher class?
     def check_feasible_agent_alloc(
@@ -354,7 +303,7 @@ class SimulationEnvironment(sim.Environment):
         elif not self._infstruct_mgr.verify_system_association():
             raise AssociationError("Non-associated subsystems detected!")
         
-        logger_env.info(f"Integrity check for Environment {self.name()} successful.")
+        loggers.pyf_env.info(f"Integrity check for Environment {self.name()} successful.")
     
     def initialise(self) -> None:
         # infrastructure manager instance
@@ -366,18 +315,18 @@ class SimulationEnvironment(sim.Environment):
         # establish websocket connection
         if self.debug_dashboard and not self.servers_connected:
             # start websocket server
-            logger_env.info("Starting websocket server...")
+            loggers.pyf_env.info("Starting websocket server...")
             self.ws_server_process.start()
             # start dashboard server
-            logger_env.info("Starting dashboard server...")
+            loggers.pyf_env.info("Starting dashboard server...")
             self.dashboard_server_process.start()
             # establish websocket connection used for streaming of updates
-            logger_env.info("Establish websocket connection...")
+            loggers.pyf_env.info("Establish websocket connection...")
             self.ws_con = create_connection(WS_URL)
             # set internal flag indicating that servers are started
             self.servers_connected = True
         
-        logger_env.info(f"Initialisation for Environment {self.name()} successful.")
+        loggers.pyf_env.info(f"Initialisation for Environment {self.name()} successful.")
     
     def finalise(self) -> None:
         """
@@ -393,13 +342,13 @@ class SimulationEnvironment(sim.Environment):
         # close WS connection
         if self.debug_dashboard and self.servers_connected:
             # close websocket connection
-            logger_env.info("Closing websocket connection...")
+            loggers.pyf_env.info("Closing websocket connection...")
             self.ws_con.close()
             # stop websocket server
-            logger_env.info("Shutting down websocket server...")
+            loggers.pyf_env.info("Shutting down websocket server...")
             self.ws_server_process.terminate()
             # stop dashboard server
-            logger_env.info("Shutting down dasboard server...")
+            loggers.pyf_env.info("Shutting down dasboard server...")
             self.dashboard_server_process.terminate()
             # reset internal flag indicating that servers are started
             self.servers_connected = False
@@ -412,7 +361,7 @@ class SimulationEnvironment(sim.Environment):
         self._dispatcher.dashboard_update()
 
 
-# ENVIRONMENT MANAGEMENT
+# environment management
 
 class InfrastructureManager:
     
@@ -533,7 +482,7 @@ class InfrastructureManager:
             check_val = target_db[secondary_key].isna().any()
             if check_val:
                 # there are NA values
-                logger_infstrct.error(f"There are non-associated systems for system type >>{system_type}<<. \
+                loggers.infstrct.error(f"There are non-associated systems for system type >>{system_type}<<. \
                     Please check these systems and add them to a corresponding supersystem.")
                 return False
         
@@ -668,7 +617,7 @@ class InfrastructureManager:
                 new_entry = new_entry.set_index('res_id')
                 self._res_db = pd.concat([self._res_db, new_entry])
         
-        logger_infstrct.info(f"Successfully registered object with SystemID {system_id} and name {name}")
+        loggers.infstrct.info(f"Successfully registered object with SystemID {system_id} and name {name}")
         
         return system_id, name
     
@@ -800,7 +749,7 @@ class InfrastructureManager:
             ### multiple entries but only one returned --> prone to errors
             if len(multi_res) > 1:
                 # warn user
-                logger_infstrct.warning(("CAUTION: There are multiple subsystems which share the "
+                loggers.infstrct.warning(("CAUTION: There are multiple subsystems which share the "
                             f"same value >>{lookup_val}<< for the lookup property >>{lookup_property}<<. "
                             "Only the first entry is returned."))
 
@@ -867,7 +816,7 @@ class InfrastructureManager:
         reset_temp: bool = False,
     ) -> None:
         """method to update the state of a resource object in the resource database"""
-        logger_infstrct.debug(f"Set state of {obj} to {state}")
+        loggers.infstrct.debug(f"Set state of {obj} to {state}")
         
         # check if 'TEMP' state should be reset
         if reset_temp:
@@ -878,7 +827,7 @@ class InfrastructureManager:
             obj.stat_monitor.set_state(state=state)
         
         self._res_db.at[obj.system_id, 'state'] = state
-        logger_infstrct.debug(f"Executed state setting of {obj} to {state}")
+        loggers.infstrct.debug(f"Executed state setting of {obj} to {state}")
     
     def res_objs_temp_state(
         self,
@@ -911,7 +860,7 @@ class InfrastructureManager:
         # set end state for each resource object to calculate the right time amounts
         for res_obj in self._res_db['resource']:
             res_obj.finalise()
-        logger_infstrct.info("Successful finalisation of the state information for all resource objects.")
+        loggers.infstrct.info("Successful finalisation of the state information for all resource objects.")
     
     def dashboard_update(self) -> None:
         # !! Placeholder, not implemented yet
@@ -1091,7 +1040,7 @@ class Dispatcher:
             raise ValueError(f"Priority rule {rule} unknown. Must be one of {self._priority_rules}")
         else:
             self._curr_prio_rule = rule
-            logger_dispatcher.info(f"Changed priority rule to {rule}")
+            loggers.dispatcher.info(f"Changed priority rule to {rule}")
     
     def possible_prio_rules(self) -> set[str]:
         return self._priority_rules
@@ -1109,7 +1058,7 @@ class Dispatcher:
             raise ValueError(f"Allocation rule {rule} unknown. Must be one of {self._allocation_rules}")
         else:
             self._curr_alloc_rule = rule
-            logger_dispatcher.info(f"Changed allocation rule to {rule}")
+            loggers.dispatcher.info(f"Changed allocation rule to {rule}")
             
     def possible_alloc_rules(self) -> set[str]:
         return self._allocation_rules
@@ -1184,7 +1133,7 @@ class Dispatcher:
         new_entry = new_entry.set_index('job_id')
         self._job_db = pd.concat([self._job_db, new_entry])
         
-        logger_dispatcher.info(f"Successfully registered job with JobID {job_id}")
+        loggers.dispatcher.info(f"Successfully registered job with JobID {job_id}")
         
         # write job information directly
         job.time_creation = creation_date
@@ -1303,7 +1252,7 @@ class Dispatcher:
         # after processing
         else:
             # finalise current op
-            #logger_dispatcher.debug(f"OP {current_op} is finalised")
+            #loggers.dispatcher.debug(f"OP {current_op} is finalised")
             self.finish_operation(op=current_op)
             #current_op.finalise()
             job.num_finished_ops += 1
@@ -1457,7 +1406,7 @@ class Dispatcher:
         new_entry = new_entry.set_index('op_id')
         self._op_db = pd.concat([self._op_db, new_entry])
         
-        logger_dispatcher.info(f"Successfully registered operation with OpID {op_id}")
+        loggers.dispatcher.info(f"Successfully registered operation with OpID {op_id}")
         
         # write operation information directly
         op.target_exec_system = exec_system
@@ -1568,8 +1517,8 @@ class Dispatcher:
             self.update_operation_db(op=op, property='ending_date_deviation', val=op.ending_date_deviation)
         
         # update databases
-        #logger_dispatcher.debug(f"Update databases for OP {op} ID {op.op_id} with [{op.time_exit, op.lead_time}]")
-        logger_dispatcher.debug(f"Update databases for OP {op} ID {op.op_id} with [{op.time_actual_ending, op.lead_time}]")
+        #loggers.dispatcher.debug(f"Update databases for OP {op} ID {op.op_id} with [{op.time_exit, op.lead_time}]")
+        loggers.dispatcher.debug(f"Update databases for OP {op} ID {op.op_id} with [{op.time_actual_ending, op.lead_time}]")
         self.update_operation_state(op=op, state='FINISH')
         #self.update_operation_db(op=op, property='exit_date', val=op.time_exit)
         self.update_operation_db(op=op, property='actual_ending_date', val=op.time_actual_ending)
@@ -1647,7 +1596,7 @@ class Dispatcher:
             ### multiple entries but only one returned --> prone to errors
             elif len(multi_res) > 1:
                 # warn user
-                logger_dispatcher.warning(f"CAUTION: There are multiple jobs which share the \
+                loggers.dispatcher.warning(f"CAUTION: There are multiple jobs which share the \
                             same value '{val}' for the property '{property}'. \
                             Only the first entry is returned.")
             
@@ -1702,7 +1651,7 @@ class Dispatcher:
         
         # request decision from agent, sets internal flag
         agent.request_decision(job=job, op=op)
-        logger_dispatcher.debug(f"[DISPATCHER: {self}] Alloc Agent: Decision request made.")
+        loggers.dispatcher.debug(f"[DISPATCHER: {self}] Alloc Agent: Decision request made.")
         
         # reset TEMP state
         self.env.infstruct_mgr.res_objs_temp_state(
@@ -1727,7 +1676,7 @@ class Dispatcher:
         request for: infrastructure object instance
         """
         
-        logger_dispatcher.debug(f"[DISPATCHER: {self}] REQUEST TO DISPATCHER FOR ALLOCATION")
+        loggers.dispatcher.debug(f"[DISPATCHER: {self}] REQUEST TO DISPATCHER FOR ALLOCATION")
         
         ## NEW TOP-DOWN-APPROACH
         # routing of jobs is now organized in a hierarchical fashion and can be described
@@ -1757,7 +1706,7 @@ class Dispatcher:
             target_station_group = op.target_station_group
             assert target_station_group is not None
             
-            logger_dispatcher.debug(f"[DISPATCHER: {self}] Next operation {op}")
+            loggers.dispatcher.debug(f"[DISPATCHER: {self}] Next operation {op}")
             # obtain target station (InfrastructureObject)
             target_station = self._choose_target_station_from_exec_system(
                                             exec_system=target_exec_system,
@@ -1775,7 +1724,7 @@ class Dispatcher:
             # use first sink of the registered ones
             target_station = sinks[0]
         
-        logger_dispatcher.debug(f"[DISPATCHER: {self}] Next operation is {op} with machine group (machine) {target_station}")
+        loggers.dispatcher.debug(f"[DISPATCHER: {self}] Next operation is {op} with machine group (machine) {target_station}")
         # reset environment signal for ALLOCATION
         #self._env.set_dispatching_signal(sequencing=False, reset=True)
         
@@ -1837,17 +1786,17 @@ class Dispatcher:
                     # [UTILISATION]
                     # choose the station with the lowest utilisation to time
                     target_station: ProcessingStation = min(avail_stations, key=attrgetter('stat_monitor.utilisation'))
-                    logger_dispatcher.debug((f"[DISPATCHER: {self}] Utilisation of "
+                    loggers.dispatcher.debug((f"[DISPATCHER: {self}] Utilisation of "
                                              f"{target_station=} is {target_station.stat_monitor.utilisation:.4f}"))
                 case 'WIP_LOAD_TIME':
                     # WIP as load/processing time, choose station with lowest WIP
                     target_station: ProcessingStation = min(avail_stations, key=attrgetter('stat_monitor.WIP_load_time'))
-                    logger_dispatcher.debug((f"[DISPATCHER: {self}] WIP LOAD TIME of "
+                    loggers.dispatcher.debug((f"[DISPATCHER: {self}] WIP LOAD TIME of "
                                              f"{target_station=} is {target_station.stat_monitor.WIP_load_time}"))
                 case 'WIP_LOAD_JOBS':
                     # WIP as number of associated jobs, choose station with lowest WIP
                     target_station: ProcessingStation = min(avail_stations, key=attrgetter('stat_monitor.WIP_load_num_jobs'))
-                    logger_dispatcher.debug((f"[DISPATCHER: {self}] WIP LOAD NUM JOBS of "
+                    loggers.dispatcher.debug((f"[DISPATCHER: {self}] WIP LOAD NUM JOBS of "
                                              f"{target_station=} is {target_station.stat_monitor.WIP_load_time:.2f}"))
             
             # [KPIs] reset all associated processing stations of that group to their original state
@@ -1873,7 +1822,7 @@ class Dispatcher:
             agent.action_feasible = self._env.check_feasible_agent_alloc(
                                             target_station=target_station,
                                             op=op)
-            logger_agents.debug(f"Action feasibility status: {agent.action_feasible}")
+            loggers.agents.debug(f"Action feasibility status: {agent.action_feasible}")
 
         # ?? CALC REWARD?
         # Action t=t, Reward calc t=t+1 == R_t
@@ -1900,7 +1849,7 @@ class Dispatcher:
         ## trigger agent decision --> map decision to feasible jobs
         ## [*] use implemented priority rules as intermediate step
         
-        logger_dispatcher.info(f"[DISPATCHER: {self}] REQUEST TO DISPATCHER FOR SEQUENCING")
+        loggers.dispatcher.info(f"[DISPATCHER: {self}] REQUEST TO DISPATCHER FOR SEQUENCING")
         # set environment signal for SEQUENCING
         #self._env.set_dispatching_signal(sequencing=True, reset=False)
         
@@ -1918,7 +1867,7 @@ class Dispatcher:
     
     def seq_priority_rule(
         self,
-        queue: sim.Queue,
+        queue: salabim.Queue,
     ) -> Job:
         """apply priority rules to a pool of jobs"""
         match self._curr_prio_rule:
@@ -2211,7 +2160,7 @@ class System(OrderedDict):
                 if not self._alloc_agent_registered and isinstance(agent, AllocationAgent):
                     self._alloc_agent = agent
                     self._alloc_agent_registered = True
-                    logger_env.info(f"Successfully registered Allocation Agent in {self}")
+                    loggers.pyf_env.info(f"Successfully registered Allocation Agent in {self}")
                 elif not isinstance(agent, AllocationAgent):
                     raise TypeError(("The object must be of type >>AllocationAgent<< "
                                     f"but is type >>{type(agent)}<<"))
@@ -2242,7 +2191,7 @@ class System(OrderedDict):
         if not self._alloc_agent_registered and isinstance(alloc_agent, AllocationAgent):
             self._alloc_agent = alloc_agent
             self._alloc_agent_registered = True
-            logger_env.info(f"Successfully registered Allocation Agent in Area = {self.name}")
+            loggers.pyf_env.info(f"Successfully registered Allocation Agent in Area = {self.name}")
         elif not isinstance(alloc_agent, AllocationAgent):
             raise TypeError(f"The object must be of type >>AllocationAgent<< but is type >>{type(alloc_agent)}<<")
         else:
@@ -2393,7 +2342,7 @@ class System(OrderedDict):
             # update property in database
             infstruct_mgr.set_contain_proc_station(system=self)
         
-        logger_infstrct.info(f"Successfully added {subsystem} to {self}.")
+        loggers.infstrct.info(f"Successfully added {subsystem} to {self}.")
     
     @overload
     def lowest_level_subsystems(
@@ -2568,735 +2517,6 @@ class StationGroup(System):
 
 # MONITORS
 
-class Monitor:
-    
-    def __init__(
-        self,
-        env: SimulationEnvironment,
-        obj: InfrastructureObject | Job | Operation,
-        init_state: str = 'INIT',
-        possible_states: Iterable[str] = (
-            'INIT',
-            'FINISH',
-            'TEMP',
-            'WAITING', 
-            'PROCESSING',
-            'SETUP', 
-            'BLOCKED', 
-            'FAILED', 
-            'PAUSED',
-        ),
-    ) -> None:
-        """
-        Class to monitor associated objects (load and resource)
-        """
-        # initialise parent class if available
-        #super().__init__(**kwargs)
-        
-        # [REGISTRATION]
-        self._env = env
-        self._target_object = obj
-        
-        # [STATE] state parameters
-        # all possible/allowed states
-        self.states_possible: set[str] = set(possible_states)
-        # always add states 'INIT', 'FINISH', 'TEMP' for control flow
-        if 'INIT' not in self.states_possible:
-            self.states_possible.add('INIT')
-        if 'FINISH' not in self.states_possible:
-            self.states_possible.add('FINISH')
-        if 'TEMP' not in self.states_possible:
-            self.states_possible.add('TEMP')
-            
-        # check integrity of the given state
-        if init_state in self.states_possible:
-            self.state_current: str = init_state
-        else:
-            raise ValueError((f"The state {init_state} is not allowed. "
-                             f"Must be one of {self.states_possible}"))
-        
-        # boolean indicator if a state is set
-        self.state_status: dict[str, bool] = {}
-        # time counter for each state
-        #self.state_times: dict[str, float] = {}
-        self.state_times: dict[str, Timedelta] = {}
-        # starting time variable indicating when the last state assignment took place
-        #self.state_starting_time: float = self._env.t()
-        self.state_starting_time: Datetime = self._env.t_as_dt()
-        
-        for state in self.states_possible:
-            # init state time dictionary
-            #self.state_times[state] = 0.
-            self.state_times[state] = Timedelta()
-            # init state is set to True
-            if state == self.state_current:
-                self.state_status[state] = True
-            else:
-                self.state_status[state] = False
-                
-        # DataFrame to further analyse state durations
-        self.state_durations: DataFrame | None = None
-
-        # availability indicator
-        self._availability_states: set[str] = set([
-            'WAITING',
-        ])
-        if self.state_current in self._availability_states:
-            self.is_available: bool = True
-        else:
-            self.is_available: bool = False
-        
-        # additional 'TEMP' state information
-        # indicator if state was 'TEMP'
-        self._is_temp: bool = False
-        # state before 'TEMP' was set
-        self._state_before_temp: str = self.state_current
-        # time components
-        self.time_active: float = 0.
-        #self.time_active: Timedelta = Timedelta()
-        
-        # time handling
-        #self._dt_parser: DTParser = DTParser()
-    
-    def __repr__(self) -> str:
-        return f"Monitor instance of {self._target_object}"
-    
-    @property
-    def env(self) -> SimulationEnvironment:
-        return self._env
-        
-    def get_current_state(self) -> str:
-        """get the current state of the associated resource"""
-        return self.state_current
-        
-    def set_state(
-        self,
-        state: str,
-    ) -> None:
-        """
-        function to set the object in the given state
-        state: name of the state in which the object should be placed, must be part \
-            of the object's possible states
-        """
-        # eliminate lower-case letters
-        target_state = state.upper()
-        
-        # check if state is allowed
-        if target_state not in self.states_possible:
-            raise ValueError(f"The state {target_state} is not allowed. Must be one of {self.states_possible}")
-        
-        # check if state is already set
-        if self.state_status[target_state] and target_state != 'TEMP':
-            logger_monitors.info(f"Tried to set state of {self._target_object} to >>{target_state}<<, but this state was already set.\
-                The object's state was not changed.")
-        # check if the 'TEMP' state was already set, this should never happen
-        # if it happens raise an error to catch wrong behaviour
-        elif self.state_status[target_state] and target_state == 'TEMP':
-            raise RuntimeError(f"Tried to set state of {self._target_object} to >>TEMP<<, but this state was already set.")
-        
-        # calculate time for which the object was in the current state before changing it
-        current_state_start = self.state_starting_time
-        #current_time = self._env.now()
-        current_time = self._env.t_as_dt()
-        current_state_duration: Timedelta = current_time - current_state_start
-        # add time to the time counter for the current state
-        current_state = self.state_current
-        self.state_times[current_state] += current_state_duration
-        
-        # check if 'TEMP' state shall be set
-        if target_state == 'TEMP':
-            # set 'TEMP' state indicator to true
-            self._is_temp = True
-            # save current state for the state reset
-            self._state_before_temp = current_state
-        
-        # set old state to False and new state to True
-        self.state_status[current_state] = False
-        self.state_status[target_state] = True
-        # assign new state as current one
-        self.state_current = target_state
-        # set state starting time to current time
-        self.state_starting_time = current_time
-        # availability
-        if self.state_current in self._availability_states:
-            self.is_available: bool = True
-        elif self.state_current == 'TEMP':
-            # 'TEMP' state shall not change the availability indicator
-            pass
-        else:
-            self.is_available: bool = False
-        
-        logger_monitors.debug(f"Duration for state {current_state} on {self._target_object} was {current_state_duration}")
-    
-    def reset_temp_state(self) -> None:
-        """Reset from 'TEMP' state
-        """
-        # check if object was in TEMP state, raise error if not
-        if not self._is_temp:
-            raise RuntimeError((f"Tried to reset {self._target_object} from 'TEMP' state but "
-                                f"the current state is >>{self.state_current}<<"))
-        else:
-            self._is_temp = False
-            self.set_state(state=self._state_before_temp)
-    
-    def calc_KPI(
-        self,
-        is_finalise: bool = False,
-    ) -> None:
-        """calculates different KPIs at any point in time
-        """
-        
-        # state durations for analysis
-        if not is_finalise:
-            self.state_durations = self.state_durations_as_df()
-        
-        # [TOTAL ACTIVE TIME]
-        if self.state_durations is None:
-            raise RuntimeError("State durations are not available. Can not calculate KPIs.")
-        self.time_active = self.state_durations.loc[:, 'abs [seconds]'].sum()
-    
-    def state_durations_as_df(self) -> DataFrame:
-        """Calculates absolute and relative state durations at the current time
-
-        Returns
-        -------
-        DataFrame
-            State duration table with absolute and relative values
-        """
-        # build state duration table
-        temp1: Series = pd.Series(data=self.state_times)
-        temp2: DataFrame = temp1.to_frame()
-        temp2.columns = ['abs [Timedelta]']
-        temp2['abs [seconds]'] = temp2['abs [Timedelta]'].apply(func= lambda x: x.total_seconds())
-        temp2['rel [%]'] = temp2['abs [seconds]'] / temp2.sum(axis=0)['abs [seconds]'] * 100
-        temp2 = temp2.drop(labels=['INIT', 'FINISH', 'TEMP'], axis=0)
-        temp2 = temp2.sort_index(axis=0, ascending=True, kind='stable')
-        state_durations_df = temp2.copy()
-        
-        return state_durations_df
-    
-    def finalise_stats(self) -> None:
-        """finalisation of stats gathering"""
-        
-        # assign state duration table
-        # !! REWORK with calc_KPI
-        self.state_durations = self.state_durations_as_df()
-        
-        # calculate KPIs
-        self.calc_KPI(is_finalise=True)
-    
-    ### ANALYSE AND CHARTS ###
-    def draw_state_bar_chart(        
-        self,
-        save_img: bool = False,
-        save_html: bool = False,
-        file_name: str = 'state_distribution_bar',
-        time_unit: str = 'hours',
-    ) -> PlotlyFigure:
-        """draws the collected state times of the object as bar chart"""
-        data = pd.DataFrame.from_dict(data=self.state_times, orient='index', columns=['total time'])
-        data.index = data.index.rename('state')
-        # change time from Timedelta to any time unit possible --> float
-        # Plotly can not handle Timedelta objects properly, only Datetimes
-        calc_td = dt_mgr.timedelta_from_val(val=1., time_unit=time_unit)
-        calc_col: str = f'total time [{time_unit}]'
-        data[calc_col] = data['total time'] / calc_td # type: ignore
-        data = data.sort_index(axis=0, kind='stable')
-        
-        fig: PlotlyFigure = px.bar(data, y=calc_col, text_auto='.2f') # type: ignore wrong type hint in Plotly
-        fig.update_layout(title=f'State Time Distribution of {self._target_object}', showlegend=False)
-        fig.update_yaxes(title=dict({'text': calc_col}))
-        
-        fig.show()
-        
-        file_name = file_name + f'_{self}'
-        
-        if save_html:
-            file = f'{file_name}.html'
-            fig.write_html(file)
-        
-        if save_img:
-            file = f'{file_name}.svg'
-            fig.write_image(file)
-        
-        return fig
-    
-    def draw_state_pie_chart(        
-        self,
-        save_img: bool = False,
-        save_html: bool = False,
-        file_name: str = 'state_distribution_pie',
-        time_unit: str = 'hours',
-    ) -> PlotlyFigure:
-        """draws the collected state times of the object as bar chart"""
-        data = pd.DataFrame.from_dict(data=self.state_times, orient='index', columns=['total time'])
-        data.index = data.index.rename('state')
-        # change time from Timedelta to any time unit possible --> float
-        # Plotly can not handle Timedelta objects properly, only Datetimes
-        calc_td = dt_mgr.timedelta_from_val(val=1., time_unit=time_unit)
-        calc_col: str = f'total time [{time_unit}]'
-        data[calc_col] = data['total time'] / calc_td # type: ignore
-        data = data.sort_index(axis=0, kind='stable')
-        data = data.loc[data[calc_col] > 0., :]
-        
-        fig: PlotlyFigure = px.pie(data, values=calc_col, names=data.index)
-        fig.update_layout(title=f'State Time Distribution of {self._target_object}')
-        
-        fig.show()
-        
-        file_name = file_name + f'_{self}'
-        
-        if save_html:
-            file = f'{file_name}.html'
-            fig.write_html(file)
-        
-        if save_img:
-            file = f'{file_name}.svg'
-            fig.write_image(file)
-        
-        return fig
-
-class BufferMonitor(Monitor):
-    
-    def __init__(
-        self,
-        env: SimulationEnvironment,
-        obj: BufferLike,
-        init_state: str = 'INIT',
-        possible_states: Iterable[str] = (
-            'INIT',
-            'FINISH',
-            'TEMP',
-            'FULL',
-            'EMPTY',
-            'INTERMEDIATE',
-            'FAILED',
-            'PAUSED',
-        ),
-    ) -> None:
-        # initialise parent class
-        super().__init__(
-            env=env,
-            obj=obj,
-            init_state=init_state,
-            possible_states=possible_states,
-        )
-        
-        # fill level tracking
-        """
-        self._level_db_types = {
-            'sim_time': float,
-            'duration': float,
-            'level': int,
-        }
-        """
-        self._level_db_types = {
-            'sim_time': object,
-            'duration': object,
-            'level': int,
-        }
-        """
-        self._level_db: DataFrame = pd.DataFrame(
-                                        columns=['sim_time', 'duration', 'level'], 
-                                        data=[[0., 0., obj.start_fill_level]])
-        """
-        self._level_db: DataFrame = pd.DataFrame(
-                                        columns=['sim_time', 'duration', 'level'], 
-                                        data=[[self.env.t_as_dt(), Timedelta(), obj.fill_level_init]])
-        self._level_db = self._level_db.astype(self._level_db_types)
-        
-        self._current_fill_level = obj.fill_level_init
-        #self._fill_level_starting_time: float = self.env.now()
-        self._fill_level_starting_time: Datetime = self.env.t_as_dt()
-        self._wei_avg_fill_level: float | None = None
-        
-        # !! Remove later
-        self._target_object = cast(Buffer, self._target_object)
-        
-    @property
-    def wei_avg_fill_level(self) -> float | None:
-        return self._wei_avg_fill_level
-    
-    @property
-    def level_db(self) -> DataFrame:
-        return self._level_db
-    
-    def set_state(
-        self,
-        state: str,
-    ) -> None:
-        """additional level tracking functionality"""
-        super().set_state(state=state)
-        
-        is_finalise: bool = False
-        if self.state_current == 'FINISH':
-            is_finalise: bool = True
-        self.track_fill_level(is_finalise=is_finalise)
-        
-    # Buffer fill level tracking
-    def track_fill_level(
-        self,
-        is_finalise: bool = False,
-    ) -> None:
-        """adds an entry to the fill level database"""
-        # only calculate duration if buffer level changes
-        #current_time = self.env.now()
-        current_time = self.env.t_as_dt()
-        duration: Timedelta = current_time - self._fill_level_starting_time
-        logger_buffers.debug(f"[BUFFER: {self._target_object}] Current time is {current_time} with level {len(self._target_object)} and old level {self._current_fill_level}")
-        #if ((self._current_fill_level != len(self)) and (duration > 0.0)) or is_finalise:
-        if (self._current_fill_level != len(self._target_object)) or is_finalise:
-            temp1: Series = pd.Series(
-                                    index=['sim_time', 'duration', 'level'],
-                                    data=[current_time, duration, self._current_fill_level])
-            temp2: DataFrame = temp1.to_frame().T.astype(self._level_db_types)
-            self._level_db = pd.concat([self._level_db, temp2], ignore_index=True)
-            self._current_fill_level = len(self._target_object)
-            self._fill_level_starting_time = current_time
-        
-    def finalise_stats(self) -> None:
-        """finalisation of stats gathering"""
-        # execute parent class function
-        super().finalise_stats()
-        
-        # finalise fill level tracking
-        self.track_fill_level(is_finalise=True)
-        
-        # weighted average fill level
-        self._level_db = self._level_db.loc[self._level_db['duration'] > Timedelta(), :].copy()
-        self._level_db = self._level_db.reset_index(drop=True)
-        temp1: DataFrame = self._level_db.copy()
-        temp1['duration_seconds'] = temp1['duration'].apply(func= lambda x: x.total_seconds())
-        temp1['mul'] = temp1['duration_seconds'] * temp1['level']
-        sums: Series = temp1.filter(items=['duration_seconds', 'mul']).sum(axis=0)
-        #sums: Series = temp1.sum(axis=0)
-        self._wei_avg_fill_level = cast(float, sums['mul'] / sums['duration_seconds'])
-        
-        
-    ### ANALYSE AND CHARTS ###
-    def draw_fill_level(
-        self,
-        save_img: bool = False,
-        save_html: bool = False,
-        file_name: str = 'fill_level',
-    ) -> PlotlyFigure:
-        """
-        method to draw and display the fill level expansion of the corresponding buffer
-        """
-        # add starting point to start chart at t = init time
-        data = self._level_db.copy()
-        val1: float = data.at[0, 'sim_time'] - data.at[0, 'duration']
-        val2: float = 0.
-        val3: int = data.at[0, 'level']
-        temp1: DataFrame = pd.DataFrame(columns=data.columns, data=[[val1, val2, val3]])
-        temp1 = pd.concat([temp1, data], ignore_index=True)
-        
-        fig: PlotlyFigure = px.line(x=temp1['sim_time'], y=temp1['level'], line_shape="vh")
-        fig.update_traces(line=dict(width=3))
-        fig.update_layout(title=f'Fill Level of {self._target_object}')
-        fig.update_yaxes(title=dict({'text': 'fill level [-]'}))
-        fig.update_xaxes(title=dict({'text': 'time'}))
-        # weighted average fill level
-        fig.add_hline(
-                    y=self.wei_avg_fill_level, line_width=3, 
-                    line_dash='dot', line_color='orange')
-        # capacity
-        cap = self._target_object.capacity()
-        if cap < INF:
-            fig.add_hline(
-                        y=cap, line_width=3, 
-                        line_dash='dash', line_color='red')
-        
-        fig.show()
-        
-        file_name = file_name + f'_{self}'
-        
-        if save_html:
-            file = f'{file_name}.html'
-            fig.write_html(file)
-        
-        if save_img:
-            file = f'{file_name}.svg'
-            fig.write_image(file)
-        
-        return fig
-
-class InfStructMonitor(Monitor):
-    
-    def __init__(
-        self,
-        env: SimulationEnvironment,
-        obj: InfrastructureObject,
-        init_state: str = 'INIT',
-        possible_states: Iterable[str] = (
-            'INIT',
-            'FINISH',
-            'TEMP',
-            'WAITING', 
-            'PROCESSING',
-            'SETUP', 
-            'BLOCKED', 
-            'FAILED', 
-            'PAUSED',
-        ),
-    ) -> None:
-        # initialise parent class
-        super().__init__(
-            env=env,
-            obj=obj,
-            init_state=init_state,
-            possible_states=possible_states,
-        )
-        
-        # WIP tracking time load
-        self._WIP_time_db_types = {
-            'sim_time': object,
-            'duration': object,
-            'level': object,
-        }
-        # ?? PERHAPS ADD STARTING LEVEL LATER
-        self._WIP_time_db: DataFrame = pd.DataFrame(
-                                        columns=['sim_time', 'duration', 'level'], 
-                                        data=[[self.env.t_as_dt(), Timedelta(), Timedelta()]])
-        self._WIP_time_db = self._WIP_time_db.astype(self._WIP_time_db_types)
-        
-        # WIP tracking number of jobs
-        self._WIP_num_db_types = {
-            'sim_time': object,
-            'duration': object,
-            'level': int,
-        }
-        # ?? PERHAPS ADD STARTING LEVEL LATER
-        self._WIP_num_db: DataFrame = pd.DataFrame(
-                                        columns=['sim_time', 'duration', 'level'], 
-                                        data=[[self.env.t_as_dt(), Timedelta(), 0]])
-        self._WIP_num_db = self._WIP_num_db.astype(self._WIP_num_db_types)
-        
-        self._WIP_time_starting_time: Datetime = self.env.t_as_dt()
-        self._WIP_num_starting_time: Datetime = self.env.t_as_dt()
-        self._wei_avg_WIP_level_time: Timedelta | None = None
-        self._wei_avg_WIP_level_num: float | None = None
-        
-        # time components
-        self.time_occupied: float = 0.
-        
-        # resource KPIs
-        self.utilisation: float = 0.
-        
-        # logistic objective values
-        #self.WIP_load_time: float = 0.
-        #self._WIP_load_time_last: float = 0.
-        self.WIP_load_time: Timedelta = Timedelta()
-        self._WIP_load_time_last: Timedelta = Timedelta()
-        self.WIP_load_num_jobs: int = 0
-        self._WIP_load_num_jobs_last: int = 0
-    
-    @property
-    def wei_avg_WIP_level_time(self) -> Timedelta | None:
-        return self._wei_avg_WIP_level_time
-    
-    @property
-    def wei_avg_WIP_level_num(self) -> float | None:
-        return self._wei_avg_WIP_level_num
-    
-    @property
-    def WIP_time_db(self) -> DataFrame:
-        return self._WIP_time_db
-    
-    @property
-    def WIP_num_db(self) -> DataFrame:
-        return self._WIP_num_db
-    
-    def _track_WIP_level(
-        self,
-        is_finalise: bool = False,
-    ) -> None:
-        """adds an entry to the fill level database"""
-        # only calculate duration if level changes
-        #current_time = self.env.now()
-        current_time = self.env.t_as_dt()
-        
-        if (self._WIP_load_time_last != self.WIP_load_time) or is_finalise:
-            
-            # if updates occur at an already set time, just update the level
-            if self._WIP_time_starting_time == current_time:
-                self._WIP_time_db.iat[-1,2] = self.WIP_load_time
-                self._WIP_load_time_last = self.WIP_load_time
-            # else new entry
-            else:
-                duration = current_time - self._WIP_time_starting_time
-                temp1: Series = pd.Series(
-                                        index=['sim_time', 'duration', 'level'],
-                                        data=[current_time, duration, self.WIP_load_time])
-                temp2: DataFrame = temp1.to_frame().T.astype(self._WIP_time_db_types)
-                self._WIP_time_db = pd.concat([self._WIP_time_db, temp2], ignore_index=True)
-                self._WIP_load_time_last = self.WIP_load_time
-                self._WIP_time_starting_time = current_time
-            
-        if (self._WIP_load_num_jobs_last != self.WIP_load_num_jobs) or is_finalise:
-            
-            # if updates occur at an already set time, just update the level
-            if self._WIP_num_starting_time == current_time:
-                self._WIP_num_db.iat[-1,2] = self.WIP_load_num_jobs
-                self._WIP_load_num_jobs_last = self.WIP_load_num_jobs
-            # else new entry
-            else:
-                duration = current_time - self._WIP_num_starting_time
-                temp1: Series = pd.Series(
-                                        index=['sim_time', 'duration', 'level'],
-                                        data=[current_time, duration, self.WIP_load_num_jobs])
-                temp2: DataFrame = temp1.to_frame().T.astype(self._WIP_num_db_types)
-                self._WIP_num_db = pd.concat([self._WIP_num_db, temp2], ignore_index=True)
-                self._WIP_load_num_jobs_last = self.WIP_load_num_jobs
-                self._WIP_num_starting_time = current_time
-    
-    def calc_KPI(
-        self,
-        is_finalise: bool = False,
-    ) -> None:
-        
-        super().calc_KPI()
-        
-        # [OCCUPATION]
-        # properties which count as occupied
-        # paused counts in because pausing the processing station is an external factor
-        util_props = ['PROCESSING', 'SETUP', 'PAUSED']
-        self.time_occupied = self.state_durations.loc[util_props, 'abs [seconds]'].sum()  # type: ignore
-        
-        # [UTILISATION]
-        # avoid division by 0
-        if self.time_active > 0.:
-            self.utilisation: float = self.time_occupied / self.time_active
-    
-    def change_WIP(
-        self,
-        job: Job,
-        remove: bool,
-    ) -> None:
-        if job.last_order_time is None:
-            raise ValueError(f"Last order time of job {job} is not set.")
-        if job.current_order_time is None:
-            raise ValueError(f"Current order time of job {job} is not set.")
-        # removing WIP
-        if remove:
-            # next operation of the job already assigned
-            #self.WIP_load_time -= job.last_proc_time
-            self.WIP_load_time -= job.last_order_time
-            self.WIP_load_num_jobs -= 1
-        else:
-            #self.WIP_load_time += job.current_proc_time
-            self.WIP_load_time += job.current_order_time
-            self.WIP_load_num_jobs += 1
-        
-        self._track_WIP_level()
-    
-    def finalise_stats(self) -> None:
-        """finalisation of stats gathering"""
-        # execute parent class function
-        super().finalise_stats()
-        
-        # finalise WIP level tracking
-        self._track_WIP_level(is_finalise=True)
-        
-        # post-process WIP time level databases
-        #print(f'I AM {self}')
-        self._WIP_time_db['level'] = self._WIP_time_db['level'].shift(periods=1, fill_value=Timedelta())
-        self._WIP_time_db = self._WIP_time_db.loc[self._WIP_time_db['duration'] > Timedelta(), :].copy()
-        self._WIP_time_db = self._WIP_time_db.reset_index(drop=True)
-        
-        # weighted average WIP time level
-        temp1: DataFrame = self._WIP_time_db.copy()
-        temp1['level_seconds'] = temp1['level'].apply(func= lambda x: x.total_seconds())
-        temp1['duration_seconds'] = temp1['duration'].apply(func= lambda x: x.total_seconds())
-        temp1['mul'] = temp1['duration_seconds'] * temp1['level_seconds']
-        sums: Series = temp1.filter(items=['duration_seconds', 'mul']).sum(axis=0)
-        wei_avg_time_sec: float = sums['mul'] / sums['duration_seconds']
-        self._wei_avg_WIP_level_time = Timedelta(seconds=wei_avg_time_sec)
-        
-        # post-process WIP num level databases
-        self._WIP_num_db['level'] = self._WIP_num_db['level'].shift(periods=1, fill_value=Timedelta())
-        self._WIP_num_db = self._WIP_num_db.loc[self._WIP_num_db['duration'] > Timedelta(), :].copy()
-        self._WIP_num_db = self._WIP_num_db.reset_index(drop=True)
-        # weighted average WIP num level
-        temp1: DataFrame = self._WIP_num_db.copy()
-        temp1['duration_seconds'] = temp1['duration'].apply(func= lambda x: x.total_seconds())
-        temp1['mul'] = temp1['duration_seconds'] * temp1['level']
-        sums: Series = temp1.filter(items=['duration_seconds', 'mul']).sum(axis=0)
-        self._wei_avg_WIP_level_num = sums['mul'] / sums['duration_seconds']
-    
-    ### ANALYSE AND CHARTS ###
-    def draw_WIP_level(
-        self,
-        use_num_jobs_metric: bool = False,
-        save_img: bool = False,
-        save_html: bool = False,
-        file_name: str = 'fill_level',
-        time_unit_load_time: str = 'hours',
-    ) -> PlotlyFigure:
-        """
-        method to draw and display the fill level expansion of the corresponding buffer
-        """
-        if self._wei_avg_WIP_level_num is None:
-            raise ValueError("Weighted average WIP level is not set.")
-        if self._wei_avg_WIP_level_time is None:
-            raise ValueError("Weighted average WIP level is not set.")
-        # add starting point to start chart at t = init time
-        title: str
-        yaxis: str
-        avg_WIP_level: float
-        last_WIP_level: float
-        if use_num_jobs_metric:
-            data = self._WIP_num_db.copy()
-            title = f'WIP Level Num Jobs of {self._target_object}'
-            yaxis = 'WIP Level Number of Jobs [-]'
-            avg_WIP_level = self._wei_avg_WIP_level_num
-            #last_WIP_level = self.WIP_load_time
-            last_WIP_level = self.WIP_load_num_jobs
-        else:
-            data = self._WIP_time_db.copy()
-            # change WIP load time from Timedelta to any time unit possible --> float
-            # Plotly can not handle Timedelta objects properly, only Datetimes
-            calc_td = dt_mgr.timedelta_from_val(val=1., time_unit=time_unit_load_time)
-            data['level'] = data['level'] / calc_td # type: ignore
-            title = f'WIP Level Time of {self._target_object}'
-            yaxis = 'WIP Level Time [time units]'
-            avg_WIP_level = cast(float, self._wei_avg_WIP_level_time / calc_td)
-            last_WIP_level = cast(float, self.WIP_load_time / calc_td)
-        f_val1 = cast(Datetime, data.at[0, 'sim_time'] - data.at[0, 'duration'])
-        f_val2 = Timedelta()
-        f_val3 = cast(float, data.at[0, 'level'])
-        first_entry = pd.DataFrame(columns=data.columns, data=[[f_val1, f_val2, f_val3]])
-        l_val1 = cast(Datetime, data.iat[-1, 0])
-        l_val2 = Timedelta()
-        l_val3 = last_WIP_level
-        last_entry= pd.DataFrame(columns=data.columns, data=[[l_val1, l_val2, l_val3]])
-        temp1 = pd.concat([first_entry, data, last_entry], ignore_index=True)
-        
-        fig: PlotlyFigure = px.line(x=temp1['sim_time'], y=temp1['level'], line_shape="vh")
-        fig.update_traces(line=dict(width=3))
-        fig.update_layout(title=title)
-        fig.update_yaxes(title=dict({'text': yaxis}))
-        fig.update_xaxes(title=dict({'text': 'time'}))
-        # weighted average WIP level
-        fig.add_hline(
-                    y=avg_WIP_level, line_width=3, 
-                    line_dash='dot', line_color='orange')
-        
-        fig.show()
-        
-        file_name = file_name + f'_{self}'
-        
-        if save_html:
-            file = f'{file_name}.html'
-            fig.write_html(file)
-        
-        if save_img:
-            file = f'{file_name}.svg'
-            fig.write_image(file)
-        
-        return fig
-
-
 # INFRASTRUCTURE COMPONENTS
 
 class InfrastructureObject(System):
@@ -3364,24 +2584,23 @@ class InfrastructureObject(System):
             state=state,
         )
         
-        self._stat_monitor = InfStructMonitor(
+        self._stat_monitor = monitors.InfStructMonitor(
             env=env, 
             obj=self,
             init_state=state,
             possible_states=possible_states,
         )
         
-        self.cap = capacity
+        self.capacity = capacity
         self.res_type: str
         
-        # [SALABIM COMPONENT] initialise base class
-        # TODO use new composition approach
-        self.sim_control = SimulationComponent(
+        # [SALABIM COMPONENT]
+        self._sim_control = SimulationComponent(
             env=env,
+            name=self.name,
             pre_process=self.pre_process,
             sim_logic=self.sim_logic,
             post_process=self.post_process,
-            name=self.name,
         )
         """
         super().__init__(self, env=env, name=self._name, 
@@ -3392,7 +2611,7 @@ class InfrastructureObject(System):
         # each resource uses one associated logic queue, logic queues are not physically available
         # TODO: check name property with buffers
         queue_name: str = f"queue_{self.name}"
-        self.logic_queue = sim.Queue(name=queue_name, env=self.env)
+        self.logic_queue = salabim.Queue(name=queue_name, env=self.env)
         
         # currently available jobs on that resource
         self.contents: dict[LoadID, Job] = {}
@@ -3416,8 +2635,12 @@ class InfrastructureObject(System):
     
     # override for corresponding classes
     @property
-    def stat_monitor(self) -> InfStructMonitor:
+    def stat_monitor(self) -> monitors.InfStructMonitor:
         return self._stat_monitor
+    
+    @property
+    def sim_control(self) -> SimulationComponent:
+        return self._sim_control
     
     """
     def td_to_simtime(
@@ -3512,6 +2735,7 @@ class InfrastructureObject(System):
         #yield self.hold(0)
         yield self.sim_control.hold(0)
         is_agent, alloc_agent = dispatcher.check_alloc_dispatch(job=job)
+        target_station: InfrastructureObject
         if is_agent and alloc_agent is None:
             raise ValueError("Agent is set, but no agent is provided.")
         elif is_agent and alloc_agent is not None:
@@ -3522,12 +2746,12 @@ class InfrastructureObject(System):
                 dispatcher.request_agent_alloc(job=job)
                 # ** Break external loop
                 # ** [only step] Calc reward in Gym-Env
-                logger.debug(f'--------------- DEBUG: call before hold(0) at {self.env.t()}, {self.env.t_as_dt()}')
+                loggers.agents.debug(f'--------------- DEBUG: call before hold(0) at {self.env.t()}, {self.env.t_as_dt()}')
                 #yield self.hold(0)
                 yield self.sim_control.hold(0)
                 # ** make and set decision in Gym-Env --> RESET external Gym flag
-                logger.debug(f'--------------- DEBUG: call after hold(0) at {self.env.t()}')
-                logger_agents.debug((f"current {alloc_agent.action_feasible}, "
+                loggers.agents.debug(f'--------------- DEBUG: call after hold(0) at {self.env.t()}')
+                loggers.agents.debug((f"current {alloc_agent.action_feasible}, "
                                  f"past {alloc_agent.past_action_feasible}"))
                 
                 # obtain target station, check for feasibility --> SET ``agent.action_feasible``
@@ -3567,33 +2791,39 @@ class InfrastructureObject(System):
             pass
         elif isinstance(target_station, ProcessingStation):
             # check if associated buffers exist
-            logger_prodStations.debug(f"[{self}] Check for buffers")
+            loggers.prod_stations.debug(f"[{self}] Check for buffers")
             buffers = target_station.buffers
             
             if buffers:
-                #logger_prodStations.debug(f"[{self}] Buffer found")
+                #loggers.prod_stations.debug(f"[{self}] Buffer found")
                 # [STATE:InfrStructObj] BLOCKED
                 infstruct_mgr.update_res_state(obj=self, state='BLOCKED')
                 # [STATE:Job] BLOCKED
                 dispatcher.update_job_state(job=job, state='BLOCKED')
                 #yield self.to_store(store=buffers, item=job, fail_delay=FAIL_DELAY, fail_priority=1)
-                yield self.sim_control.to_store(store=buffers, item=job, fail_delay=FAIL_DELAY, fail_priority=1)
+                yield self.sim_control.to_store(store=target_station.stores, item=job, 
+                                                fail_delay=FAIL_DELAY, fail_priority=1)
                 #if self.failed():
                 if self.sim_control.failed():
                     raise UserWarning((f"Store placement failed after {FAIL_DELAY} time steps. "
                                        "There seems to be deadlock."))
                 # [STATE:Buffer] trigger state setting for target buffer
                 #buffer = self.to_store_store()
-                buffer = self.sim_control.to_store_store()
+                # !! buffer not known, only store component
+                salabim_store = self.sim_control.to_store_store()
+                if salabim_store is None:
+                    raise ValueError("No store object honoured.")
+                buffer = target_station.buffer_by_store_name(salabim_store.name())
+                
                 if not isinstance(buffer, Buffer):
-                    #logger_prodStations.debug(f"To store store object: {buffer}")
+                    #loggers.prod_stations.debug(f"To store store object: {buffer}")
                     raise TypeError(f"From {self}: Job {job} Obj {buffer} is no buffer type at {self.env.now()}")
-                buffer.activate()
+                buffer.sim_control.activate()
                 # [CONTENT:Buffer] add content
                 buffer.add_content(job=job)
                 # [STATS:Buffer] count number of inputs
                 buffer.num_inputs += 1
-                logger_prodStations.debug(f"obj = {self} \t type of buffer >>{buffer}<< = {type(buffer)} at {self.env.now()}")
+                loggers.prod_stations.debug(f"obj = {self} \t type of buffer >>{buffer}<< = {type(buffer)} at {self.env.now()}")
             else:
                 # adding request to machine
                 # currently not possible because machines are components,
@@ -3617,7 +2847,7 @@ class InfrastructureObject(System):
         if target_station.sim_control.ispassive():
             target_station.sim_control.activate()
         
-        logger_prodStations.debug(f"[{self}] Put Job {job} in queue {logic_queue}")
+        loggers.prod_stations.debug(f"[{self}] Put Job {job} in queue {logic_queue}")
 
         # [STATE:InfrStructObj] WAITING
         infstruct_mgr.update_res_state(obj=self, state='WAITING')
@@ -3650,16 +2880,20 @@ class InfrastructureObject(System):
         # contains additional checks if the target values are allowed
         self.proc_time = job_proc_time
         if job_setup_time is not None:
-            logger_prodStations.debug(f"-------->>>>> [SETUP TIME DETECTED] job ID {job.job_id} at {self.env.now()} on machine ID {self.custom_identifier} \
+            loggers.prod_stations.debug(f"-------->>>>> [SETUP TIME DETECTED] job ID {job.job_id} at {self.env.now()} on machine ID {self.custom_identifier} \
                 with setup time {self.setup_time}")
             self.setup_time = job_setup_time
         
         # request and get job from associated buffer if it exists
         if isinstance(self, ProcessingStation) and self._buffers:
             #yield self.from_store(store=self._buffers, filter=lambda item: item.job_id==job.job_id)
-            yield self.sim_control.from_store(store=self._buffers, filter=lambda item: item.job_id==job.job_id)
+            yield self.sim_control.from_store(store=self.stores, filter=lambda item: item.job_id==job.job_id)
             #buffer = cast(Buffer, self.from_store_store())
-            buffer = cast(Buffer, self.sim_control.from_store_store())
+            salabim_store = self.sim_control.from_store_store()
+            if salabim_store is None:
+                raise ValueError("No store object honoured.")
+            buffer = self.buffer_by_store_name(salabim_store.name())
+            #buffer = cast(Buffer, self.sim_control.from_store_store())
             # [STATS:Buffer] count number of outputs
             buffer.num_outputs += 1
             # [CONTENT:Buffer] remove content
@@ -3684,7 +2918,7 @@ class InfrastructureObject(System):
             infstruct_mgr.update_res_state(obj=self, state='SETUP')
             # [STATE:Job]
             dispatcher.update_job_state(job=job, state='SETUP')
-            logger_prodStations.debug(f"[START SETUP] job ID {job.job_id} at {self.env.now()} on machine ID {self.custom_identifier} \
+            loggers.prod_stations.debug(f"[START SETUP] job ID {job.job_id} at {self.env.now()} on machine ID {self.custom_identifier} \
                 with setup time {self.setup_time}")
             sim_time = self.env.td_to_simtime(timedelta=self.setup_time)
             #yield self.hold(self.setup_time)
@@ -3714,7 +2948,7 @@ class InfrastructureObject(System):
     
     def main_logic(self) -> Generator[Any, Any, None]:
         """main logic loop for all resources in the simulation environment"""
-        logger_infstrct.debug(f"----> Process logic of {self}")
+        loggers.infstrct.debug(f"----> Process logic of {self}")
         # pre control logic
         ret = self.pre_process()
         # main control logic
@@ -3740,7 +2974,7 @@ class InfrastructureObject(System):
         self._stat_monitor.finalise_stats()
 
 
-class BufferLike(InfrastructureObject):
+class StorageLike(InfrastructureObject):
     
     def __init__(
         self, 
@@ -3771,18 +3005,35 @@ class BufferLike(InfrastructureObject):
             state=state,
             possible_states=possible_states,
         )
-        self.fill_level_init = fill_level_init
         
-        self._stat_monitor = BufferMonitor(
+        self.fill_level_init = fill_level_init
+        self._stat_monitor = monitors.StorageMonitor(
             env=env,
             obj=self,
             init_state=state,
             possible_states=possible_states,
         )
+        
+        self._sim_control = StorageComponent(
+            env=env,
+            name=self.name,
+            capacity=capacity,
+            pre_process=self.pre_process,
+            sim_logic=self.sim_logic,
+            post_process=self.post_process,
+        )
     
     @property
-    def stat_monitor(self) -> BufferMonitor:
+    def stat_monitor(self) -> monitors.StorageMonitor:
         return self._stat_monitor
+    
+    @property
+    def sim_control(self) -> StorageComponent:
+        return self._sim_control
+    
+    @property
+    def fill_level(self) -> int:
+        return len(self.sim_control.store)
 
 class ProcessingStation(InfrastructureObject):
     
@@ -3823,13 +3074,6 @@ class ProcessingStation(InfrastructureObject):
             possible_states=possible_states,
         )
         
-        self._stat_monitor = InfStructMonitor(
-            env=env, 
-            obj=self, 
-            init_state=state, 
-            possible_states=possible_states,
-        )
-        
         # add physical buffers, more than one allowed
         # contrary to logic queues buffers are infrastructure objects and exist physically
         self._buffers: set[Buffer]
@@ -3843,10 +3087,41 @@ class ProcessingStation(InfrastructureObject):
         # deadlocks are possible
         for buffer in self._buffers:
             buffer.add_prod_station(prod_station=self)
+        # Salabim Store objects for retrieval
+        self._stores = self._get_stores()
+        self._stores_map = self._map_store_name_to_buffer()
     
     @property
-    def stat_monitor(self) -> InfStructMonitor:
-        return self._stat_monitor
+    def buffers(self) -> set[Buffer]:
+        return self._buffers
+    
+    @property
+    def stores(self) -> set[salabim.Store]:
+        return self._stores
+    
+    @property
+    def stores_map(self) -> dict[str, Buffer]:
+        return self._stores_map
+
+    def _get_stores(self) -> set[salabim.Store]:
+        return {buffer.sim_control.store for buffer in self._buffers}
+    
+    def _map_store_name_to_buffer(self) -> dict[str, Buffer]:
+        return {
+            buffer.sim_control.store_name: buffer for buffer in self._buffers
+        }
+    
+    def buffer_by_store_name(
+        self,
+        store_name: str,
+    ) -> Buffer:
+        buffer = self._stores_map.get(store_name, None)
+        if buffer is None:
+            raise KeyError(f"No buffer with name {store_name} found.")
+        return buffer
+    
+    def buffers_as_tuple(self) -> tuple[Buffer, ...]:
+        return tuple(self._buffers)
     
     # TODO: add station group information or delete
     """
@@ -3858,10 +3133,6 @@ class ProcessingStation(InfrastructureObject):
     def station_group(self) -> StationGroup:
         return self._station_group
     """
-    
-    @property
-    def buffers(self) -> set[Buffer]:
-        return self._buffers
     
     def add_buffer(
         self,
@@ -3877,9 +3148,11 @@ class ProcessingStation(InfrastructureObject):
         # check if already present
         if buffer not in self._buffers:
             self._buffers.add(buffer)
+            self._stores = self._get_stores()
+            self._stores_map = self._map_store_name_to_buffer()
             buffer.add_prod_station(prod_station=self)
         else:
-            logger_prodStations.warning(f"The Buffer >>{buffer}<< is already associated with the resource >>{self}<<. \
+            loggers.prod_stations.warning(f"The Buffer >>{buffer}<< is already associated with the resource >>{self}<<. \
                 Buffer was not added to the resource.")
 
     def remove_buffer(
@@ -3891,6 +3164,8 @@ class ProcessingStation(InfrastructureObject):
         """
         if buffer in self._buffers:
             self._buffers.remove(buffer)
+            self._stores = self._get_stores()
+            self._stores_map = self._map_store_name_to_buffer()
             buffer.remove_prod_station(prod_station=self)
         else:
             raise KeyError((f"The buffer >>{buffer}<< is not associated with the resource >>{self}<< and "
@@ -3909,14 +3184,14 @@ class ProcessingStation(InfrastructureObject):
             if len(self.logic_queue) == 0:
                 #yield self.passivate()
                 yield self.sim_control.passivate()
-            logger_prodStations.debug(f"[MACHINE: {self}] is getting job from queue")
+            loggers.prod_stations.debug(f"[MACHINE: {self}] is getting job from queue")
             
             # get job function from PARENT CLASS
             # ONLY PROCESSING STATIONS ARE ASKING FOR SEQUENCING
             # state setting --> 'PROCESSING'
             job = yield from self.get_job()
             
-            logger_prodStations.debug(f"[START] job ID {job.job_id} at {self.env.now()} on machine ID {self.custom_identifier} \
+            loggers.prod_stations.debug(f"[START] job ID {job.job_id} at {self.env.now()} on machine ID {self.custom_identifier} \
                 with proc time {self.proc_time}")
             # PROCESSING
             sim_time = self.env.td_to_simtime(timedelta=self.proc_time)
@@ -3925,7 +3200,7 @@ class ProcessingStation(InfrastructureObject):
             # RELEVANT INFORMATION AFTER PROCESSING
             dispatcher.update_job_process_info(job=job, preprocess=False)
             
-            logger_prodStations.debug(f"[END] job ID {job.job_id} at {self.env.now()} on machine ID {self.custom_identifier}")
+            loggers.prod_stations.debug(f"[END] job ID {job.job_id} at {self.env.now()} on machine ID {self.custom_identifier}")
             # only place job if there are open operations left
             # maybe add to 'put_job' method
             _ = yield from self.put_job(job=job)
@@ -3985,7 +3260,7 @@ class Machine(ProcessingStation):
             buffers=buffers,
         )
 
-class Buffer(sim.Store, BufferLike):
+class Buffer(StorageLike):
     
     def __init__(
         self,
@@ -4012,14 +3287,12 @@ class Buffer(sim.Store, BufferLike):
         """
         # assert object information
         self.res_type = 'Buffer'
-        self.start_fill_level = fill_level_init
         
         # initialise base classes
         # using hard-coded classes because Salabim does not provide 
         # interfaces for multiple inheritance
-        sim.Store.__init__(self, capacity=capacity, env=env) # type: ignore Salabim wrong type hint
-        BufferLike.__init__(
-            self,
+        #sim.Store.__init__(self, capacity=capacity, env=env) # type: ignore Salabim wrong type hint
+        super().__init__(
             env=env,
             custom_identifier=custom_identifier,
             name=name,
@@ -4045,7 +3318,7 @@ class Buffer(sim.Store, BufferLike):
     ### MATERIAL FLOW RELATIONSHIP
     def add_prod_station(
         self,
-        prod_station: ProcessingStation
+        prod_station: ProcessingStation,
     ) -> None:
         """
         function to add processing stations which are associated with 
@@ -4056,7 +3329,7 @@ class Buffer(sim.Store, BufferLike):
         # check if adding a new resource exceeds the given capacity
         # each associated processing station needs one storage place in the buffer
         # else deadlocks are possible
-        if (self._count_associated_prod_stations + 1) > self.cap:
+        if (self._count_associated_prod_stations + 1) > self.capacity:
             raise UserWarning((f"Tried to add a new resource to buffer {self}, but the number of associated "
                                "resources exceeds its capacity which could result in deadlocks."))
         
@@ -4065,12 +3338,12 @@ class Buffer(sim.Store, BufferLike):
             self._associated_prod_stations.add(prod_station)
             self._count_associated_prod_stations += 1
         else:
-            logger_buffers.warning(f"The Processing Station >>{prod_station}<< is already associated with the resource >>{self}<<. \
+            loggers.buffers.warning(f"The Processing Station >>{prod_station}<< is already associated with the resource >>{self}<<. \
                 Processing Station was not added to the resource.")
         
     def remove_prod_station(
         self,
-        prod_station: ProcessingStation
+        prod_station: ProcessingStation,
     ) -> None:
         """
         removing a processing station from the current associated ones
@@ -4090,21 +3363,22 @@ class Buffer(sim.Store, BufferLike):
     def sim_logic(self) -> Generator[None, None, None]:
         infstruct_mgr = self.env.infstruct_mgr
         while True:
-            logger_prodStations.debug(f"[BUFFER: {self}] Invoking at {self.env.now()}")
+            loggers.prod_stations.debug(f"[BUFFER: {self}] Invoking at {self.env.now()}")
             # full
-            if self.available_quantity() == 0:
+            if self.sim_control.store.available_quantity() == 0:
                 # [STATE] FULL
                 infstruct_mgr.update_res_state(obj=self, state='FULL')
-                logger_prodStations.debug(f"[BUFFER: {self}] Set to 'FULL' at {self.env.now()}")
+                loggers.prod_stations.debug(f"[BUFFER: {self}] Set to 'FULL' at {self.env.now()}")
             # empty
-            elif self.available_quantity() == self.capacity():
+            elif (self.sim_control.store.available_quantity() == 
+                  self.sim_control.store.capacity()):
                 # [STATE] EMPTY
                 infstruct_mgr.update_res_state(obj=self, state='EMPTY')
-                logger_prodStations.debug(f"[BUFFER: {self}] Set to 'EMPTY' at {self.env.now()}")
+                loggers.prod_stations.debug(f"[BUFFER: {self}] Set to 'EMPTY' at {self.env.now()}")
             else:
                 # [STATE] INTERMEDIATE
                 infstruct_mgr.update_res_state(obj=self, state='INTERMEDIATE')
-                logger_prodStations.debug(f"[BUFFER: {self}] Neither 'EMPTY' nor 'FULL' at {self.env.now()}")
+                loggers.prod_stations.debug(f"[BUFFER: {self}] Neither 'EMPTY' nor 'FULL' at {self.env.now()}")
             
             #yield self.passivate()
             yield self.sim_control.passivate()
@@ -4189,7 +3463,7 @@ class Source(InfrastructureObject):
         # triggers and flags
         # indicator if a corresponding ConditionSetter was registered
         self.stop_job_gen_cond_reg: bool = False
-        self.stop_job_gen_state = sim.State('stop_job_gen', env=self.env)
+        self.stop_job_gen_state = salabim.State('stop_job_gen', env=self.env)
     
     def _obtain_proc_time(self) -> float:
         """
@@ -4245,7 +3519,7 @@ class Source(InfrastructureObject):
             # map production area custom ID to the associated station group custom IDs
             stat_group_ids[PA_custom_id] = candidates
             
-        logger_sources.debug(f"[SOURCE: {self}] Stat Group IDs: {stat_group_ids}")
+        loggers.sources.debug(f"[SOURCE: {self}] Stat Group IDs: {stat_group_ids}")
         """
         
         # ** new: job generation by sequence
@@ -4281,7 +3555,7 @@ class Source(InfrastructureObject):
                 min_proc_time=5,
                 gen_setup_times=True,
             )
-            logger_sources.debug(f"[SOURCE: {self}] ProcTimes {proc_times} at {self.env.now()}")
+            loggers.sources.debug(f"[SOURCE: {self}] ProcTimes {proc_times} at {self.env.now()}")
             """
             
             
@@ -4295,8 +3569,8 @@ class Source(InfrastructureObject):
             #start_date_init = [Datetime(2023, 11, 20, hour=6), Datetime(2023, 11, 21, hour=2)]
             #end_date_init = [Datetime(2023, 12, 1, hour=10), Datetime(2023, 12, 2, hour=2)]
             
-            #logger_sources.debug(f"[SOURCE: {self}] {job_ex_order=}")
-            #logger_sources.debug(f"[SOURCE: {self}] {job_target_station_groups=}")
+            #loggers.sources.debug(f"[SOURCE: {self}] {job_ex_order=}")
+            #loggers.sources.debug(f"[SOURCE: {self}] {job_target_station_groups=}")
             # !! job init with CustomID, but SystemID used
             # TODO: change initialisation to SystemID
             """
@@ -4317,18 +3591,18 @@ class Source(InfrastructureObject):
                       prio=prio,
                       planned_starting_date=start_date_init,
                       planned_ending_date=end_date_init)
-            logger_sources.debug(f"[SOURCE: {self}] Job target station group {job.operations[0].target_station_group}")
+            loggers.sources.debug(f"[SOURCE: {self}] Job target station group {job.operations[0].target_station_group}")
             # [Call:DISPATCHER]
             dispatcher.release_job(job=job)
             # [STATS:Source] count number of inputs (source: generation of jobs or entry in pipeline)
             # implemented in 'get_job' method which is not executed by source objects
             self.num_inputs += 1
-            logger_sources.debug(f"[SOURCE: {self}] Generated {job} at {self.env.now()}")
+            loggers.sources.debug(f"[SOURCE: {self}] Generated {job} at {self.env.now()}")
             
-            logger_sources.debug(f"[SOURCE: {self}] Request allocation...")
+            loggers.sources.debug(f"[SOURCE: {self}] Request allocation...")
             # put job via 'put_job' function, implemented in parent class 'InfrastructureObject'
             target_proc_station = yield from self.put_job(job=job)
-            logger_sources.debug(f"[SOURCE: {self}] PUT JOB with ret = {target_proc_station}")
+            loggers.sources.debug(f"[SOURCE: {self}] PUT JOB with ret = {target_proc_station}")
             # [STATE:Source] put in 'WAITING' by 'put_job' method but still processing
             # only 'WAITING' if all jobs are generated
             infstruct_mgr.update_res_state(obj=self, state='PROCESSING')
@@ -4336,7 +3610,7 @@ class Source(InfrastructureObject):
             # hold for defined generation time (constant or statistically distributed)
             # if hold time elapsed start new generation
             proc_time = self._obtain_proc_time()
-            logger_sources.debug(f"[SOURCE: {self}] Hold for >>{proc_time}<< at {self.env.now()}")
+            loggers.sources.debug(f"[SOURCE: {self}] Hold for >>{proc_time}<< at {self.env.now()}")
             #yield self.hold(proc_time)
             yield self.sim_control.hold(proc_time)
             # set counter up
@@ -4400,7 +3674,7 @@ class Sink(InfrastructureObject):
             if len(self.logic_queue) == 0:
                 #yield self.passivate()
                 yield self.sim_control.passivate()
-            logger_sinks.debug(f"[SINK: {self}] is getting job from queue")
+            loggers.sinks.debug(f"[SINK: {self}] is getting job from queue")
             # get job, simple FIFO
             job = cast(Job, self.logic_queue.pop())
             # [Call:DISPATCHER] data collection: finalise job
@@ -4461,8 +3735,12 @@ class Operation:
         self._target_station_group_identifier = target_station_group_identifier
         
         # [STATS] Monitoring
-        self._stat_monitor = Monitor(env=self._dispatcher.env, obj=self, init_state=state, 
-                                possible_states=possible_states, **kwargs)
+        self._stat_monitor = monitors.Monitor(
+            env=self._dispatcher.env, 
+            obj=self, 
+            init_state=state, 
+            possible_states=possible_states,
+        )
         
         # process information
         # [STATS]
@@ -4489,10 +3767,10 @@ class Operation:
         # starting and end dates
         # validate time zone information for given datetime objects
         if planned_starting_date is not None:
-            dt_mgr.validate_dt_UTC(planned_starting_date)
+            _dt_mgr.validate_dt_UTC(planned_starting_date)
         self.time_planned_starting = planned_starting_date
         if planned_ending_date is not None:
-            dt_mgr.validate_dt_UTC(planned_ending_date)
+            _dt_mgr.validate_dt_UTC(planned_ending_date)
         self.time_planned_ending = planned_ending_date
         # in future setting starting points in advance possible
         self.is_finished: bool = False
@@ -4529,7 +3807,7 @@ class Operation:
         return self._dispatcher
     
     @property
-    def stat_monitor(self) -> Monitor:
+    def stat_monitor(self) -> monitors.Monitor:
         return self._stat_monitor
     
     @property
@@ -4584,7 +3862,7 @@ class Operation:
 
 
 # TODO: change system components from CustomID to SystemID (ExecSystem, StationGroup)
-class Job(sim.Component):
+class Job(salabim.Component):
     
     def __init__(
         self,
@@ -4662,7 +3940,7 @@ class Job(sim.Component):
             op_starting_dates = [None] * len(proc_times)
             # validate time zone information for given datetime object
             if planned_starting_date is not None:
-                dt_mgr.validate_dt_UTC(planned_starting_date)
+                _dt_mgr.validate_dt_UTC(planned_starting_date)
             self.time_planned_starting = planned_starting_date
             self.op_wise_starting_date = False
         if isinstance(planned_ending_date, Sequence):
@@ -4677,7 +3955,7 @@ class Job(sim.Component):
             op_ending_dates = [None] * len(proc_times)
             # validate time zone information for given datetime object
             if planned_ending_date is not None:
-                dt_mgr.validate_dt_UTC(planned_ending_date)
+                _dt_mgr.validate_dt_UTC(planned_ending_date)
             self.time_planned_ending = planned_ending_date
             self.op_wise_ending_date = False
         
@@ -4744,8 +4022,12 @@ class Job(sim.Component):
         self._current_resource: InfrastructureObject | None = None
         
         # [STATS] Monitoring
-        self._stat_monitor = Monitor(env=self._dispatcher.env, obj=self, init_state=state, 
-                                possible_states=possible_states, **kwargs)
+        self._stat_monitor = monitors.Monitor(
+            env=self._dispatcher.env, 
+            obj=self, 
+            init_state=state, 
+            possible_states=possible_states,
+        )
         
         # register job instance
         current_state = self._stat_monitor.get_current_state()
@@ -4800,7 +4082,7 @@ class Job(sim.Component):
         return self._dispatcher
     
     @property
-    def stat_monitor(self) -> Monitor:
+    def stat_monitor(self) -> monitors.Monitor:
         return self._stat_monitor
     
     @property
@@ -4866,7 +4148,7 @@ class Job(sim.Component):
 # !! code duplicated with InfrastructureObject
 # ?? possible to make ``BaseComponent`` class
 # !! conditions in separate module
-class Component(sim.Component):
+class Component(salabim.Component):
     
     def __init__(
         self,
@@ -4898,7 +4180,7 @@ class Component(sim.Component):
     
     def main_logic(self) -> Generator[Any, Any, Any]:
         """main logic loop for all resources in the simulation environment"""
-        logger_infstrct.debug(f"----> Process logic of {self}")
+        loggers.infstrct.debug(f"----> Process logic of {self}")
         # pre control logic
         ret = self.pre_process()
         # main control logic
@@ -4954,7 +4236,7 @@ class TransientCondition(ConditionSetter):
         # set environment flag and state
         self.env.is_transient_cond = False
         self.env.transient_cond_state.set()
-        logger_conditions.info((f"[CONDITION {self}]: Transient Condition over. Set >>is_transient_cond<< "
+        loggers.conditions.info((f"[CONDITION {self}]: Transient Condition over. Set >>is_transient_cond<< "
                                 f"of env to >>{self.env.is_transient_cond}<<"))
     
     def post_process(self) -> None:
@@ -4986,7 +4268,7 @@ class JobGenDurationCondition(ConditionSetter):
         self.sim_run_duration: Timedelta
         if sim_run_until is not None:
             # check if point in time is provided with UTC time zone
-            dt_mgr.validate_dt_UTC(dt=sim_run_until)
+            _dt_mgr.validate_dt_UTC(dt=sim_run_until)
             # check if point in time is in the past
             if sim_run_until <= starting_dt:
                 raise ValueError(("Point in time must not be in the past. "
@@ -5025,7 +4307,7 @@ class JobGenDurationCondition(ConditionSetter):
         # [TARGET]
         # set flag or state
         self.target_obj.stop_job_gen_state.set()
-        logger_conditions.info((f"[CONDITION {self}]: Job Generation Condition met at "
+        loggers.conditions.info((f"[CONDITION {self}]: Job Generation Condition met at "
                                 f"{self.env.t_as_dt()}"))
     
     def post_process(self) -> None:
@@ -5055,7 +4337,7 @@ class TriggerAgentCondition(ConditionSetter):
         yield self.wait(self.env.transient_cond_state, priority=-9)
         # change allocation rule of dispatcher
         self.env.dispatcher.curr_alloc_rule = 'AGENT'
-        logger_conditions.info((f"[CONDITION {self}]: Set allocation rule to >>AGENT<<"))
+        loggers.conditions.info((f"[CONDITION {self}]: Set allocation rule to >>AGENT<<"))
     
     def post_process(self) -> None:
         pass
