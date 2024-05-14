@@ -1815,7 +1815,8 @@ class Dispatcher:
             # request is being made and feature vector obtained
             # get chosen station by tuple index (agent's action)
             station_idx = agent.action
-            assert station_idx is not None
+            if station_idx is None:
+                raise ValueError("No station index chosen")
             target_station = avail_stations[station_idx]
             # check feasibility of the chosen target station
             agent.action_feasible = self._env.check_feasible_agent_alloc(
