@@ -1,58 +1,54 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, cast
+from typing import cast, TYPE_CHECKING, Any
 # TODO: remove later if not needed
 import random
-import sys
 from datetime import timedelta as Timedelta
-import logging
 import statistics
+from abc import ABC, abstractmethod
 
 import numpy as np
 import numpy.typing as npt
+
+from pyforcesim.types import AgentTasks
+from pyforcesim import loggers
 
 if TYPE_CHECKING:
     from pyforcesim.simulation.environment import (
         SimulationEnvironment, 
         System,
-        InfStructMonitor,
         ProcessingStation,
         Job, 
         Operation,
     )
+    from pyforcesim.simulation.monitors import InfStructMonitor
 
-logging.basicConfig(stream=sys.stdout)
-LOGGING_LEVEL_AGENTS = 'DEBUG'
-logger_agents = logging.getLogger('agents.agents')
-logger_agents.setLevel(LOGGING_LEVEL_AGENTS)
 
-class Agent:
+class Agent(ABC):
     
     def __init__(
         self,
         assoc_system: 'System',
-        agent_type: str,
+        agent_task: AgentTasks,
     ) -> None:
         # basic information
-        self._agent_type = agent_type.upper()
-        
+        self._agent_task = agent_task
         # associated system
         self._assoc_system, self._env = assoc_system.register_agent(
                                     agent=self,
-                                    agent_type=self._agent_type)
-        
+                                    agent_task=self._agent_task)
         # dispatching signal: no matter if allocation or sequencing
         self._dispatching_signal: bool = False
     
     def __str__(self) -> str:
-        return f"Agent(type={self._agent_type}, Assoc_Syst_ID={self._assoc_system.system_id})"
+        return f"Agent(type={self._agent_task}, Assoc_Syst_ID={self._assoc_system.system_id})"
     
     @property
     def assoc_system(self) -> 'System':
         return self._assoc_system
     
     @property
-    def agent_type(self) -> str:
-        return self._agent_type
+    def agent_task(self) -> str:
+        return self._agent_task
     
     @property
     def env(self) -> 'SimulationEnvironment':
@@ -66,7 +62,6 @@ class Agent:
         self,
         reset: bool = False,
     ) -> None:
-        
         # check flag and determine value
         if not reset:
             # check if already set
@@ -82,26 +77,32 @@ class Agent:
             else:
                 raise RuntimeError(f"Dispatching signal for >>{self}<< was already reset.")
         
-        logger_agents.debug(f"Dispatching signal for >>{self}<< was set to >>{self._dispatching_signal}<<.")
+        loggers.agents.debug(f"Dispatching signal for >>{self}<< was set to >>{self._dispatching_signal}<<.")
     
-    def build_feat_vec(self):
-        """
-        building feature vector for prediction
-        has to be implemented in child classes
-        """
-        raise NotImplementedError(f"No feature vector building method for {self} of type {self.__class__.__name__} defined.")
+    @abstractmethod
+    def request_decision(self) -> Any:
+        pass
     
-    def reward(self) -> float:
-        raise NotImplementedError(f"No reward calculation method for {self} of type {self.__class__.__name__} defined.")
+    @abstractmethod
+    def set_decision(self) -> Any:
+        pass
+    
+    @abstractmethod
+    def build_feat_vec(self) -> Any:
+        pass
+    
+    @abstractmethod
+    def calc_reward(self) -> Any:
+        pass
 
 class AllocationAgent(Agent):
     
     def __init__(
         self,
-        **kwargs,
+        assoc_system: 'System',
     ) -> None:
         # init base class
-        super().__init__(agent_type='ALLOC', **kwargs)
+        super().__init__(assoc_system=assoc_system, agent_task='ALLOC')
         
         # get associated systems
         self._assoc_proc_stations = \
@@ -117,22 +118,12 @@ class AllocationAgent(Agent):
         self.feat_vec: npt.NDArray[np.float32] | None = None
         
         # execution control
-        # flag to indicate that action was obtained from RL backend
-        # indicator for internal loop
-        #self._RL_decision_done: bool = False
-        # indicator for external loop in Gym Env
-        #self._RL_decision_request: bool = False
         # [ACTIONS]
         # action chosen by RL agent
         self._action: int | None = None
         self.action_feasible: bool = False
         self.past_action_feasible: bool = False
-        """
-        # sync state
-        self._RL_decision_done_state: State = sim.State(f'sync_{self.name()}_done')
-        self._RL_decision_request_state: State = sim.State(f'sync_{self.name()}_request')
-        """
-        
+    
     @property
     def current_job(self) -> 'Job | None':
         return self._current_job
@@ -186,9 +177,9 @@ class AllocationAgent(Agent):
             self._current_op = op
         
         # build feature vector
-        self.feat_vec = self._build_feat_vec(job=job)
+        self.feat_vec = self.build_feat_vec(job=job)
         
-        logger_agents.debug(f"[REQUEST Agent {self}]: built FeatVec.")
+        loggers.agents.debug(f"[REQUEST Agent {self}]: built FeatVec.")
     
     def set_decision(
         self,
@@ -196,21 +187,14 @@ class AllocationAgent(Agent):
     ) -> None:
         # get action from RL agent
         self._action = action
-        # decision done
-        # indicator for internal loop
-        #self._RL_decision_done = True
-        # reset request indicator
-        # indicator for external loop in Gym Env
-        #self._RL_decision_request = False
-        
         # indicator that request was processed
         # reset dispatching signal
         self.set_dispatching_signal(reset=True)
         
-        logger_agents.debug(f"[DECISION SET Agent {self}]: Set {self._action=}")
+        loggers.agents.debug(f"[DECISION SET Agent {self}]: Set {self._action=}")
     
     # ?? REWORK necessary?
-    def _build_feat_vec(
+    def build_feat_vec(
         self,
         job: 'Job',
     ) -> npt.NDArray[np.float32]:
@@ -303,18 +287,18 @@ class AllocationAgent(Agent):
             # obtain relevant ProcessingStations contained in 
             # the corresponding StationGroup
             stations = op_rew.target_station_group.assoc_proc_stations
-            logger_agents.debug(f"++++++ {stations=}")
+            loggers.agents.debug(f"++++++ {stations=}")
             # calculate mean utilisation of all processing stations associated
             # with the corresponding operation and agent's action
             # !! inheritance scheme not sufficient, couple of type mismatches arising
             util_vals: list[float] = [ps.stat_monitor.utilisation for ps in stations]
-            logger_agents.debug(f"++++++ {util_vals=}")
+            loggers.agents.debug(f"++++++ {util_vals=}")
             util_mean = statistics.mean(util_vals)
-            logger_agents.debug(f"++++++ {util_mean=}")
+            loggers.agents.debug(f"++++++ {util_mean=}")
             
             reward = (util_mean - 1.)
         
-        logger_agents.debug(f"+#+#+#+#+# {reward=}")
+        loggers.agents.debug(f"+#+#+#+#+# {reward=}")
         
         return reward
 
@@ -322,7 +306,7 @@ class SequencingAgent(Agent):
     
     def __init__(
         self,
-        **kwargs,
+        assoc_system: 'System',
     ) -> None:
-        
-        super().__init__(agent_type='SEQ', **kwargs)
+        raise NotImplementedError("SequencingAgent not implemented yet.")
+        #super().__init__(assoc_system=assoc_system, agent_task='SEQ')

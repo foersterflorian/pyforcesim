@@ -116,7 +116,7 @@ class Monitor:
         return f"Monitor instance of {self._target_object}"
     
     @property
-    def env(self) -> SimulationEnvironment:
+    def env(self) -> 'SimulationEnvironment':
         return self._env
     
     @property
@@ -318,8 +318,8 @@ class StorageMonitor(Monitor):
     
     def __init__(
         self,
-        env: SimulationEnvironment,
-        obj: StorageLike,
+        env: 'SimulationEnvironment',
+        obj: 'StorageLike',
         init_state: str = 'INIT',
         possible_states: Iterable[str] = (
             'INIT',
@@ -472,8 +472,8 @@ class InfStructMonitor(Monitor):
     
     def __init__(
         self,
-        env: SimulationEnvironment,
-        obj: InfrastructureObject,
+        env: 'SimulationEnvironment',
+        obj: 'InfrastructureObject',
         init_state: str = 'INIT',
         possible_states: Iterable[str] = (
             'INIT',
@@ -617,7 +617,7 @@ class InfStructMonitor(Monitor):
     
     def change_WIP(
         self,
-        job: Job,
+        job: 'Job',
         remove: bool,
     ) -> None:
         # removing WIP
@@ -742,4 +742,3 @@ class InfStructMonitor(Monitor):
             fig.write_image(file)
         
         return fig
-

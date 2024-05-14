@@ -30,6 +30,7 @@ from pyforcesim.types import (
     CustomID,
     LoadID,
     Infinite,
+    AgentTasks,
     PlotlyFigure,
     INF,
 )
@@ -92,6 +93,7 @@ def filter_processing_stations(
     """
     
     return [x for x in infstruct_obj_collection if isinstance(x, ProcessingStation)]
+
 
 # ** environment
 
@@ -211,6 +213,7 @@ class SimulationEnvironment(salabim.Environment):
                                  "Only one instance per environment is allowed."))
     
     # [DISPATCHING SIGNALS]
+    # ?? still needed?
     @property
     def signal_allocation(self) -> bool:
         return self._signal_allocation
@@ -335,10 +338,8 @@ class SimulationEnvironment(salabim.Environment):
         """
         # infrastructure manager instance
         self._infstruct_mgr.finalise()
-        
         # dispatcher instance
         self._dispatcher.finalise()
-        
         # close WS connection
         if self.debug_dashboard and self.servers_connected:
             # close websocket connection
@@ -1725,8 +1726,6 @@ class Dispatcher:
             target_station = sinks[0]
         
         loggers.dispatcher.debug(f"[DISPATCHER: {self}] Next operation is {op} with machine group (machine) {target_station}")
-        # reset environment signal for ALLOCATION
-        #self._env.set_dispatching_signal(sequencing=False, reset=True)
         
         return target_station
     
@@ -1831,6 +1830,7 @@ class Dispatcher:
         
         return target_station
     
+    # TODO change return type to only job
     def request_job_sequencing(
         self,
         req_obj: InfrastructureObject,
@@ -1850,8 +1850,6 @@ class Dispatcher:
         ## [*] use implemented priority rules as intermediate step
         
         loggers.dispatcher.info(f"[DISPATCHER: {self}] REQUEST TO DISPATCHER FOR SEQUENCING")
-        # set environment signal for SEQUENCING
-        #self._env.set_dispatching_signal(sequencing=True, reset=False)
         
         # get logic queue of requesting object
         # contains all feasible jobs for this resource
@@ -1859,12 +1857,12 @@ class Dispatcher:
         # get job from logic queue with currently defined priority rule
         job = self.seq_priority_rule(queue=logic_queue)
         # reset environment signal for SEQUENCING
-        #self._env.set_dispatching_signal(sequencing=True, reset=True)
         assert job is not None
         assert job.current_proc_time is not None
         
         return job, job.current_proc_time, job.current_setup_time
     
+    # TODO policy-based decision making
     def seq_priority_rule(
         self,
         queue: salabim.Queue,
@@ -1985,23 +1983,23 @@ class Dispatcher:
             target_db = self._op_db
         
         # filter only finished operations (for debug display)
-        target_db = target_db.loc[(target_db['state']=='FINISH'),:]
+        target_db = target_db.loc[(target_db['state']=='FINISH')]
         
         df = target_db.filter(items=filter_items)
         # calculate delta time between start and end
         # Timedelta
         df['delta'] = df['actual_ending_date'] - df['actual_starting_date']
         
-        # sorting
-        sort_key: str = ''
         # choose relevant processing station property
-        proc_station_prop: str = ''
+        proc_station_prop: str
         if use_custom_proc_station_id:
             proc_station_prop = 'target_station_custom_id'
         else:
             proc_station_prop = 'target_station_name'
         
         # check if sorting by processing station is wanted and custom ID should be used or not
+        # sorting
+        sort_key: str
         if sort_by_proc_station:
             sort_key = proc_station_prop
         else:
@@ -2027,23 +2025,7 @@ class Dispatcher:
             hover_data=hover_data,
         )
         fig.update_yaxes(type='category', autorange='reversed')
-        #fig.update_traces(hovertemplate=hover_template)
         
-        """
-        fig.update_xaxes(type='linear')
-
-        # reset axis scale for every figure element
-        # https://stackoverflow.com/questions/66078893/plotly-express-timeline-for-gantt-chart-with-integer-xaxis
-        for d in fig.data:
-            try:
-                # convert to integer if property is of that type in the database
-                filt_val = int(d.name)
-            except ValueError:
-                filt_val = d.name
-            filt = df[group_by_key] == filt_val
-            d.x = df.loc[filt, 'delta']
-        """
-
         if self._env.debug_dashboard:
             # send by websocket
             fig_json = cast(str | None, plotly.io.to_json(fig=fig))
@@ -2065,7 +2047,7 @@ class Dispatcher:
 
     def initialise(self) -> None:
         # !! Placeholder, do nothing at the moment
-        ...
+        pass
 
     def finalise(self) -> None:
         """
@@ -2084,7 +2066,7 @@ class Dispatcher:
         pass
 
 
-# SYSTEMS
+# ** systems
 
 class System(OrderedDict):
     
@@ -2101,13 +2083,12 @@ class System(OrderedDict):
         # environment
         self._env = env
         # subsystem information
-        self._type: str = system_type
+        self._system_type = system_type
         # supersystem information
         self._supersystems: dict[SystemID, System] = {}
         self._supersystems_ids: set[SystemID] = set()
         self._supersystems_custom_ids: set[CustomID] = set()
-        # number of lower levels
-        # how many levels of subsystems are possible
+        # number of lower levels, how many levels of subsystems are possible
         self._abstraction_level = abstraction_level
         # collection of all associated ProcessingStations
         self._assoc_proc_stations: tuple[ProcessingStation, ...] = ()
@@ -2117,7 +2098,7 @@ class System(OrderedDict):
         
         infstruct_mgr = self.env.infstruct_mgr
         self._system_id, self._name = infstruct_mgr.register_subsystem(
-                                        system_type=self._type,
+                                        system_type=self._system_type,
                                         obj=self, custom_identifier=custom_identifier,
                                         name=name, state=state)
         self._custom_identifier = custom_identifier
@@ -2144,13 +2125,13 @@ class System(OrderedDict):
     def register_agent(
         self,
         agent: Agent,
-        agent_type: str,
+        agent_task: AgentTasks,
     ) -> tuple[Self, SimulationEnvironment]:
         
-        if agent_type not in self._agent_types:
-            raise ValueError(f"The agent type >>{agent_type}<< is not allowed. Choose from {self._agent_types}")
+        if agent_task not in self._agent_types:
+            raise ValueError(f"The agent type >>{agent_task}<< is not allowed. Choose from {self._agent_types}")
         
-        match agent_type:
+        match agent_task:
             case 'ALLOC':
                 # allocation agents on lowest hierarchy level not allowed
                 if self._abstraction_level == 0:
@@ -2207,20 +2188,20 @@ class System(OrderedDict):
             return False
     
     def __str__(self) -> str:
-        return f'System (type: {self._type}, custom_id: {self._custom_identifier}, name: {self._name})'
+        return f'System (type: {self._system_type}, custom_id: {self._custom_identifier}, name: {self._name})'
     
     def __repr__(self) -> str:
-        return f'System (type: {self._type}, custom_id: {self._custom_identifier}, name: {self._name})'
+        return f'System (type: {self._system_type}, custom_id: {self._custom_identifier}, name: {self._name})'
     
     def __key(self) -> tuple[SystemID, str]:
-        return (self._system_id, self._type)
+        return (self._system_id, self._system_type)
     
     def __hash__(self) -> int:
         return hash(self.__key())
     
     @property
     def system_type(self) -> str:
-        return self._type
+        return self._system_type
     
     @property
     def system_id(self) -> SystemID:
@@ -2515,8 +2496,6 @@ class StationGroup(System):
         super().add_subsystem(subsystem=subsystem)
 
 
-# MONITORS
-
 # INFRASTRUCTURE COMPONENTS
 
 class InfrastructureObject(System):
@@ -2548,28 +2527,6 @@ class InfrastructureObject(System):
         capacity: capacity of the infrastructure object, if multiple processing \
             slots available at the same time > 1, default=1
         """
-        # [STATS] Monitoring
-        # special monitors for some classes
-        #self._stat_monitor : Monitor | BufferMonitor | InfStructMonitor
-        
-        """
-        if isinstance(self, Buffer):
-            self._stat_monitor = BufferMonitor(
-                                env=env, obj=self, init_state=state, 
-                                possible_states=possible_states, **kwargs)
-        elif isinstance(self, InfrastructureObject) and not isinstance(self, Buffer):
-            self._stat_monitor = InfStructMonitor(
-                                env=env, obj=self, init_state=state, 
-                                possible_states=possible_states, **kwargs)
-        
-        # ?? is this even triggered?
-        # !! check
-        else:
-            self._stat_monitor = Monitor(env=env, obj=self, init_state=state, 
-                                possible_states=possible_states, **kwargs)
-        """
-        
-        
         # [HIERARCHICAL SYSTEM INFORMATION]
         # contrary to other system types no bucket because a processing station 
         # is the smallest unit in the system view/analysis
@@ -2583,17 +2540,15 @@ class InfrastructureObject(System):
             name=name,
             state=state,
         )
-        
+        self.capacity = capacity
+        self.res_type: str
+        # [STATS] Monitoring
         self._stat_monitor = monitors.InfStructMonitor(
             env=env, 
             obj=self,
             init_state=state,
             possible_states=possible_states,
         )
-        
-        self.capacity = capacity
-        self.res_type: str
-        
         # [SALABIM COMPONENT]
         self._sim_control = SimulationComponent(
             env=env,
@@ -2602,31 +2557,21 @@ class InfrastructureObject(System):
             sim_logic=self.sim_logic,
             post_process=self.post_process,
         )
-        """
-        super().__init__(self, env=env, name=self._name, 
-                         process=process, suppress_trace=True, **kwargs)
-        """
-        
-        # add logic queues
+        # [LOGIC] logic queue
         # each resource uses one associated logic queue, logic queues are not physically available
-        # TODO: check name property with buffers
         queue_name: str = f"queue_{self.name}"
         self.logic_queue = salabim.Queue(name=queue_name, env=self.env)
-        
         # currently available jobs on that resource
         self.contents: dict[LoadID, Job] = {}
-        
         # [STATS] additional information
         # number of inputs/outputs
         self.num_inputs: int = 0
         self.num_outputs: int = 0
         
         # time characteristics
-        #self._proc_time: float = 0.
         self._proc_time: Timedelta = Timedelta.min
         # setup time: if a setup time is provided use always this time and ignore job-related setup times
-        #self._setup_time = setup_time
-        self._setup_time = setup_time # ?? error not comprehensible
+        self._setup_time = setup_time
         self._use_const_setup_time: bool
         if self._setup_time is not None:
             self._use_const_setup_time = True
@@ -2642,13 +2587,6 @@ class InfrastructureObject(System):
     def sim_control(self) -> SimulationComponent:
         return self._sim_control
     
-    """
-    def td_to_simtime(
-        self,
-        timedelta: Timedelta,
-    ) -> float:
-        return self.env.timedelta_to_duration(timedelta=timedelta)
-    """
     @property
     def use_const_setup_time(self) -> bool:
         return self._use_const_setup_time
@@ -2713,26 +2651,14 @@ class InfrastructureObject(System):
         self,
         job: Job,
     ) -> Generator[Any, None, InfrastructureObject]:
-        """
-        placing
-        """
         # ALLOCATION REQUEST
-        # TODO: check for changes in comments
-        ## call dispatcher --> request for allocation
-        ## self._dispatcher.request_allocation ...
-        ### input job
-        #### LATER: LOGIC FOR RESOURCE ALLOCATION (AGENT)
-        ### - Dispatcher calls "get_next_operation"
-        ### - Dispatcher returns target_machine
-        ## ret: obtaining target machine
-        # ++++++++++ add later ++++++++++++
-        ## time component: given start date of operation
-        ## returning release date, waiting for release date or release early
+        # TODO ++++++++++ add later ++++++++++++
+        # time component: given start date of operation
+        # returning release date, waiting for release date or release early
         dispatcher = self.env.dispatcher
         infstruct_mgr = self.env.infstruct_mgr
         # call dispatcher to check for allocation rule
         # resets current feasibility status
-        #yield self.hold(0)
         yield self.sim_control.hold(0)
         is_agent, alloc_agent = dispatcher.check_alloc_dispatch(job=job)
         target_station: InfrastructureObject
@@ -2747,7 +2673,6 @@ class InfrastructureObject(System):
                 # ** Break external loop
                 # ** [only step] Calc reward in Gym-Env
                 loggers.agents.debug(f'--------------- DEBUG: call before hold(0) at {self.env.t()}, {self.env.t_as_dt()}')
-                #yield self.hold(0)
                 yield self.sim_control.hold(0)
                 # ** make and set decision in Gym-Env --> RESET external Gym flag
                 loggers.agents.debug(f'--------------- DEBUG: call after hold(0) at {self.env.t()}')
@@ -2762,27 +2687,8 @@ class InfrastructureObject(System):
             # simply obtain target station if no agent decision is needed
             target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
         
-        # should reset feasibility status, call only once
-        # now loop: while not agent.action_feasible
-        ### (if action not feasible step again through the decision making process)
-        # request decision --> SET FLAG FOR GYM LOOP
-        # self.hold(0)
-        # ** Calc Reward
-        # make and set decision in Gym-Env --> RESET FLAG
-        # ``request_job_allocation`` --> check feasibility
-        ### --> SET ``agent.action_feasible``
-        
-        # historic value for reward calculation
-        # agent.past_action_feasible = agent.action_feasible
-        
-        
-        #yield self.hold(0)
+        # ?? yield necessary?
         yield self.sim_control.hold(0)
-        
-        #target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
-        # feasibility is checked inside method
-        
-        ### UPDATE JOB PROCESS INFO IN REQUEST FUNCTION???
         
         # get logic queue
         logic_queue = target_station.logic_queue
@@ -2795,29 +2701,24 @@ class InfrastructureObject(System):
             buffers = target_station.buffers
             
             if buffers:
-                #loggers.prod_stations.debug(f"[{self}] Buffer found")
                 # [STATE:InfrStructObj] BLOCKED
                 infstruct_mgr.update_res_state(obj=self, state='BLOCKED')
                 # [STATE:Job] BLOCKED
                 dispatcher.update_job_state(job=job, state='BLOCKED')
-                #yield self.to_store(store=buffers, item=job, fail_delay=FAIL_DELAY, fail_priority=1)
                 yield self.sim_control.to_store(store=target_station.stores, item=job, 
                                                 fail_delay=FAIL_DELAY, fail_priority=1)
-                #if self.failed():
                 if self.sim_control.failed():
                     raise UserWarning((f"Store placement failed after {FAIL_DELAY} time steps. "
                                        "There seems to be deadlock."))
                 # [STATE:Buffer] trigger state setting for target buffer
-                #buffer = self.to_store_store()
-                # !! buffer not known, only store component
                 salabim_store = self.sim_control.to_store_store()
                 if salabim_store is None:
                     raise ValueError("No store object honoured.")
                 buffer = target_station.buffer_by_store_name(salabim_store.name())
-                
+                # TODO remove later
                 if not isinstance(buffer, Buffer):
-                    #loggers.prod_stations.debug(f"To store store object: {buffer}")
                     raise TypeError(f"From {self}: Job {job} Obj {buffer} is no buffer type at {self.env.now()}")
+                
                 buffer.sim_control.activate()
                 # [CONTENT:Buffer] add content
                 buffer.add_content(job=job)
@@ -2842,8 +2743,6 @@ class InfrastructureObject(System):
             target_station.stat_monitor.change_WIP(job=job, remove=False)
         
         # activate target processing station if passive
-        #if target_station.ispassive():
-        #    target_station.activate()
         if target_station.sim_control.ispassive():
             target_station.sim_control.activate()
         
@@ -2863,15 +2762,16 @@ class InfrastructureObject(System):
         getting jobs from associated predecessor resources
         """
         # entering target machine (logic_buffer)
-        ## logic_buffer: job queue regardless of physical buffers
+        ## logic queue: job queue regardless of physical buffers
         ### entity physically on machine, but no true holding resource object (violates load-resource model)
-        ### no capacity restrictions between resources, e.g. source can endlessly produce entities
+        ### no capacity restrictions between resources, e.g., source can endlessly produce entities
         ## --- logic ---
         ## job enters logic queue of machine with unrestricted capacity
         ## each machine can have an associated physical buffer
         dispatcher = self.env.dispatcher
         infstruct_mgr = self.env.infstruct_mgr
         # request job and its time characteristics from associated queue
+        # TODO retrieve times from job object directly
         job, job_proc_time, job_setup_time = dispatcher.request_job_sequencing(req_obj=self)
         
         ### UPDATE JOB PROCESS INFO IN REQUEST FUNCTION???
@@ -2880,29 +2780,25 @@ class InfrastructureObject(System):
         # contains additional checks if the target values are allowed
         self.proc_time = job_proc_time
         if job_setup_time is not None:
-            loggers.prod_stations.debug(f"-------->>>>> [SETUP TIME DETECTED] job ID {job.job_id} at {self.env.now()} on machine ID {self.custom_identifier} \
-                with setup time {self.setup_time}")
+            loggers.prod_stations.debug((f"[SETUP TIME DETECTED] job ID {job.job_id} at "
+                                         f"{self.env.now()} on machine ID {self.custom_identifier} "
+                                         f"with setup time {self.setup_time}"))
             self.setup_time = job_setup_time
         
+        # Processing Station only
         # request and get job from associated buffer if it exists
         if isinstance(self, ProcessingStation) and self._buffers:
-            #yield self.from_store(store=self._buffers, filter=lambda item: item.job_id==job.job_id)
             yield self.sim_control.from_store(store=self.stores, filter=lambda item: item.job_id==job.job_id)
-            #buffer = cast(Buffer, self.from_store_store())
             salabim_store = self.sim_control.from_store_store()
             if salabim_store is None:
                 raise ValueError("No store object honoured.")
             buffer = self.buffer_by_store_name(salabim_store.name())
-            #buffer = cast(Buffer, self.sim_control.from_store_store())
             # [STATS:Buffer] count number of outputs
             buffer.num_outputs += 1
             # [CONTENT:Buffer] remove content
             buffer.remove_content(job=job)
             # [STATE:Buffer] trigger state setting for target buffer
-            #buffer.activate()
             buffer.sim_control.activate()
-        else:
-            pass
         
         # RELEVANT INFORMATION BEFORE PROCESSING
         dispatcher.update_job_process_info(job=job, preprocess=True)
@@ -2913,28 +2809,26 @@ class InfrastructureObject(System):
         
         # SETUP
         if self.setup_time is not None:
-            # special state setting only for setup times
             # [STATE:InfrStructObj]
             infstruct_mgr.update_res_state(obj=self, state='SETUP')
             # [STATE:Job]
             dispatcher.update_job_state(job=job, state='SETUP')
-            loggers.prod_stations.debug(f"[START SETUP] job ID {job.job_id} at {self.env.now()} on machine ID {self.custom_identifier} \
-                with setup time {self.setup_time}")
+            loggers.prod_stations.debug((f"[START SETUP] job ID {job.job_id} at "
+                                         f"{self.env.now()} on machine ID {self.custom_identifier} "
+                                         f"with setup time {self.setup_time}"))
             sim_time = self.env.td_to_simtime(timedelta=self.setup_time)
-            #yield self.hold(self.setup_time)
-            #yield self.hold(sim_time)
             yield self.sim_control.hold(sim_time)
         
-        # [STATE:InfrStructObj] set state to processing
+        # [STATE:InfrStructObj] PROCESSING
         infstruct_mgr.update_res_state(obj=self, state='PROCESSING')
-        # [STATE:Job] successfully taken --> PROCESSING
+        # [STATE:Job] PROCESSING
         dispatcher.update_job_state(job=job, state='PROCESSING')
         
         return job
     
     ### PROCESS LOGIC
     # each method of 'pre_process', 'sim_control', 'post_process' must be implemented in the child classes
-    def pre_process(self) -> Any | None:
+    def pre_process(self) -> Any:
         """return type: tuple with parameters or None"""
         raise NotImplementedError(f"No pre-process method for {self} of type {self.__class__.__name__} defined.")
     
@@ -2942,7 +2836,7 @@ class InfrastructureObject(System):
         """return type: tuple with parameters or None"""
         raise NotImplementedError(f"No sim-control method for {self} of type {self.__class__.__name__} defined.")
     
-    def post_process(self) -> Any | None:
+    def post_process(self) -> Any:
         """return type: tuple with parameters or None"""
         raise NotImplementedError(f"No post-process method for {self} of type {self.__class__.__name__} defined.")
     
@@ -3672,17 +3566,16 @@ class Sink(InfrastructureObject):
         while True:
             # in analogy to ProcessingStations
             if len(self.logic_queue) == 0:
-                #yield self.passivate()
                 yield self.sim_control.passivate()
             loggers.sinks.debug(f"[SINK: {self}] is getting job from queue")
             # get job, simple FIFO
             job = cast(Job, self.logic_queue.pop())
             # [Call:DISPATCHER] data collection: finalise job
             dispatcher.finish_job(job=job)
-            #job.finalise()
-            # destroy job object ???
+            # ?? destroy job object?
             # if job object destroyed, unsaved information is lost
             # if not destroyed memory usage could increase
+            # TODO write finalised job information to database (disk)
             
     def post_process(self) -> None:
         pass
@@ -3715,17 +3608,14 @@ class Operation:
             'FAILED',
             'PAUSED',
         ),
-        **kwargs,
     ) -> None:
         """
         ADD DESCRIPTION
         """
-        # !!!!!!!!! perhaps processing times in future multiple entries depending on associated machine
+        # TODO: change to OrderTime object
+        # !! perhaps processing times in future multiple entries depending on associated machine
         # change of input format necessary, currently only one machine for each operation
         # no differing processing times for different machines or groups
-        
-        # initialise parent class if available
-        super().__init__(**kwargs)
         
         # assert operation information
         self._dispatcher = dispatcher
@@ -3743,7 +3633,6 @@ class Operation:
         )
         
         # process information
-        # [STATS]
         # time characteristics
         self.proc_time = proc_time
         self.setup_time = setup_time
