@@ -1,3 +1,4 @@
+from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 from collections.abc import Iterable
 from datetime import datetime as Datetime
@@ -26,8 +27,8 @@ class Monitor:
     
     def __init__(
         self,
-        env: 'SimulationEnvironment',
-        obj: 'InfrastructureObject | Job | Operation',
+        env: SimulationEnvironment,
+        obj: InfrastructureObject | Job | Operation,
         init_state: str = 'INIT',
         possible_states: Iterable[str] = (
             'INIT',
@@ -116,11 +117,11 @@ class Monitor:
         return f"Monitor instance of {self._target_object}"
     
     @property
-    def env(self) -> 'SimulationEnvironment':
+    def env(self) -> SimulationEnvironment:
         return self._env
     
     @property
-    def target_object(self) -> 'InfrastructureObject | Job | Operation':
+    def target_object(self) -> InfrastructureObject | Job | Operation:
         return self._target_object
     
     def get_current_state(self) -> str:
@@ -318,8 +319,8 @@ class StorageMonitor(Monitor):
     
     def __init__(
         self,
-        env: 'SimulationEnvironment',
-        obj: 'StorageLike',
+        env: SimulationEnvironment,
+        obj: StorageLike,
         init_state: str = 'INIT',
         possible_states: Iterable[str] = (
             'INIT',
@@ -472,8 +473,8 @@ class InfStructMonitor(Monitor):
     
     def __init__(
         self,
-        env: 'SimulationEnvironment',
-        obj: 'InfrastructureObject',
+        env: SimulationEnvironment,
+        obj: InfrastructureObject,
         init_state: str = 'INIT',
         possible_states: Iterable[str] = (
             'INIT',

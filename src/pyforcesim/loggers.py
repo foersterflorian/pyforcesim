@@ -21,7 +21,7 @@ LOGGING_LEVEL_OPERATIONS: Final[LoggingLevels] = 'ERROR'
 LOGGING_LEVEL_BUFFERS: Final[LoggingLevels] = 'ERROR'
 LOGGING_LEVEL_MONITORS: Final[LoggingLevels] = 'ERROR'
 LOGGING_LEVEL_AGENTS: Final[LoggingLevels] = 'DEBUG'
-LOGGING_LEVEL_CONDITIONS: Final[LoggingLevels] = 'ERROR'
+LOGGING_LEVEL_CONDITIONS: Final[LoggingLevels] = 'DEBUG'
 
 base = logging.getLogger('pyforcesim.base')
 base.setLevel(LOGGING_LEVEL_BASE)

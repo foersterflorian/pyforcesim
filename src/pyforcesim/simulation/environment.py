@@ -11,6 +11,7 @@ from typing import (
 )
 from collections import OrderedDict, deque
 from collections.abc import Iterable, Sequence, Generator, Iterator
+from abc import ABCMeta, abstractmethod
 import random
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
@@ -36,10 +37,7 @@ from pyforcesim.types import (
 )
 from pyforcesim import loggers
 from pyforcesim.simulation import monitors
-from pyforcesim.errors import (
-    AssociationError,
-    ViolationStartingConditionError,
-)
+from pyforcesim.errors import AssociationError
 from pyforcesim.common import flatten
 from pyforcesim.datetime import (
     DTManager,
@@ -61,10 +59,6 @@ from pyforcesim.dashboard.dashboard import (
     start_dashboard,
 )
 from pyforcesim.dashboard.websocket_server import start_websocket_server
-
-# TODO: check if still necessary, call in base component module
-# set Salabim to yield mode (using yield is mandatory)
-salabim.yieldless(False)
 
 # ** constants
 # definition of routing system level
@@ -120,7 +114,13 @@ class SimulationEnvironment(salabim.Environment):
             starting_datetime = _dt_mgr.cut_dt_microseconds(dt=starting_datetime)
         self.starting_datetime = starting_datetime
         
-        super().__init__(trace=False, time_unit=self.time_unit, datetime0=self.starting_datetime, **kwargs)
+        super().__init__(
+            trace=False,
+            time_unit=self.time_unit,
+            datetime0=self.starting_datetime,
+            yieldless=False,
+            **kwargs,
+        )
         
         # [RESOURCE] infrastructure manager
         self._infstruct_mgr_registered: bool = False
@@ -362,7 +362,7 @@ class SimulationEnvironment(salabim.Environment):
         self._dispatcher.dashboard_update()
 
 
-# environment management
+# ** environment management
 
 class InfrastructureManager:
     
@@ -1736,39 +1736,20 @@ class Dispatcher:
         is_agent: bool,
         target_station_group: StationGroup | None = None,
     ) -> ProcessingStation:
-        """ !! add description
-        """
-        # 3 options:
-        # (1) choice between processing stations of the current area
-        #       --> only agent
-        # (2) choice between station groups of the current area
-        #       --> [OPTIONAL] only agent
-        # (3) choice between processing stations of the current station group
-        #       --> other allocation rules: the chosen target station 
-        #           automatically fulfils feasibility
-        
-        # infrastructure manager
         infstruct_mgr = self.env.infstruct_mgr
         
-        # obtain the lowest level systems (only ProcessingStations) of 
-        # that area or station group
-        # agent chooses from its associated objects
         if not is_agent:
             if target_station_group:
                 # preselection of station group only with allocation rules other than >>AGENT<<
-                # returned ProcessingStations automatically feasible regarding thier StationGroup
+                # returned ProcessingStations automatically feasible regarding their StationGroup
                 stations = target_station_group.assoc_proc_stations
             else:
-                # choose from whole production area
                 stations = exec_system.assoc_proc_stations
         
             # [KPIs] calculate necessary information for decision making
             # put all associated processing stations of that group in 'TEMP' state
-            # >>AGENT<<: already done by calling
             infstruct_mgr.res_objs_temp_state(res_objs=stations, reset_temp=False)
-            
-            # choose only from available processing stations
-            candidates: list[ProcessingStation] = [ps for ps in stations if ps.stat_monitor.is_available]
+            candidates = [ps for ps in stations if ps.stat_monitor.is_available]
             # if there are no available ones: use all stations
             if candidates:
                 avail_stations = candidates
@@ -1776,6 +1757,7 @@ class Dispatcher:
                 avail_stations = stations
             
             # ** Allocation Rules
+            # TODO add policy-based rule sets
             # apply different strategies to select a station out of the station group
             match self._curr_alloc_rule:
                 case 'RANDOM':
@@ -1797,37 +1779,25 @@ class Dispatcher:
                     target_station: ProcessingStation = min(avail_stations, key=attrgetter('stat_monitor.WIP_load_num_jobs'))
                     loggers.dispatcher.debug((f"[DISPATCHER: {self}] WIP LOAD NUM JOBS of "
                                              f"{target_station=} is {target_station.stat_monitor.WIP_load_time:.2f}"))
-            
             # [KPIs] reset all associated processing stations of that group to their original state
             infstruct_mgr.res_objs_temp_state(res_objs=stations, reset_temp=True)
-            
         else:
             # ** AGENT decision
             # available stations
-            ## agent can choose from all associated stations, not only available ones
-            ## availability of processing stations should be learned by the agent
-            ## using the utilisation as reward parameter
-            # get agent from execution system
+            # agent can choose from all associated stations, not only available ones
+            # availability of processing stations should be learned by the agent
             agent = exec_system.alloc_agent
-            # available stations are the associated ones
             avail_stations = agent.assoc_proc_stations
             # Feature vector already built when request done to agent
-            # request is being made and feature vector obtained
             # get chosen station by tuple index (agent's action)
             station_idx = agent.action
             if station_idx is None:
                 raise ValueError("No station index chosen")
             target_station = avail_stations[station_idx]
-            # check feasibility of the chosen target station
             agent.action_feasible = self._env.check_feasible_agent_alloc(
                                             target_station=target_station,
                                             op=op)
             loggers.agents.debug(f"Action feasibility status: {agent.action_feasible}")
-
-        # ?? CALC REWARD?
-        # Action t=t, Reward calc t=t+1 == R_t
-        # first action no reward calculation
-        # calculated reward at this point in time is result of previous action
         
         return target_station
     
@@ -2499,7 +2469,7 @@ class StationGroup(System):
 
 # INFRASTRUCTURE COMPONENTS
 
-class InfrastructureObject(System):
+class InfrastructureObject(System, metaclass=ABCMeta):
     
     def __init__(
         self,
@@ -2688,8 +2658,8 @@ class InfrastructureObject(System):
             # simply obtain target station if no agent decision is needed
             target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
         
-        # ?? yield necessary?
-        yield self.sim_control.hold(0)
+        # TODO check removal
+        #yield self.sim_control.hold(0)
         
         # get logic queue
         logic_queue = target_station.logic_queue
@@ -2716,10 +2686,6 @@ class InfrastructureObject(System):
                 if salabim_store is None:
                     raise ValueError("No store object honoured.")
                 buffer = target_station.buffer_by_store_name(salabim_store.name())
-                # TODO remove later
-                if not isinstance(buffer, Buffer):
-                    raise TypeError(f"From {self}: Job {job} Obj {buffer} is no buffer type at {self.env.now()}")
-                
                 buffer.sim_control.activate()
                 # [CONTENT:Buffer] add content
                 buffer.add_content(job=job)
@@ -2829,34 +2795,21 @@ class InfrastructureObject(System):
     
     ### PROCESS LOGIC
     # each method of 'pre_process', 'sim_control', 'post_process' must be implemented in the child classes
+    @abstractmethod
     def pre_process(self) -> Any:
-        """return type: tuple with parameters or None"""
-        raise NotImplementedError(f"No pre-process method for {self} of type {self.__class__.__name__} defined.")
+        """returns: tuple with values or None"""
+        ...
     
+    @abstractmethod
     def sim_logic(self) -> Generator[Any, Any, Any]:
-        """return type: tuple with parameters or None"""
-        raise NotImplementedError(f"No sim-control method for {self} of type {self.__class__.__name__} defined.")
+        """returns: tuple with values or None"""
+        ...
     
+    @abstractmethod
     def post_process(self) -> Any:
-        """return type: tuple with parameters or None"""
-        raise NotImplementedError(f"No post-process method for {self} of type {self.__class__.__name__} defined.")
+        """returns: tuple with values or None"""
+        ...
     
-    def main_logic(self) -> Generator[Any, Any, None]:
-        """main logic loop for all resources in the simulation environment"""
-        loggers.infstrct.debug(f"----> Process logic of {self}")
-        # pre control logic
-        ret = self.pre_process()
-        # main control logic
-        if ret is not None:
-            ret = yield from self.sim_logic(*ret)
-        else:
-            ret = yield from self.sim_logic()
-        # post control logic
-        if ret is not None:
-            ret = self.post_process(*ret)
-        else:
-            ret = self.post_process()
-            
     def finalise(self) -> None:
         """
         method to be called at the end of the simulation run by 
@@ -2867,7 +2820,6 @@ class InfrastructureObject(System):
         infstruct_mgr.update_res_state(obj=self, state='FINISH')
         # finalise stat gathering
         self._stat_monitor.finalise_stats()
-
 
 class StorageLike(InfrastructureObject):
     
@@ -3066,7 +3018,6 @@ class ProcessingStation(InfrastructureObject):
             raise KeyError((f"The buffer >>{buffer}<< is not associated with the resource >>{self}<< and "
                             "therefore could not be removed."))
     
-    ### PROCESS LOGIC
     def pre_process(self) -> None:
         infstruct_mgr = self.env.infstruct_mgr
         infstruct_mgr.update_res_state(obj=self, state='WAITING')
@@ -3077,27 +3028,20 @@ class ProcessingStation(InfrastructureObject):
             # initialise state by passivating machines
             # resources are activated by other resources
             if len(self.logic_queue) == 0:
-                #yield self.passivate()
                 yield self.sim_control.passivate()
             loggers.prod_stations.debug(f"[MACHINE: {self}] is getting job from queue")
             
-            # get job function from PARENT CLASS
             # ONLY PROCESSING STATIONS ARE ASKING FOR SEQUENCING
-            # state setting --> 'PROCESSING'
             job = yield from self.get_job()
             
             loggers.prod_stations.debug(f"[START] job ID {job.job_id} at {self.env.now()} on machine ID {self.custom_identifier} \
                 with proc time {self.proc_time}")
             # PROCESSING
             sim_time = self.env.td_to_simtime(timedelta=self.proc_time)
-            #yield self.hold(sim_time)
             yield self.sim_control.hold(sim_time)
-            # RELEVANT INFORMATION AFTER PROCESSING
             dispatcher.update_job_process_info(job=job, preprocess=False)
-            
             loggers.prod_stations.debug(f"[END] job ID {job.job_id} at {self.env.now()} on machine ID {self.custom_identifier}")
-            # only place job if there are open operations left
-            # maybe add to 'put_job' method
+            
             _ = yield from self.put_job(job=job)
             # [CONTENT:ProdStation] remove content
             self.remove_content(job=job)
@@ -3180,13 +3124,7 @@ class Buffer(StorageLike):
         """
         capacity: capacity of the buffer, can be infinite
         """
-        # assert object information
         self.res_type = 'Buffer'
-        
-        # initialise base classes
-        # using hard-coded classes because Salabim does not provide 
-        # interfaces for multiple inheritance
-        #sim.Store.__init__(self, capacity=capacity, env=env) # type: ignore Salabim wrong type hint
         super().__init__(
             env=env,
             custom_identifier=custom_identifier,
@@ -3197,7 +3135,6 @@ class Buffer(StorageLike):
             possible_states=possible_states,
             fill_level_init=fill_level_init,
         )
-        
         # material flow relationships
         self._associated_prod_stations: set[ProcessingStation] = set()
         self._count_associated_prod_stations: int = 0
@@ -3210,7 +3147,6 @@ class Buffer(StorageLike):
     def wei_avg_fill_level(self) -> float | None:
         return self._stat_monitor.wei_avg_fill_level
     
-    ### MATERIAL FLOW RELATIONSHIP
     def add_prod_station(
         self,
         prod_station: ProcessingStation,
@@ -3227,7 +3163,6 @@ class Buffer(StorageLike):
         if (self._count_associated_prod_stations + 1) > self.capacity:
             raise UserWarning((f"Tried to add a new resource to buffer {self}, but the number of associated "
                                "resources exceeds its capacity which could result in deadlocks."))
-        
         # check if processing station can be added
         if prod_station not in self._associated_prod_stations:
             self._associated_prod_stations.add(prod_station)
@@ -3250,7 +3185,6 @@ class Buffer(StorageLike):
             raise KeyError((f"The processing station >>{prod_station}<< is not associated with the resource >>{self}<< "
                             "and therefore could not be removed."))
     
-    ### PROCESS LOGIC
     def pre_process(self) -> None:
         infstruct_mgr = self.env.infstruct_mgr
         infstruct_mgr.update_res_state(obj=self, state='EMPTY')
@@ -3341,7 +3275,7 @@ class Source(InfrastructureObject):
         self.job_generator = job_generator
         self.job_sequence = job_sequence
         
-        ################## REWORK
+        # TODO REWORK
         # initialise component with necessary process function
         random.seed(42)
         
@@ -3356,7 +3290,6 @@ class Source(InfrastructureObject):
             self.use_stop_time = True
         
         # triggers and flags
-        # indicator if a corresponding ConditionSetter was registered
         self.stop_job_gen_cond_reg: bool = False
         self.stop_job_gen_state = salabim.State('stop_job_gen', env=self.env)
     
@@ -3366,15 +3299,7 @@ class Source(InfrastructureObject):
         """
         proc_time = self.env.td_to_simtime(timedelta=self.proc_time)
         return proc_time
-        """
-        if self.random_generation:
-            # random generation, add later
-            return proc_time
-        else:
-            return proc_time
-        """
     
-    ### PROCESS LOGIC
     def pre_process(self) -> None:
         infstruct_mgr = self.env.infstruct_mgr
         infstruct_mgr.update_res_state(obj=self, state='PROCESSING')
@@ -3542,10 +3467,7 @@ class Sink(InfrastructureObject):
         """
         num_gen_jobs: total number of jobs to be generated
         """
-        # assert object information and register object in the environment
         self.res_type = 'Sink'
-        
-        # initialize parent class
         super().__init__(
             env=env,
             custom_identifier=custom_identifier,
@@ -3556,7 +3478,6 @@ class Sink(InfrastructureObject):
             possible_states=possible_states,
         )
     
-    ### PROCESS LOGIC
     def pre_process(self) -> None:
         # currently sinks are 'PROCESSING' the whole time
         infstruct_mgr = self.env.infstruct_mgr
@@ -3565,11 +3486,9 @@ class Sink(InfrastructureObject):
     def sim_logic(self) -> Generator[None, None, None]:
         dispatcher = self.env.dispatcher
         while True:
-            # in analogy to ProcessingStations
             if len(self.logic_queue) == 0:
                 yield self.sim_control.passivate()
             loggers.sinks.debug(f"[SINK: {self}] is getting job from queue")
-            # get job, simple FIFO
             job = cast(Job, self.logic_queue.pop())
             # [Call:DISPATCHER] data collection: finalise job
             dispatcher.finish_job(job=job)
@@ -3577,12 +3496,12 @@ class Sink(InfrastructureObject):
             # if job object destroyed, unsaved information is lost
             # if not destroyed memory usage could increase
             # TODO write finalised job information to database (disk)
-            
+    
     def post_process(self) -> None:
         pass
 
 
-# LOAD COMPONENTS
+# ** load components
 
 class Operation:
     
@@ -3750,8 +3669,6 @@ class Operation:
             self._prio = new_prio
             # REWORK changing OP prio must change job prio but only if op is job's current one
 
-
-# TODO: change system components from CustomID to SystemID (ExecSystem, StationGroup)
 class Job(salabim.Component):
     
     def __init__(
@@ -4032,202 +3949,3 @@ class Job(salabim.Component):
             raise TypeError(f"From {self}: Object >>{obj}<< muste be of type 'InfrastructureObject'")
         else:
             self._current_resource = obj
-
-
-# !! USE LATER AS COMMON BASIS
-# !! code duplicated with InfrastructureObject
-# ?? possible to make ``BaseComponent`` class
-# !! conditions in separate module
-class Component(salabim.Component):
-    
-    def __init__(
-        self,
-        env: SimulationEnvironment,
-        name: str,
-        **kwargs,
-    ) -> None:
-        
-        # environment
-        self.env = env
-        # [SALABIM COMPONENT] initialise base class
-        process: str = 'main_logic'
-        super().__init__(env=env, name=name, process=process,
-                         suppress_trace=True, **kwargs)
-    
-    ### PROCESS LOGIC
-    # each method of 'pre_process', 'sim_control', 'post_process' must be implemented in the child classes
-    def pre_process(self) -> Any | None:
-        """return type: tuple with parameters or None"""
-        raise NotImplementedError(f"No pre-process method for {self} of type {self.__class__.__name__} defined.")
-    
-    def sim_control(self) -> Generator[Any, Any, Any]:
-        """return type: tuple with parameters or None"""
-        raise NotImplementedError(f"No sim-control method for {self} of type {self.__class__.__name__} defined.")
-    
-    def post_process(self) -> Any | None:
-        """return type: tuple with parameters or None"""
-        raise NotImplementedError(f"No post-process method for {self} of type {self.__class__.__name__} defined.")
-    
-    def main_logic(self) -> Generator[Any, Any, Any]:
-        """main logic loop for all resources in the simulation environment"""
-        loggers.infstrct.debug(f"----> Process logic of {self}")
-        # pre control logic
-        ret = self.pre_process()
-        # main control logic
-        if ret is not None:
-            ret = yield from self.sim_control(*ret)
-        else:
-            ret = yield from self.sim_control()
-        # post control logic
-        if ret is not None:
-            ret = self.post_process(*ret)
-        else:
-            ret = self.post_process()
-
-class ConditionSetter(Component):
-    
-    def __init__(
-        self,
-        env: SimulationEnvironment,
-        **kwargs,
-    ) -> None:
-        # initialise base class
-        super().__init__(env=env, **kwargs)
-        
-    def __str__(self) -> str:
-        return f"{self.__class__.__name__}"
-
-class TransientCondition(ConditionSetter):
-    
-    def __init__(
-        self,
-        env: SimulationEnvironment,
-        duration_transient: Timedelta,
-        **kwargs,
-    ) -> None:
-        # duration after which the condition is set
-        self.duration_transient = duration_transient
-        # initialise base class
-        super().__init__(env=env, **kwargs)
-    
-    ### PROCESS LOGIC
-    # each method of 'pre_process', 'sim_control', 'post_process' must be implemented in the child classes
-    def pre_process(self) -> None:
-        # validate that starting condition is met
-        # check transient phase of environment
-        if not self.env.is_transient_cond:
-            raise ViolationStartingConditionError(f"Environment {self.env.name()} not in transient state!")
-    
-    def sim_control(self) -> Generator[None, None, None]:
-        # convert transient duration to simulation time
-        sim_time = self.env.td_to_simtime(timedelta=self.duration_transient)
-        # wait for the given time interval
-        yield self.hold(sim_time, priority=-10)
-        # set environment flag and state
-        self.env.is_transient_cond = False
-        self.env.transient_cond_state.set()
-        loggers.conditions.info((f"[CONDITION {self}]: Transient Condition over. Set >>is_transient_cond<< "
-                                f"of env to >>{self.env.is_transient_cond}<<"))
-    
-    def post_process(self) -> None:
-        pass
-
-class JobGenDurationCondition(ConditionSetter):
-    
-    def __init__(
-        self,
-        env: SimulationEnvironment,
-        target_obj: Source,
-        sim_run_until: Datetime | None = None,
-        sim_run_duration: Timedelta | None = None,
-        **kwargs,
-    ) -> None:
-        # initialise base class
-        super().__init__(env=env, **kwargs)
-        
-        # either point in time or duration must be provided
-        if not any((sim_run_until, sim_run_duration)):
-            # both None
-            raise ValueError("Either point in time or duration must be provided")
-        elif all((sim_run_until, sim_run_duration)):
-            # both provided
-            raise ValueError("Point in time and duration provided. Only one allowed.")
-        
-        # get starting datetime of environment
-        starting_dt = self.env.starting_datetime
-        self.sim_run_duration: Timedelta
-        if sim_run_until is not None:
-            # check if point in time is provided with UTC time zone
-            _dt_mgr.validate_dt_UTC(dt=sim_run_until)
-            # check if point in time is in the past
-            if sim_run_until <= starting_dt:
-                raise ValueError(("Point in time must not be in the past. "
-                                  f"Starting Time Env: {starting_dt}, "
-                                  f"Point in time provided: {sim_run_until}"))
-            # calculate duration from starting datetime
-            # duration after which the condition is set
-            self.sim_run_duration = sim_run_until - starting_dt
-        elif sim_run_duration is not None:
-            # duration after which the condition is set
-            self.sim_run_duration = sim_run_duration
-        else:
-            raise ValueError("No valid point in time or duration provided")
-        
-        # point in time after which the condition is set
-        self.sim_run_until = sim_run_until
-        
-        # target object (source)
-        self.target_obj = target_obj
-        # register in object
-        self.target_obj.stop_job_gen_cond_reg = True
-    
-    ### PROCESS LOGIC
-    # each method of 'pre_process', 'sim_control', 'post_process' must be implemented in the child classes
-    def pre_process(self) -> None:
-        # validate that starting condition is met
-        # check transient phase of environment
-        if self.target_obj.stop_job_gen_state.get():
-            raise ViolationStartingConditionError(f"Target object {self.target_obj}: Flag not unset!")
-    
-    def sim_control(self) -> Generator[None, None, None]:
-        # convert transient duration to simulation time
-        sim_time = self.env.td_to_simtime(timedelta=self.sim_run_duration)
-        # wait for the given time interval
-        yield self.hold(sim_time, priority=-10)
-        # [TARGET]
-        # set flag or state
-        self.target_obj.stop_job_gen_state.set()
-        loggers.conditions.info((f"[CONDITION {self}]: Job Generation Condition met at "
-                                f"{self.env.t_as_dt()}"))
-    
-    def post_process(self) -> None:
-        pass
-
-class TriggerAgentCondition(ConditionSetter):
-    
-    def __init__(
-        self,
-        env: SimulationEnvironment,
-        **kwargs,
-    ) -> None:
-        # initialise base class
-        super().__init__(env=env, **kwargs)
-    
-    ### PROCESS LOGIC
-    # each method of 'pre_process', 'sim_control', 'post_process' must be implemented in the child classes
-    def pre_process(self) -> None:
-        # validate that starting condition is met
-        # check transient phase of environment
-        if self.env.transient_cond_state.get():
-            raise ViolationStartingConditionError((f"Environment {self.env.name()} transient state: "
-                                            "sim.State already set!"))
-    
-    def sim_control(self) -> Generator[None, None, None]:
-        # wait for the given time interval
-        yield self.wait(self.env.transient_cond_state, priority=-9)
-        # change allocation rule of dispatcher
-        self.env.dispatcher.curr_alloc_rule = 'AGENT'
-        loggers.conditions.info((f"[CONDITION {self}]: Set allocation rule to >>AGENT<<"))
-    
-    def post_process(self) -> None:
-        pass

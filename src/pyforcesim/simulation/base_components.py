@@ -1,3 +1,4 @@
+from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from collections.abc import Generator, Callable
 
@@ -16,7 +17,7 @@ class SimulationComponent(salabim.Component):
     
     def __init__(
         self,
-        env: 'SimulationEnvironment',
+        env: SimulationEnvironment,
         name: str,
         pre_process: Callable[..., Any],
         sim_logic: Callable[..., Generator[Any, Any, Any]],
@@ -50,7 +51,7 @@ class StorageComponent(SimulationComponent):
     
     def __init__(
         self,
-        env: 'SimulationEnvironment',
+        env: SimulationEnvironment,
         name: str,
         capacity: int | Infinite,
         pre_process: Callable[..., Any],

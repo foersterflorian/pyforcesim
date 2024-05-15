@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import TypeAlias, Any, TypeVar
+from typing import TypeAlias, Any
 from collections.abc import Iterator
 
 
