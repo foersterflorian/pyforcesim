@@ -1,8 +1,8 @@
 """provides logger objects for the pyforcesim package"""
 
-from typing import Final
-import sys
 import logging
+import sys
+from typing import Final
 
 from pyforcesim.types import LoggingLevels
 

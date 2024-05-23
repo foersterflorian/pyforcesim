@@ -1,4 +1,4 @@
-from typing import NewType, TypeAlias, Literal, Final
+from typing import Final, Literal, NewType, TypeAlias
 
 from plotly.graph_objs._figure import Figure
 
@@ -23,6 +23,3 @@ AgentTasks: TypeAlias = Literal['SEQ', 'ALLOC']
 
 # infinity
 INF: Final[Infinite] = float('inf')
-
-
-

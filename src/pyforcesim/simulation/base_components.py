@@ -1,20 +1,23 @@
 from __future__ import annotations
+
+from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING, Any
-from collections.abc import Generator, Callable
 
 import salabim
 
 from pyforcesim.types import Infinite
+
 if TYPE_CHECKING:
     from pyforcesim.simulation.environment import SimulationEnvironment
 
 # set Salabim to yield mode (using yield is mandatory)
 salabim.yieldless(False)
 
+
 class SimulationComponent(salabim.Component):
     """thin wrapper for Salabim components to add them as component
     to simulation entities"""
-    
+
     def __init__(
         self,
         env: SimulationEnvironment,
@@ -27,9 +30,9 @@ class SimulationComponent(salabim.Component):
         self.pre_process = pre_process
         self.sim_logic = sim_logic
         self.post_process = post_process
-        
+
         super().__init__(env=env, process='run', suppress_trace=True, name=name)
-    
+
     def run(self) -> Generator[Any, Any, None]:
         """main logic loop for all resources in the simulation environment"""
         # pre control logic
@@ -45,10 +48,11 @@ class SimulationComponent(salabim.Component):
         else:
             ret = self.post_process()
 
+
 class StorageComponent(SimulationComponent):
     """thin wrapper for Salabim store components to add them as component
     to simulation entities"""
-    
+
     def __init__(
         self,
         env: SimulationEnvironment,
@@ -69,14 +73,14 @@ class StorageComponent(SimulationComponent):
         self._store = salabim.Store(
             env=env,
             name=storage_name,
-            capacity=capacity, # type: ignore Salabim wrong type hint
+            capacity=capacity,  # type: ignore Salabim wrong type hint
         )
         self._store_name = self._store.name()
-    
+
     @property
     def store(self) -> salabim.Store:
         return self._store
-    
+
     @property
     def store_name(self) -> str:
         return self._store_name

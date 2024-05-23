@@ -1,11 +1,11 @@
-from typing import Final
-import webbrowser
-import time
 import threading
+import time
+import webbrowser
+from typing import Final
 
-from dash_extensions.enrich import DashProxy, html, dcc, Output, Input
-from dash_extensions import WebSocket
 import plotly.io
+from dash_extensions import WebSocket
+from dash_extensions.enrich import DashProxy, Input, Output, dcc, html
 
 from pyforcesim.dashboard.websocket_server import WS_HOST, WS_PORT, WS_ROUTE
 
@@ -17,22 +17,22 @@ WS_URL: Final[str] = f'ws://{WS_HOST}:{WS_PORT}/{WS_ROUTE}'
 
 
 # ** Dash Application
-app = DashProxy(__name__, prevent_initial_callbacks=True) # type: ignore (error in DashProxy definition)
+app = DashProxy(__name__, prevent_initial_callbacks=True)  # type: ignore (error in DashProxy definition)
 
-# TODO remove
-#gantt_chart = dcc.Graph(id='gantt_chart')
-#gantt_chart.figure = PlotlyFigure()
 
-app.layout = html.Div([
-    html.H1(children='Dashboard SimRL', style={'textAlign':'center'}),
-    dcc.Graph(id='gantt_chart'),
-    WebSocket(id="ws", url=WS_URL),
-])
+app.layout = html.Div(
+    [
+        html.H1(children='Dashboard SimRL', style={'textAlign': 'center'}),
+        dcc.Graph(id='gantt_chart'),
+        WebSocket(id='ws', url=WS_URL),
+    ]
+)
+
 
 # updating Gantt chart
 @app.callback(
-    Output("gantt_chart", "figure"),
-    Input("ws", "message"),
+    Output('gantt_chart', 'figure'),
+    Input('ws', 'message'),
 )
 def update_gantt_chart(
     message: dict[str, str],
@@ -41,12 +41,14 @@ def update_gantt_chart(
     gantt_chart = plotly.io.from_json(gantt_chart_json)
     return gantt_chart
 
+
 # ** dashboard management
 def start_webbrowser(
     url: str,
 ) -> None:
     time.sleep(1)
     webbrowser.open_new(url=url)
+
 
 def start_dashboard() -> None:
     # open webbrowser to display dashboard
