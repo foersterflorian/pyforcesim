@@ -1,12 +1,13 @@
 """Advanced time handling for simulation runs"""
 
 from __future__ import annotations
-from typing import Final
+
 import datetime
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
-from datetime import tzinfo as TZInfo
 from datetime import timezone as Timezone
+from datetime import tzinfo as TZInfo
+from typing import Final
 from zoneinfo import ZoneInfo
 
 from pandas import DataFrame
@@ -18,42 +19,43 @@ DEFAULT_DATETIME: Final[Datetime] = Datetime(datetime.MINYEAR, 1, 1, tzinfo=TIME
 
 
 class DTManager:
-    
-    def __init__(
-        self
-    ) -> None:
+    def __init__(self) -> None:
         """
-        date and time parser with convenient methods 
+        date and time parser with convenient methods
         to parse time units as timedelta and datetime objects
         """
-        
-        self._time_units_datetime: set[str] = set([
-            'year',
-            'month',
-            'day',
-            'hour',
-            'minute',
-            'second',
-            'microsecond',
-        ])
-        
-        self._time_units_timedelta: set[str] = set([
-            'weeks',
-            'days',
-            'hours',
-            'minutes',
-            'seconds',
-            'milliseconds',
-            'microseconds',
-        ])
-    
+
+        self._time_units_datetime: set[str] = set(
+            [
+                'year',
+                'month',
+                'day',
+                'hour',
+                'minute',
+                'second',
+                'microsecond',
+            ]
+        )
+
+        self._time_units_timedelta: set[str] = set(
+            [
+                'weeks',
+                'days',
+                'hours',
+                'minutes',
+                'seconds',
+                'milliseconds',
+                'microseconds',
+            ]
+        )
+
     def dt_with_tz_UTC(
         self,
         *args,
         **kwargs,
-    )-> Datetime:
+    ) -> Datetime:
         return Datetime(*args, **kwargs, tzinfo=TIMEZONE_UTC)
-    
+
     def timedelta_from_val(
         self,
         val: float,
@@ -78,10 +80,15 @@ class DTManager:
         ValueError
             if chosen time unit not implemented
         """
-        
+
         if time_unit not in self._time_units_timedelta:
-            raise ValueError(f"Time unit >>{time_unit}<< not supported. Choose from {self._time_units_timedelta}")
-        
+            raise ValueError(
+                (
+                    f'Time unit >>{time_unit}<< not supported. '
+                    f'Choose from {self._time_units_timedelta}'
+                )
+            )
+
         match time_unit:
             case 'weeks':
                 ret = datetime.timedelta(weeks=val)
@@ -97,9 +104,9 @@ class DTManager:
                 ret = datetime.timedelta(milliseconds=val)
             case 'microseconds':
                 ret = datetime.timedelta(microseconds=val)
-                
+
         return ret
-    
+
     def round_td_by_seconds(
         self,
         td: Timedelta,
@@ -151,7 +158,7 @@ class DTManager:
         starting_dt: Datetime,
         td: Timedelta,
     ) -> Datetime:
-        """time-zone-aware calculation of an end point in time 
+        """time-zone-aware calculation of an end point in time
         with a given timedelta
 
         Parameters
@@ -166,10 +173,12 @@ class DTManager:
         Datetime
             time-zone-aware end point
         """
-        
+
         if starting_dt.tzinfo is None:
             # no time zone information
-            raise RuntimeError("The provided starting date does not contain time zone information.")
+            raise RuntimeError(
+                'The provided starting date does not contain time zone information.'
+            )
         else:
             # obtain time zone information from starting datetime object
             tz_info = starting_dt.tzinfo
@@ -181,7 +190,7 @@ class DTManager:
         ending_dt_utc = dt_utc + td
         # transform back to previous time zone
         ending_dt = ending_dt_utc.astimezone(tz=tz_info)
-        
+
         return ending_dt
 
     def validate_dt_UTC(
@@ -201,10 +210,12 @@ class DTManager:
         ValueError
             if no UTC time zone information is found
         """
-        
+
         if dt.tzinfo != TIMEZONE_UTC:
-            raise ValueError(f"Datetime object {dt} does not contain "
-                            "necessary UTC time zone information")
+            raise ValueError(
+                f'Datetime object {dt} does not contain '
+                'necessary UTC time zone information'
+            )
 
     def dt_to_timezone(
         self,
@@ -230,13 +241,15 @@ class DTManager:
         RuntimeError
             if datetime object does not contain time zone information
         """
-        
+
         if dt.tzinfo is None:
             # no time zone information
-            raise RuntimeError("The provided starting date does not contain time zone information.")
+            raise RuntimeError(
+                'The provided starting date does not contain time zone information.'
+            )
         # transform to given target time zone
         dt_local_tz = dt.astimezone(tz=target_tz)
-        
+
         return dt_local_tz
 
     def cut_dt_microseconds(
@@ -248,17 +261,18 @@ class DTManager:
 
 # data wrangling
 
+
 def get_date_cols_from_db(
     db: DataFrame,
 ) -> list[str]:
-    
     target_cols: list[str] = []
-    
+
     for col in db.columns:
         if 'date' in col and 'deviation' not in col:
             target_cols.append(col)
-    
+
     return target_cols.copy()
+
 
 def adjust_db_dates_local_tz(
     db: DataFrame,
@@ -270,8 +284,7 @@ def adjust_db_dates_local_tz(
     date_cols = get_date_cols_from_db(db=db)
     # adjust UTC times to local time zone provided
     dates_only = db[date_cols]
-    dates_only = dates_only.applymap(dt_mgr.dt_to_timezone, 
-                                     na_action='ignore', target_tz=tz) # type: ignore
+    dates_only = dates_only.map(dt_mgr.dt_to_timezone, na_action='ignore', target_tz=tz)
     db[date_cols] = dates_only
-    
+
     return db.copy()

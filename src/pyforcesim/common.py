@@ -1,17 +1,20 @@
 from __future__ import annotations
-from typing import TypeAlias, Any
-from collections.abc import Iterator
 
+from collections.abc import Iterator
+from typing import Any, TypeAlias
 
 FlattableObject: TypeAlias = (
-    list['FlattableObject' | Any] | tuple['FlattableObject' | Any, ...] | set['FlattableObject' | Any]
+    list['FlattableObject | Any']
+    | tuple['FlattableObject | Any', ...]
+    | set['FlattableObject | Any']
 )
+
 
 def flatten(
     obj: FlattableObject,
 ) -> Iterator[Any]:
     """flattens an arbitrarily nested list or tuple
-    https://stackoverflow.com/questions/2158395/flatten-an-irregular-arbitrarily-nested-list-of-lists 
+    https://stackoverflow.com/questions/2158395/flatten-an-irregular-arbitrarily-nested-list-of-lists
 
     Parameters
     ----------

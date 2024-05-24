@@ -4,10 +4,7 @@ from gymnasium import spaces
 
 import pyforcesim.simulation.environment as sim
 from pyforcesim.simulation import loads
-from pyforcesim.datetime import (
-    DTManager, 
-    adjust_db_dates_local_tz,
-)
+from pyforcesim.datetime import DTManager
 from pyforcesim.rl import agents
 
 
@@ -29,8 +26,8 @@ def build_sim_env() -> tuple[
     dt_mgr = DTManager()
     starting_dt = dt_mgr.current_time_tz(cut_microseconds=True)
     # environment
-    env = sim.SimulationEnvironment(name='base', time_unit='seconds', starting_datetime=dt)
-    job_generator = loads.RandomJobGenerator(seed=2)
+    env = sim.SimulationEnvironment(name='base', time_unit='seconds', starting_datetime=starting_dt)
+    job_generator = loads.RandomJobGenerator(env=env, seed=2)
     infstruct_mgr = sim.InfrastructureManager(env=env)
     dispatcher = sim.Dispatcher(env=env, priority_rule='FIFO')
     
@@ -89,8 +86,8 @@ def build_sim_env() -> tuple[
     if add_machine_to_bottleneck:
         buffer = sim.Buffer(capacity=20, env=env, custom_identifier=(10+machine+1))
         MachInst = sim.Machine(env=env, custom_identifier=machine+1, buffers=[buffer])
-        group_prod3.add_subsystem(buffer)
-        group_prod3.add_subsystem(MachInst)
+        #.add_subsystem(buffer)
+        #group_prod3.add_subsystem(MachInst)
         
     alloc_agent = agents.AllocationAgent(assoc_system=area_prod)
 
@@ -98,7 +95,7 @@ def build_sim_env() -> tuple[
     duration_transient = dt_mgr.timedelta_from_val(val=2, time_unit='hours')
     trans_cond = sim.TransientCondition(env=env, duration_transient=duration_transient)
     agent_decision_cond = sim.TriggerAgentCondition(env=env)
-    sim_dur = dt_parser.timedelta_from_val(val=2., time_unit='days')
+    sim_dur = dt_mgr.timedelta_from_val(val=2., time_unit='days')
     sim_end_date = dt_mgr.dt_with_tz_UTC(2024,3,23,12)
     job_gen_dur_cond = sim.JobGenDurationCondition(env=env, target_obj=source, sim_run_duration=sim_dur)
     
@@ -140,7 +137,7 @@ class JSSEnv(gym.Env):
         ## ** action is provided as parameter, set action
         # ?? should still be checked? necessary?
         # should not be needed anymore, empty event list is checked below
-        if self.env._event_list:
+        if self.sim_env._event_list:
             print('Dispatching Signal', self.agent.dispatching_signal)
             self.agent.set_decision(action=action)
         else:
@@ -148,14 +145,14 @@ class JSSEnv(gym.Env):
         
         # ** Run till next action is needed
         # execute with provided action till next decision should be made
-        while not agent.dispatching_signal:
+        while not self.agent.dispatching_signal:
             
             # empty event list, simulation run ended
-            if not self.env._event_list:
+            if not self.sim_env._event_list:
                 self.terminated = True
                 break
             
-            self.env.step()
+            self.sim_env.step()
         
         # ** Calculate Reward
         # in agent class, not implemented yet
@@ -189,10 +186,10 @@ class JSSEnv(gym.Env):
             # empty event list, simulation run ended
             # theoretically should never be triggered unless transient condition
             # is met later than configured simulation time
-            if not self.env._event_list:
+            if not self.sim_env._event_list:
                 self.terminated = True
                 break
-            self.env.step()
+            self.sim_env.step()
         
         # feature vector already built internally when dispatching signal is set
         observation = self.agent.feat_vec
