@@ -12,3 +12,7 @@ class NoAllocationAgentAssignedError(Exception):
 
 class ViolationStartingConditionError(Exception):
     """error occurring if a starting condition of a ConditionSetter is not met"""
+
+
+class CommonSQLError(Exception):
+    """error that describes a common SQL error"""

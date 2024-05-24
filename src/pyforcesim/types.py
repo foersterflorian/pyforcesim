@@ -1,4 +1,4 @@
-from typing import Final, Literal, NewType, TypeAlias
+from typing import Any, Final, Literal, NewType, TypeAlias
 
 from plotly.graph_objs._figure import Figure
 
@@ -23,3 +23,35 @@ AgentTasks: TypeAlias = Literal['SEQ', 'ALLOC']
 
 # infinity
 INF: Final[Infinite] = float('inf')
+
+# ** database
+DBColumnName: TypeAlias = str
+DBColumnType: TypeAlias = str
+DBColumnDeclaration: TypeAlias = dict[DBColumnName, DBColumnType]
+SQLiteColumnDescription: TypeAlias = tuple[
+    int,
+    DBColumnName, 
+    DBColumnType,
+    int,
+    Any | None,
+    int,
+]
+DB_ROOT: Final[str] = 'databases'
+DB_DATA_TYPES: Final[set[str]] = {
+    'INTEGER',
+    'REAL',
+    'TEXT',
+    'BLOB',
+    'DATE',
+    'DATETIME',
+    'TIMEDELTA',
+}
+# SQLite supports more column constraints than these,
+# but only these are currently supported by the database module
+DB_SUPPORTED_COL_CONSTRAINTS: Final[frozenset[str]] = frozenset(
+    [
+        'NOT NULL',
+        'UNIQUE',
+        'PRIMARY KEY',
+    ]
+)

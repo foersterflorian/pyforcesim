@@ -22,6 +22,7 @@ LOGGING_LEVEL_BUFFERS: Final[LoggingLevels] = 'ERROR'
 LOGGING_LEVEL_MONITORS: Final[LoggingLevels] = 'ERROR'
 LOGGING_LEVEL_AGENTS: Final[LoggingLevels] = 'DEBUG'
 LOGGING_LEVEL_CONDITIONS: Final[LoggingLevels] = 'DEBUG'
+LOGGING_LEVEL_DB: Final[LoggingLevels] = 'DEBUG'
 
 base = logging.getLogger('pyforcesim.base')
 base.setLevel(LOGGING_LEVEL_BASE)
@@ -45,6 +46,8 @@ agents = logging.getLogger('pyforcesim.agents')
 agents.setLevel(LOGGING_LEVEL_AGENTS)
 conditions = logging.getLogger('pyforcesim.conditions')
 conditions.setLevel(LOGGING_LEVEL_CONDITIONS)
+databases = logging.getLogger('pyforcesim.databases')
+databases.setLevel(LOGGING_LEVEL_DB)
 
 jobs = logging.getLogger('pyforcesim.jobs')
 jobs.setLevel(LOGGING_LEVEL_JOBS)
