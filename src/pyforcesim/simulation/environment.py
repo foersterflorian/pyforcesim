@@ -416,7 +416,7 @@ class InfrastructureManager:
         # init base class, even if not available
         super().__init__(**kwargs)
 
-        # [COMMON]
+        # COMMON
         self._env = env
         self._env.register_infrastructure_manager(infstruct_mgr=self)
         # subsystem types
@@ -428,7 +428,7 @@ class InfrastructureManager:
             ]
         )
 
-        # [PRODUCTION AREAS] database as simple Pandas DataFrame
+        # PRODUCTION AREAS database as simple Pandas DataFrame
         self._prod_area_prop: dict[str, type] = {
             'prod_area_id': int,
             'custom_id': object,
@@ -2073,7 +2073,7 @@ class Dispatcher:
         # get job from logic queue with currently defined priority rule
         job = self.seq_priority_rule(queue=logic_queue)
         # reset environment signal for SEQUENCING
-        
+
         if job.current_proc_time is None:
             raise ValueError(f'No processing time defined for job {job}.')
 

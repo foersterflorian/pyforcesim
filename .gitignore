@@ -4,10 +4,10 @@ keys.toml
 *.xlsx
 *.xlsm
 *.csv
-#*.db
+*.db
 !SJR*.csv
 data/
-#database*/
+database*/
 dataset*/
 input/
 output/

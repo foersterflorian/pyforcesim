@@ -18,6 +18,7 @@ from pyforcesim.types import (
     DB_ROOT,
     DB_SUPPORTED_COL_CONSTRAINTS,
     DBColumnDeclaration,
+    ForeignKeyInfo,
     SQLiteColumnDescription,
 )
 
@@ -46,6 +47,10 @@ def adapt_timedelta(td: Timedelta) -> str:
     return f'{td.days},{td.seconds},{td.microseconds}'
 
 
+def adapt_bool(val: bool) -> int:
+    return int(val)
+
+
 def convert_date(val: bytes) -> Date:
     """Convert ISO 8601 date to datetime.date object."""
     return Date.fromisoformat(val.decode())
@@ -61,12 +66,18 @@ def convert_timedelta(val: bytes) -> Timedelta:
     return Timedelta(days=days, seconds=secs, microseconds=mic_secs)
 
 
+def convert_bool(val: bytes) -> bool:
+    return bool(int(val))
+
+
 sql.register_adapter(Date, adapt_date_iso)
 sql.register_adapter(Datetime, adapt_datetime_iso)
 sql.register_adapter(Timedelta, adapt_timedelta)
+sql.register_adapter(bool, adapt_bool)
 sql.register_converter('DATE', convert_date)
 sql.register_converter('DATETIME', convert_datetime)
 sql.register_converter('TIMEDELTA', convert_timedelta)
+sql.register_converter('BOOLEAN', convert_bool)
 
 
 # connection with: detect_types=sqlite3.PARSE_DECLTYPES
@@ -143,11 +154,41 @@ class Database:
 
         return col_query
 
+    def _add_foreign_key_constraint(
+        self,
+        col_query: str,
+        key_col: str,
+        ref_table: str,
+        ref_col: str,
+    ) -> str:
+        key_col = self._clean_query_injection(key_col)
+        ref_table = self._clean_query_injection(ref_table)
+        ref_col = self._clean_query_injection(ref_col)
+        fk_definition = f'FOREIGN KEY ({key_col}) REFERENCES {ref_table}({ref_col})'
+        query = f'{col_query}, {fk_definition}'
+
+        return query
+
+    def create_foreign_key_info(
+        self,
+        column: str,
+        ref_table: str,
+        ref_column: str,
+    ) -> ForeignKeyInfo:
+        return {
+            'column': column,
+            'ref_table': ref_table,
+            'ref_column': ref_column,
+        }
+
     def get_connection(self) -> sql.Connection:
         if self._con is not None:
             logger.warning('Connection already established.')
         else:
             self._con = sql.connect(self.path, detect_types=sql.PARSE_DECLTYPES)
+            # explicitly enable foreign key constraints
+            with self._con as con:
+                con.execute('PRAGMA foreign_keys = ON')
 
         return self._con
 
@@ -204,11 +245,23 @@ class Database:
         self,
         table_name: str,
         columns: DBColumnDeclaration,
+        *,
+        foreign_key_info: ForeignKeyInfo | None = None,
     ) -> None:
         table_name = self._clean_query_injection(table_name)
         col_query = self._format_column_declaration(columns)
+
+        if foreign_key_info is not None:
+            col_query = self._add_foreign_key_constraint(
+                col_query,
+                foreign_key_info['column'],
+                foreign_key_info['ref_table'],
+                foreign_key_info['ref_column'],
+            )
+
         logger.info(f'Creating table {table_name}...')
         query = f'CREATE TABLE IF NOT EXISTS {table_name} ({col_query})'
+        logger.debug(f'Query: {query}.')
         con = self.get_connection()
         try:
             with con:
@@ -284,3 +337,46 @@ class Database:
             logger.debug('Data inserted successfully.')
         finally:
             self.close_connection()
+
+
+"""
+database definitions, later moved to other place
+# Infrastructure Manager
+## Production Area
+name = 'production_areas'
+cols_props = {
+    'id': 'INTEGER PRIMARY KEY',
+    'custom_id': 'TEXT',
+    'name': 'TEXT',
+    'containing_proc_station': 'BOOLEAN',
+}
+## Station Groups
+name = 'station_groups'
+cols_props = {
+    'id': 'INTEGER PRIMARY KEY',
+    'production_area_id': 'INTEGER NOT NULL',
+    'custom_id': 'TEXT',
+    'name': 'TEXT',
+    'containing_proc_station': 'BOOLEAN',
+}
+fk_info = db.create_foreign_key_info(
+    column='production_area_id',
+    ref_table='production_areas',
+    ref_column='id',
+)
+## Resources
+name = 'resources'
+cols_props = {
+    'id': 'INTEGER PRIMARY KEY',
+    'station_group_id': 'INTEGER NOT NULL',
+    'custom_id': 'TEXT',
+    'name': 'TEXT',
+    'type': 'TEXT',
+    'state': 'TEXT',
+}
+fk_info = db.create_foreign_key_info(
+    column='station_group_id',
+    ref_table='station_groups',
+    ref_column='id',
+)
+"""

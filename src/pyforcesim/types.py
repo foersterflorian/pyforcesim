@@ -1,4 +1,4 @@
-from typing import Any, Final, Literal, NewType, TypeAlias
+from typing import Any, Final, Literal, NewType, TypeAlias, TypedDict
 
 from plotly.graph_objs._figure import Figure
 
@@ -30,16 +30,25 @@ DBColumnType: TypeAlias = str
 DBColumnDeclaration: TypeAlias = dict[DBColumnName, DBColumnType]
 SQLiteColumnDescription: TypeAlias = tuple[
     int,
-    DBColumnName, 
+    DBColumnName,
     DBColumnType,
     int,
     Any | None,
     int,
 ]
+
+
+class ForeignKeyInfo(TypedDict):
+    column: str
+    ref_table: str
+    ref_column: str
+
+
 DB_ROOT: Final[str] = 'databases'
 DB_DATA_TYPES: Final[set[str]] = {
     'INTEGER',
     'REAL',
+    'BOOLEAN',
     'TEXT',
     'BLOB',
     'DATE',
