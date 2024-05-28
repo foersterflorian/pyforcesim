@@ -5,7 +5,7 @@ from __future__ import annotations
 import multiprocessing as mp
 import random
 from abc import ABCMeta, abstractmethod
-from collections import OrderedDict, deque
+from collections import deque
 from collections.abc import Generator, Iterable, Iterator, Sequence
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
@@ -29,6 +29,7 @@ from websocket import create_connection
 
 from pyforcesim import loggers
 from pyforcesim.common import flatten
+from pyforcesim.constants import INF, POLICIES_ALLOC, POLICIES_SEQ
 from pyforcesim.dashboard.dashboard import (
     WS_URL,
     start_dashboard,
@@ -51,8 +52,12 @@ from pyforcesim.simulation.loads import (
     OrderTime,
     RandomJobGenerator,
 )
+from pyforcesim.simulation.policies import (
+    AllocationPolicy,
+    GeneralPolicy,
+    SequencingPolicy,
+)
 from pyforcesim.types import (
-    INF,
     AgentTasks,
     CustomID,
     Infinite,
@@ -123,12 +128,16 @@ class SimulationEnvironment(salabim.Environment):
         )
 
         # [RESOURCE] infrastructure manager
-        self._infstruct_mgr_registered: bool = False
-        self._infstruct_mgr: InfrastructureManager
+        # self._infstruct_mgr_registered: bool = False
+        self._infstruct_mgr = InfrastructureManager(env=self)
+        loggers.pyf_env.info(
+            'Successfully registered Infrastructure Manager in Env >>%s<<', self.name()
+        )
 
         # [LOAD] job dispatcher
-        self._dispatcher_registered: bool = False
-        self._dispatcher: Dispatcher
+        # self._dispatcher_registered: bool = False
+        self._dispatcher: Dispatcher = Dispatcher(env=self)
+        loggers.pyf_env.info('Successfully registered Dispatcher in Env >>%s<<', self.name())
 
         # ?? transient condition (working properly?)
         # transient condition
@@ -176,67 +185,67 @@ class SimulationEnvironment(salabim.Environment):
         else:
             return self._dispatcher
 
-    def register_infrastructure_manager(
-        self,
-        infstruct_mgr: InfrastructureManager,
-    ) -> None:
-        """
-        Registers a dispatcher instance for the environment. Only one instance
-        per environment is allowed.
-        returns: EnvID for the dispatcher instance
-        """
-        if not self._infstruct_mgr_registered and isinstance(
-            infstruct_mgr, InfrastructureManager
-        ):
-            self._infstruct_mgr = infstruct_mgr
-            self._infstruct_mgr_registered = True
-            loggers.pyf_env.info(
-                f'Successfully registered Infrastructure Manager in Env >>{self.name()}<<'
-            )
-        elif not isinstance(infstruct_mgr, InfrastructureManager):
-            raise TypeError(
-                (
-                    f'The object must be of type >>InfrastructureManager<< '
-                    f'but is type >>{type(infstruct_mgr)}<<'
-                )
-            )
-        else:
-            raise AttributeError(
-                (
-                    'There is already a registered Infrastructure Manager instance '
-                    'Only one instance per environement is allowed.'
-                )
-            )
+    # def register_infrastructure_manager(
+    #     self,
+    #     infstruct_mgr: InfrastructureManager,
+    # ) -> None:
+    # """
+    # Registers a dispatcher instance for the environment. Only one instance
+    # per environment is allowed.
+    # returns: EnvID for the dispatcher instance
+    # """
+    # if not self._infstruct_mgr_registered and isinstance(
+    #     infstruct_mgr, InfrastructureManager
+    # ):
+    #     self._infstruct_mgr = infstruct_mgr
+    #     self._infstruct_mgr_registered = True
+    #     loggers.pyf_env.info(
+    #         f'Successfully registered Infrastructure Manager in Env >>{self.name()}<<'
+    #     )
+    # elif not isinstance(infstruct_mgr, InfrastructureManager):
+    #     raise TypeError(
+    #         (
+    #             f'The object must be of type >>InfrastructureManager<< '
+    #             f'but is type >>{type(infstruct_mgr)}<<'
+    #         )
+    #     )
+    # else:
+    #     raise AttributeError(
+    #         (
+    #             'There is already a registered Infrastructure Manager instance '
+    #             'Only one instance per environement is allowed.'
+    #         )
+    #     )
 
-    def register_dispatcher(
-        self,
-        dispatcher: Dispatcher,
-    ) -> None:
-        """
-        Registers a dispatcher instance for the environment. Only one instance per
-        environment is allowed.
-        returns: EnvID for the dispatcher instance
-        """
-        if not self._dispatcher_registered and isinstance(dispatcher, Dispatcher):
-            self._dispatcher = dispatcher
-            self._dispatcher_registered = True
-            loggers.pyf_env.info(
-                f'Successfully registered Dispatcher in Env >>{self.name()}<<'
-            )
-        elif not isinstance(dispatcher, Dispatcher):
-            raise TypeError(
-                (
-                    f'The object must be of type >>Dispatcher<< but '
-                    f'is type >>{type(dispatcher)}<<'
-                )
-            )
-        else:
-            raise AttributeError(
-                (
-                    'There is already a registered Dispatcher instance '
-                    'Only one instance per environment is allowed.'
-                )
-            )
+    # def register_dispatcher(
+    #     self,
+    #     dispatcher: Dispatcher,
+    # ) -> None:
+    #     """
+    #     Registers a dispatcher instance for the environment. Only one instance per
+    #     environment is allowed.
+    #     returns: EnvID for the dispatcher instance
+    #     """
+    #     if not self._dispatcher_registered and isinstance(dispatcher, Dispatcher):
+    #         self._dispatcher = dispatcher
+    #         self._dispatcher_registered = True
+    #         loggers.pyf_env.info(
+    #             f'Successfully registered Dispatcher in Env >>{self.name()}<<'
+    #         )
+    #     elif not isinstance(dispatcher, Dispatcher):
+    #         raise TypeError(
+    #             (
+    #                 f'The object must be of type >>Dispatcher<< but '
+    #                 f'is type >>{type(dispatcher)}<<'
+    #             )
+    #         )
+    #     else:
+    #         raise AttributeError(
+    #             (
+    #                 'There is already a registered Dispatcher instance '
+    #                 'Only one instance per environment is allowed.'
+    #             )
+    #         )
 
     # [DISPATCHING SIGNALS]
     # ?? still needed?
@@ -335,13 +344,13 @@ class SimulationEnvironment(salabim.Environment):
         - registered sink (min: 1, max: INF)
         """
         # registration of an Infrastructure Manager
-        if not self._infstruct_mgr_registered:
-            raise ValueError('No Infrastructure Manager instance registered.')
+        # if not self._infstruct_mgr_registered:
+        #     raise ValueError('No Infrastructure Manager instance registered.')
         # registration of a Dispatcher
-        elif not self._dispatcher_registered:
-            raise ValueError('No Dispatcher instance registered.')
+        # if not self._dispatcher_registered:
+        #     raise ValueError('No Dispatcher instance registered.')
         # registration of sinks
-        elif not self._infstruct_mgr.sink_registered:
+        if not self._infstruct_mgr.sink_registered:
             raise ValueError('No Sink instance registered.')
         # check if all subsystems are associated to supersystems
         elif not self._infstruct_mgr.verify_system_association():
@@ -411,14 +420,10 @@ class InfrastructureManager:
     def __init__(
         self,
         env: SimulationEnvironment,
-        **kwargs,
     ) -> None:
-        # init base class, even if not available
-        super().__init__(**kwargs)
-
         # COMMON
         self._env = env
-        self._env.register_infrastructure_manager(infstruct_mgr=self)
+        # self._env.register_infrastructure_manager(infstruct_mgr=self)
         # subsystem types
         self._system_types: set[str] = set(
             [
@@ -998,8 +1003,8 @@ class Dispatcher:
     def __init__(
         self,
         env: SimulationEnvironment,
-        priority_rule: str = 'FIFO',
-        allocation_rule: str = 'RANDOM',
+        # sequencing_rule: str = 'FIFO',
+        # allocation_rule: str = 'RANDOM',
     ) -> None:
         """
         Dispatcher class for given environment (only one dispatcher for each environment)
@@ -1094,12 +1099,8 @@ class Dispatcher:
                 'target_station_name',
                 'creation_date',
                 'release_date',
-                #'entry_date',
-                #'planned_starting_date',
                 'actual_starting_date',
                 'starting_date_deviation',
-                #'exit_date',
-                #'planned_ending_date',
                 'actual_ending_date',
                 'ending_date_deviation',
                 'lead_time',
@@ -1111,7 +1112,7 @@ class Dispatcher:
 
         # register in environment and get EnvID
         self._env = env
-        self._env.register_dispatcher(self)
+        # self._env.register_dispatcher(self)
 
         ####################################
         # managing IDs
@@ -1119,49 +1120,39 @@ class Dispatcher:
         self._job_id_counter = LoadID(0)
         self._op_id_counter = LoadID(0)
 
+        ####################################
         # priority rules
-        self._priority_rules: set[str] = set(
-            [
-                'FIFO',
-                'LIFO',
-                'SPT',
-                'LPT',
-                'SST',
-                'LST',
-                'PRIO',
-            ]
-        )
+        self._sequencing_rules: set[str] = set(POLICIES_SEQ.keys())
         # set current priority rule
-        if priority_rule not in self._priority_rules:
-            raise ValueError(
-                (
-                    f'Priority rule {priority_rule} unknown. '
-                    f'Must be one of {self._priority_rules}'
-                )
-            )
-        else:
-            self._curr_prio_rule = priority_rule
+        # if sequencing_rule not in self._seq_rules:
+        #     raise ValueError(
+        #         (
+        #             f'Sequencing rule {sequencing_rule} unknown. '
+        #             f'Must be one of {self._seq_rules}'
+        #         )
+        #     )
+        # else:
+        #     self._curr_seq_rule = sequencing_rule
 
         # allocation rule
-        self._allocation_rules: set[str] = set(
-            [
-                'RANDOM',
-                'UTILISATION',
-                'WIP_LOAD_TIME',
-                'WIP_LOAD_JOBS',
-                'AGENT',
-            ]
-        )
-        # set current allocation rule
-        if allocation_rule not in self._allocation_rules:
-            raise ValueError(
-                (
-                    f'Allocation rule {allocation_rule} unknown. '
-                    f'Must be one of {self._allocation_rules}'
-                )
-            )
-        else:
-            self._curr_alloc_rule = allocation_rule
+        self._allocation_rules: set[str] = set(POLICIES_ALLOC.keys())
+        # # set current allocation rule
+        # if allocation_rule not in self._allocation_rules:
+        #     raise ValueError(
+        #         (
+        #             f'Allocation rule {allocation_rule} unknown. '
+        #             f'Must be one of {self._allocation_rules}'
+        #         )
+        #     )
+        # else:
+        #     self._curr_alloc_rule = allocation_rule
+
+        self._seq_rule: str | None = None
+        self._alloc_rule: str | None = None
+        self.seq_policy: GeneralPolicy | SequencingPolicy | None = None
+        # = POLICIES_SEQ[self._curr_seq_rule]()
+        self.alloc_policy: GeneralPolicy | AllocationPolicy | None = None
+        # POLICIES_ALLOC[self._curr_alloc_rule]()
 
         # [STATS] cycle time
         self._cycle_time: Timedelta = Timedelta()
@@ -1175,44 +1166,48 @@ class Dispatcher:
         return self._env
 
     @property
-    def curr_prio_rule(self) -> str:
-        return self._curr_prio_rule
+    def seq_rule(self) -> str | None:
+        return self._seq_rule
 
-    @curr_prio_rule.setter
-    def curr_prio_rule(
+    @seq_rule.setter
+    def seq_rule(
         self,
         rule: str,
     ) -> None:
-        if rule not in self._priority_rules:
+        if rule not in self.sequencing_rules:
             raise ValueError(
-                f'Priority rule {rule} unknown. Must be one of {self._priority_rules}'
+                f'Priority rule {rule} unknown. Must be one of {self.sequencing_rules}'
             )
         else:
-            self._curr_prio_rule = rule
+            self._seq_rule = rule
+            self.seq_policy = POLICIES_SEQ[rule]()
             loggers.dispatcher.info(f'Changed priority rule to {rule}')
 
-    def possible_prio_rules(self) -> set[str]:
-        return self._priority_rules
+    @property
+    def sequencing_rules(self) -> set[str]:
+        return self._sequencing_rules
 
     @property
-    def curr_alloc_rule(self) -> str:
-        return self._curr_alloc_rule
+    def allocation_rules(self) -> set[str]:
+        return self._allocation_rules
 
-    @curr_alloc_rule.setter
-    def curr_alloc_rule(
+    @property
+    def alloc_rule(self) -> str | None:
+        return self._alloc_rule
+
+    @alloc_rule.setter
+    def alloc_rule(
         self,
         rule: str,
     ) -> None:
-        if rule not in self._allocation_rules:
+        if rule not in self.allocation_rules:
             raise ValueError(
-                f'Allocation rule {rule} unknown. Must be one of {self._allocation_rules}'
+                f'Allocation rule {rule} unknown. Must be one of {self.allocation_rules}'
             )
         else:
-            self._curr_alloc_rule = rule
+            self._alloc_rule = rule
+            self.alloc_policy = POLICIES_ALLOC[rule]()
             loggers.dispatcher.info(f'Changed allocation rule to {rule}')
-
-    def possible_alloc_rules(self) -> set[str]:
-        return self._allocation_rules
 
     def _obtain_load_obj_id(
         self,
@@ -1820,7 +1815,7 @@ class Dispatcher:
         next_op = self.get_next_operation(job=job)
         is_agent: bool = False
         agent: AllocationAgent | None = None
-        if self._curr_alloc_rule == 'AGENT' and next_op is not None:
+        if self.alloc_rule == 'AGENT' and next_op is not None:
             if next_op.target_exec_system is None:
                 # should never happen as each operation is registered with
                 # a system instance
@@ -1970,7 +1965,7 @@ class Dispatcher:
             # [KPIs] calculate necessary information for decision making
             # put all associated processing stations of that group in 'TEMP' state
             infstruct_mgr.res_objs_temp_state(res_objs=stations, reset_temp=False)
-            candidates = [ps for ps in stations if ps.stat_monitor.is_available]
+            candidates = tuple(ps for ps in stations if ps.stat_monitor.is_available)
             # if there are no available ones: use all stations
             if candidates:
                 avail_stations = candidates
@@ -1978,49 +1973,65 @@ class Dispatcher:
                 avail_stations = stations
 
             # ** Allocation Rules
+            # first use StationGroup, then ExecutionSystem, then Dispatcher (global)
+            policy: GeneralPolicy | AllocationPolicy
+            if (
+                target_station_group is not None
+                and target_station_group.alloc_policy is not None
+            ):
+                policy = target_station_group.alloc_policy
+            elif exec_system.alloc_policy is not None:
+                policy = exec_system.alloc_policy
+            elif self.alloc_policy is not None:
+                policy = self.alloc_policy
+            else:
+                raise ValueError('No allocation policy defined.')
+
+            target_station = policy.apply(items=avail_stations)
+
             # TODO add policy-based rule sets
             # apply different strategies to select a station out of the station group
-            match self._curr_alloc_rule:
-                case 'RANDOM':
-                    # [RANDOM CHOICE]
-                    target_station: ProcessingStation = random.choice(avail_stations)
-                case 'UTILISATION':
-                    # [UTILISATION]
-                    # choose the station with the lowest utilisation to time
-                    target_station: ProcessingStation = min(
-                        avail_stations, key=attrgetter('stat_monitor.utilisation')
-                    )
-                    loggers.dispatcher.debug(
-                        (
-                            f'[DISPATCHER: {self}] Utilisation of '
-                            f'{target_station=} is '
-                            f'{target_station.stat_monitor.utilisation:.4f}'
-                        )
-                    )
-                case 'WIP_LOAD_TIME':
-                    # WIP as load/processing time, choose station with lowest WIP
-                    target_station: ProcessingStation = min(
-                        avail_stations, key=attrgetter('stat_monitor.WIP_load_time')
-                    )
-                    loggers.dispatcher.debug(
-                        (
-                            f'[DISPATCHER: {self}] WIP LOAD TIME of '
-                            f'{target_station=} is '
-                            f'{target_station.stat_monitor.WIP_load_time}'
-                        )
-                    )
-                case 'WIP_LOAD_JOBS':
-                    # WIP as number of associated jobs, choose station with lowest WIP
-                    target_station: ProcessingStation = min(
-                        avail_stations, key=attrgetter('stat_monitor.WIP_load_num_jobs')
-                    )
-                    loggers.dispatcher.debug(
-                        (
-                            f'[DISPATCHER: {self}] WIP LOAD NUM JOBS of '
-                            f'{target_station=} is '
-                            f'{target_station.stat_monitor.WIP_load_time:.2f}'
-                        )
-                    )
+            # match self._curr_alloc_rule:
+            #     case 'RANDOM':
+            #         # [RANDOM CHOICE]
+            #         target_station: ProcessingStation = random.choice(avail_stations)
+            #     case 'UTILISATION':
+            #         # [UTILISATION]
+            #         # choose the station with the lowest utilisation to time
+            #         target_station: ProcessingStation = min(
+            #             avail_stations, key=attrgetter('stat_monitor.utilisation')
+            #         )
+            #         loggers.dispatcher.debug(
+            #             (
+            #                 f'[DISPATCHER: {self}] Utilisation of '
+            #                 f'{target_station=} is '
+            #                 f'{target_station.stat_monitor.utilisation:.4f}'
+            #             )
+            #         )
+            #     case 'WIP_LOAD_TIME':
+            #         # WIP as load/processing time, choose station with lowest WIP
+            #         target_station: ProcessingStation = min(
+            #             avail_stations, key=attrgetter('stat_monitor.WIP_load_time')
+            #         )
+            #         loggers.dispatcher.debug(
+            #             (
+            #                 f'[DISPATCHER: {self}] WIP LOAD TIME of '
+            #                 f'{target_station=} is '
+            #                 f'{target_station.stat_monitor.WIP_load_time}'
+            #             )
+            #         )
+            #     case 'WIP_LOAD_JOBS':
+            #         # WIP as number of associated jobs, choose station with lowest WIP
+            #         target_station: ProcessingStation = min(
+            #             avail_stations, key=attrgetter('stat_monitor.WIP_load_num_jobs')
+            #         )
+            #         loggers.dispatcher.debug(
+            #             (
+            #                 f'[DISPATCHER: {self}] WIP LOAD NUM JOBS of '
+            #                 f'{target_station=} is '
+            #                 f'{target_station.stat_monitor.WIP_load_time:.2f}'
+            #             )
+            #         )
             # [KPIs] reset all associated processing stations of that group
             # to their original state
             infstruct_mgr.res_objs_temp_state(res_objs=stations, reset_temp=True)
@@ -2071,7 +2082,7 @@ class Dispatcher:
         # contains all feasible jobs for this resource
         logic_queue = req_obj.logic_queue
         # get job from logic queue with currently defined priority rule
-        job = self.seq_priority_rule(queue=logic_queue)
+        job = self._seq_priority_rule(req_obj=req_obj, queue=logic_queue)
         # reset environment signal for SEQUENCING
 
         if job.current_proc_time is None:
@@ -2080,56 +2091,72 @@ class Dispatcher:
         return job, job.current_proc_time, job.current_setup_time
 
     # TODO policy-based decision making
-    def seq_priority_rule(
+    def _seq_priority_rule(
         self,
+        req_obj: InfrastructureObject,
         queue: salabim.Queue,
     ) -> Job:
         """apply priority rules to a pool of jobs"""
-        match self._curr_prio_rule:
-            # first in, first out
-            case 'FIFO':
-                # salabim queue pops first entry if no index is specified,
-                # not last like in Python
-                job = cast(Job, queue.pop())
-            # last in, last out
-            case 'LIFO':
-                # salabim queue pops first entry if no index is specified,
-                # not last like in Python
-                job = cast(Job, queue.pop(-1))
-            # shortest processing time
-            case 'SPT':
-                # choose job with shortest processing time
-                temp = cast(list[Job], queue.as_list())
-                job = min(temp, key=attrgetter('current_proc_time'))
-                # remove job from original queue
-                queue.remove(job)
-            # longest processing time
-            case 'LPT':
-                # choose job with longest processing time
-                temp = cast(list[Job], queue.as_list())
-                job = max(temp, key=attrgetter('current_proc_time'))
-                # remove job from original queue
-                queue.remove(job)
-            # shortest setup time
-            case 'SST':
-                # choose job with shortest setup time
-                temp = cast(list[Job], queue.as_list())
-                job = min(temp, key=attrgetter('current_setup_time'))
-                # remove job from original queue
-                queue.remove(job)
-            # longest setup time
-            case 'LST':
-                # choose job with longest setup time
-                temp = cast(list[Job], queue.as_list())
-                job = max(temp, key=attrgetter('current_setup_time'))
-                # remove job from original queue
-                queue.remove(job)
-            case 'PRIO':
-                # choose job with highest priority
-                temp = cast(list[Job], queue.as_list())
-                job = max(temp, key=attrgetter('prio'))
-                # remove job from original queue
-                queue.remove(job)
+
+        # ** Allocation Rules
+        # first use requesting object, then Dispatcher (global)
+        policy: GeneralPolicy | SequencingPolicy
+        if req_obj.seq_policy is not None:
+            policy = req_obj.seq_policy
+        elif self.seq_policy is not None:
+            policy = self.seq_policy
+        else:
+            raise ValueError('No sequencing policy defined.')
+
+        job_collection = cast(list[Job], queue.as_list())
+        job = policy.apply(items=job_collection)
+        queue.remove(job)
+
+        # match self._curr_prio_rule:
+        #     # first in, first out
+        #     case 'FIFO':
+        #         # salabim queue pops first entry if no index is specified,
+        #         # not last like in Python
+        #         job = cast(Job, queue.pop())
+        #     # last in, last out
+        #     case 'LIFO':
+        #         # salabim queue pops first entry if no index is specified,
+        #         # not last like in Python
+        #         job = cast(Job, queue.pop(-1))
+        #     # shortest processing time
+        #     case 'SPT':
+        #         # choose job with shortest processing time
+        #         temp = cast(list[Job], queue.as_list())
+        #         job = min(temp, key=attrgetter('current_proc_time'))
+        #         # remove job from original queue
+        #         queue.remove(job)
+        #     # longest processing time
+        #     case 'LPT':
+        #         # choose job with longest processing time
+        #         temp = cast(list[Job], queue.as_list())
+        #         job = max(temp, key=attrgetter('current_proc_time'))
+        #         # remove job from original queue
+        #         queue.remove(job)
+        #     # shortest setup time
+        #     case 'SST':
+        #         # choose job with shortest setup time
+        #         temp = cast(list[Job], queue.as_list())
+        #         job = min(temp, key=attrgetter('current_setup_time'))
+        #         # remove job from original queue
+        #         queue.remove(job)
+        #     # longest setup time
+        #     case 'LST':
+        #         # choose job with longest setup time
+        #         temp = cast(list[Job], queue.as_list())
+        #         job = max(temp, key=attrgetter('current_setup_time'))
+        #         # remove job from original queue
+        #         queue.remove(job)
+        #     case 'PRIO':
+        #         # choose job with highest priority
+        #         temp = cast(list[Job], queue.as_list())
+        #         job = max(temp, key=attrgetter('prio'))
+        #         # remove job from original queue
+        #         queue.remove(job)
 
         return job
 
@@ -2290,7 +2317,7 @@ class Dispatcher:
 # ** systems
 
 
-class System(OrderedDict):
+class System(dict):
     def __init__(
         self,
         env: SimulationEnvironment,
@@ -2326,6 +2353,9 @@ class System(OrderedDict):
             state=state,
         )
         self._custom_identifier = custom_identifier
+
+        self.seq_policy: GeneralPolicy | SequencingPolicy | None = None
+        self.alloc_policy: GeneralPolicy | AllocationPolicy | None = None
 
         # [AGENT] decision agent
         self._agent_types: set[str] = set(['SEQ', 'ALLOC'])
@@ -2386,7 +2416,7 @@ class System(OrderedDict):
                 else:
                     raise AttributeError(
                         (
-                            'There is already a registered AllocationAgent instance '
+                            'There is already a registered AllocationAgent instance. '
                             'Only one instance per system is allowed.'
                         )
                     )
@@ -2404,35 +2434,35 @@ class System(OrderedDict):
         else:
             return self._alloc_agent
 
-    def register_alloc_agent(
-        self,
-        alloc_agent: 'AllocationAgent',
-    ) -> None:
-        if self._abstraction_level == 0:
-            raise RuntimeError(
-                'Can not register allocation agents for lowest hierarchy level objects.'
-            )
+    # def register_alloc_agent(
+    #     self,
+    #     alloc_agent: 'AllocationAgent',
+    # ) -> None:
+    #     if self._abstraction_level == 0:
+    #         raise RuntimeError(
+    #             'Can not register allocation agents for lowest hierarchy level objects.'
+    #         )
 
-        if not self._alloc_agent_registered and isinstance(alloc_agent, AllocationAgent):
-            self._alloc_agent = alloc_agent
-            self._alloc_agent_registered = True
-            loggers.pyf_env.info(
-                f'Successfully registered Allocation Agent in Area = {self.name}'
-            )
-        elif not isinstance(alloc_agent, AllocationAgent):
-            raise TypeError(
-                (
-                    f'The object must be of type >>AllocationAgent<<, '
-                    f'but is type >>{type(alloc_agent)}<<'
-                )
-            )
-        else:
-            raise AttributeError(
-                (
-                    'There is already a registered AllocationAgent instance '
-                    'Only one instance per system is allowed.'
-                )
-            )
+    #     if not self._alloc_agent_registered and isinstance(alloc_agent, AllocationAgent):
+    #         self._alloc_agent = alloc_agent
+    #         self._alloc_agent_registered = True
+    #         loggers.pyf_env.info(
+    #             f'Successfully registered Allocation Agent in Area = {self.name}'
+    #         )
+    #     elif not isinstance(alloc_agent, AllocationAgent):
+    #         raise TypeError(
+    #             (
+    #                 f'The object must be of type >>AllocationAgent<<, '
+    #                 f'but is type >>{type(alloc_agent)}<<'
+    #             )
+    #         )
+    #     else:
+    #         raise AttributeError(
+    #             (
+    #                 'There is already a registered AllocationAgent instance '
+    #                 'Only one instance per system is allowed.'
+    #             )
+    #         )
 
     def check_alloc_agent(self) -> bool:
         """checks if an allocation agent is registered for the system"""

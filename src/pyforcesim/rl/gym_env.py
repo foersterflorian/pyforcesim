@@ -32,7 +32,7 @@ def build_sim_env() -> (
     )
     job_generator = loads.RandomJobGenerator(env=env, seed=2)
     infstruct_mgr = sim.InfrastructureManager(env=env)
-    dispatcher = sim.Dispatcher(env=env, priority_rule='FIFO')
+    dispatcher = sim.Dispatcher(env=env, sequencing_rule='FIFO')
 
     # source
     area_source = sim.ProductionArea(env=env, custom_identifier=1000)

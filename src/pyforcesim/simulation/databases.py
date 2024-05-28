@@ -11,12 +11,10 @@ from itertools import product
 from pathlib import Path
 from typing import Any, Final, cast
 
+from pyforcesim.constants import DB_DATA_TYPES, DB_ROOT, DB_SUPPORTED_COL_CONSTRAINTS
 from pyforcesim.errors import CommonSQLError
 from pyforcesim.loggers import databases as logger
 from pyforcesim.types import (
-    DB_DATA_TYPES,
-    DB_ROOT,
-    DB_SUPPORTED_COL_CONSTRAINTS,
     DBColumnDeclaration,
     ForeignKeyInfo,
     SQLiteColumnDescription,
@@ -89,6 +87,7 @@ class Database:
         self,
         name: str,
         delete_existing: bool = False,
+        memory_only: bool = False,
     ) -> None:
         # create database folder
         cwd = Path.cwd()
@@ -97,12 +96,16 @@ class Database:
             db_folder.mkdir()
         # properties
         self._name = name
-        self._path = (db_folder / name).with_suffix('.db')
-        # deletion
-        if delete_existing and self._path.exists():
-            self._path.unlink()
+        self.memory_only = memory_only
+        self._path: Path | None = None
+        if not self.memory_only:
+            self._path = (db_folder / name).with_suffix('.db')
+            # deletion
+            if delete_existing and self._path.exists():
+                self._path.unlink()
         # connections
-        self._con: sql.Connection | None = None
+        self.con: sql.Connection | None = None
+        self.get_connection()
         # query control
         self._check_query_pattern = re.compile(DB_INJECTION_PATTERN, flags=re.IGNORECASE)
 
@@ -111,12 +114,8 @@ class Database:
         return self._name
 
     @property
-    def path(self) -> Path:
+    def path(self) -> Path | None:
         return self._path
-
-    @property
-    def connection(self) -> sql.Connection | None:
-        return self._con
 
     @property
     def query_injection_pattern(self) -> re.Pattern:
@@ -182,22 +181,25 @@ class Database:
         }
 
     def get_connection(self) -> sql.Connection:
-        if self._con is not None:
-            logger.warning('Connection already established.')
+        if not self.memory_only:
+            if self.path is None:
+                raise ValueError('No path for database file provided.')
+            self.con = sql.connect(self.path, detect_types=sql.PARSE_DECLTYPES)
         else:
-            self._con = sql.connect(self.path, detect_types=sql.PARSE_DECLTYPES)
-            # explicitly enable foreign key constraints
-            with self._con as con:
-                con.execute('PRAGMA foreign_keys = ON')
+            self.con = sql.connect(':memory:', detect_types=sql.PARSE_DECLTYPES)
+        # explicitly enable foreign key constraints
+        with self.con as con:
+            con.execute('PRAGMA foreign_keys = ON')
 
-        return self._con
+        return self.con
 
     def close_connection(self) -> None:
-        if self._con is None:
+        if self.con is None:
             logger.warning('No connection to close.')
         else:
-            self._con.close()
-            self._con = None
+            self.con.commit()
+            self.con.close()
+            self.con = None
 
     def get_columns(
         self,
@@ -205,15 +207,14 @@ class Database:
     ) -> list[SQLiteColumnDescription]:
         table_name = self._clean_query_injection(table_name)
         query = f'PRAGMA table_info({table_name})'
-        con = self.get_connection()
         try:
-            with con:
+            if self.con is None:
+                raise ValueError('No connection to database established.')
+            with self.con as con:
                 res = con.execute(query)
                 columns = cast(list[SQLiteColumnDescription], res.fetchall())
         except Exception as error:
             raise error
-        finally:
-            self.close_connection()
 
         if not columns:
             raise CommonSQLError(
@@ -228,15 +229,14 @@ class Database:
         self,
         query: str,
     ) -> list[tuple[Any, ...]] | None:
-        con = self.get_connection()
         try:
-            with con:
+            if self.con is None:
+                raise ValueError('No connection to database established.')
+            with self.con as con:
                 res = con.execute(query)
                 response = res.fetchall()
         except Exception as error:
             raise error
-        finally:
-            self.close_connection()
 
         if response:
             return response
@@ -262,16 +262,15 @@ class Database:
         logger.info(f'Creating table {table_name}...')
         query = f'CREATE TABLE IF NOT EXISTS {table_name} ({col_query})'
         logger.debug(f'Query: {query}.')
-        con = self.get_connection()
         try:
-            with con:
+            if self.con is None:
+                raise ValueError('No connection to database established.')
+            with self.con as con:
                 con.execute(query)
         except Exception as error:
             raise error
         else:
             logger.info(f'Table {table_name} created successfully.')
-        finally:
-            self.close_connection()
 
     def prepare_insertion_query(
         self,
@@ -308,17 +307,16 @@ class Database:
         data: tuple[Any, ...],
     ) -> None:
         query = self.prepare_insertion(table_name, data)
-        con = self.get_connection()
         logger.debug(f'Inserting data into table {table_name} with {query=}.')
         try:
-            with con:
+            if self.con is None:
+                raise ValueError('No connection to database established.')
+            with self.con as con:
                 con.execute(query, data)
         except Exception as error:
             raise error
         else:
             logger.debug('Data inserted successfully.')
-        finally:
-            self.close_connection()
 
     def insert_many(
         self,
@@ -326,17 +324,16 @@ class Database:
         data: Sequence[tuple[Any, ...]],
     ) -> None:
         query = self.prepare_insertion(table_name, data[0])
-        con = self.get_connection()
         logger.debug(f'Inserting data into table {table_name} with {query=}.')
         try:
-            with con:
+            if self.con is None:
+                raise ValueError('No connection to database established.')
+            with self.con as con:
                 con.executemany(query, data)
         except Exception as error:
             raise error
         else:
             logger.debug('Data inserted successfully.')
-        finally:
-            self.close_connection()
 
 
 """
