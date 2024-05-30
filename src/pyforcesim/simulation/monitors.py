@@ -10,8 +10,9 @@ import plotly.express as px
 from pandas import DataFrame, Series
 
 from pyforcesim import loggers
+from pyforcesim.constants import INF
 from pyforcesim.datetime import DTManager
-from pyforcesim.types import INF, PlotlyFigure
+from pyforcesim.types import PlotlyFigure
 
 if TYPE_CHECKING:
     from pyforcesim.simulation.environment import (

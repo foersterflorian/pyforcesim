@@ -11,13 +11,12 @@ from itertools import product
 from pathlib import Path
 from typing import Any, Final, cast
 
+from pyforcesim.constants import DB_DATA_TYPES, DB_ROOT, DB_SUPPORTED_COL_CONSTRAINTS
 from pyforcesim.errors import CommonSQLError
 from pyforcesim.loggers import databases as logger
 from pyforcesim.types import (
-    DB_DATA_TYPES,
-    DB_ROOT,
-    DB_SUPPORTED_COL_CONSTRAINTS,
     DBColumnDeclaration,
+    ForeignKeyInfo,
     SQLiteColumnDescription,
 )
 
@@ -46,6 +45,10 @@ def adapt_timedelta(td: Timedelta) -> str:
     return f'{td.days},{td.seconds},{td.microseconds}'
 
 
+def adapt_bool(val: bool) -> int:
+    return int(val)
+
+
 def convert_date(val: bytes) -> Date:
     """Convert ISO 8601 date to datetime.date object."""
     return Date.fromisoformat(val.decode())
@@ -61,12 +64,18 @@ def convert_timedelta(val: bytes) -> Timedelta:
     return Timedelta(days=days, seconds=secs, microseconds=mic_secs)
 
 
+def convert_bool(val: bytes) -> bool:
+    return bool(int(val))
+
+
 sql.register_adapter(Date, adapt_date_iso)
 sql.register_adapter(Datetime, adapt_datetime_iso)
 sql.register_adapter(Timedelta, adapt_timedelta)
+sql.register_adapter(bool, adapt_bool)
 sql.register_converter('DATE', convert_date)
 sql.register_converter('DATETIME', convert_datetime)
 sql.register_converter('TIMEDELTA', convert_timedelta)
+sql.register_converter('BOOLEAN', convert_bool)
 
 
 # connection with: detect_types=sqlite3.PARSE_DECLTYPES
@@ -78,6 +87,7 @@ class Database:
         self,
         name: str,
         delete_existing: bool = False,
+        memory_only: bool = False,
     ) -> None:
         # create database folder
         cwd = Path.cwd()
@@ -86,12 +96,16 @@ class Database:
             db_folder.mkdir()
         # properties
         self._name = name
-        self._path = (db_folder / name).with_suffix('.db')
-        # deletion
-        if delete_existing and self._path.exists():
-            self._path.unlink()
+        self.memory_only = memory_only
+        self._path: Path | None = None
+        if not self.memory_only:
+            self._path = (db_folder / name).with_suffix('.db')
+            # deletion
+            if delete_existing and self._path.exists():
+                self._path.unlink()
         # connections
-        self._con: sql.Connection | None = None
+        self.con: sql.Connection | None = None
+        self.get_connection()
         # query control
         self._check_query_pattern = re.compile(DB_INJECTION_PATTERN, flags=re.IGNORECASE)
 
@@ -100,12 +114,8 @@ class Database:
         return self._name
 
     @property
-    def path(self) -> Path:
+    def path(self) -> Path | None:
         return self._path
-
-    @property
-    def connection(self) -> sql.Connection | None:
-        return self._con
 
     @property
     def query_injection_pattern(self) -> re.Pattern:
@@ -143,20 +153,53 @@ class Database:
 
         return col_query
 
-    def get_connection(self) -> sql.Connection:
-        if self._con is not None:
-            logger.warning('Connection already established.')
-        else:
-            self._con = sql.connect(self.path, detect_types=sql.PARSE_DECLTYPES)
+    def _add_foreign_key_constraint(
+        self,
+        col_query: str,
+        key_col: str,
+        ref_table: str,
+        ref_col: str,
+    ) -> str:
+        key_col = self._clean_query_injection(key_col)
+        ref_table = self._clean_query_injection(ref_table)
+        ref_col = self._clean_query_injection(ref_col)
+        fk_definition = f'FOREIGN KEY ({key_col}) REFERENCES {ref_table}({ref_col})'
+        query = f'{col_query}, {fk_definition}'
 
-        return self._con
+        return query
+
+    def create_foreign_key_info(
+        self,
+        column: str,
+        ref_table: str,
+        ref_column: str,
+    ) -> ForeignKeyInfo:
+        return {
+            'column': column,
+            'ref_table': ref_table,
+            'ref_column': ref_column,
+        }
+
+    def get_connection(self) -> sql.Connection:
+        if not self.memory_only:
+            if self.path is None:
+                raise ValueError('No path for database file provided.')
+            self.con = sql.connect(self.path, detect_types=sql.PARSE_DECLTYPES)
+        else:
+            self.con = sql.connect(':memory:', detect_types=sql.PARSE_DECLTYPES)
+        # explicitly enable foreign key constraints
+        with self.con as con:
+            con.execute('PRAGMA foreign_keys = ON')
+
+        return self.con
 
     def close_connection(self) -> None:
-        if self._con is None:
+        if self.con is None:
             logger.warning('No connection to close.')
         else:
-            self._con.close()
-            self._con = None
+            self.con.commit()
+            self.con.close()
+            self.con = None
 
     def get_columns(
         self,
@@ -164,15 +207,14 @@ class Database:
     ) -> list[SQLiteColumnDescription]:
         table_name = self._clean_query_injection(table_name)
         query = f'PRAGMA table_info({table_name})'
-        con = self.get_connection()
         try:
-            with con:
+            if self.con is None:
+                raise ValueError('No connection to database established.')
+            with self.con as con:
                 res = con.execute(query)
                 columns = cast(list[SQLiteColumnDescription], res.fetchall())
         except Exception as error:
             raise error
-        finally:
-            self.close_connection()
 
         if not columns:
             raise CommonSQLError(
@@ -187,15 +229,14 @@ class Database:
         self,
         query: str,
     ) -> list[tuple[Any, ...]] | None:
-        con = self.get_connection()
         try:
-            with con:
+            if self.con is None:
+                raise ValueError('No connection to database established.')
+            with self.con as con:
                 res = con.execute(query)
                 response = res.fetchall()
         except Exception as error:
             raise error
-        finally:
-            self.close_connection()
 
         if response:
             return response
@@ -204,21 +245,32 @@ class Database:
         self,
         table_name: str,
         columns: DBColumnDeclaration,
+        *,
+        foreign_key_info: ForeignKeyInfo | None = None,
     ) -> None:
         table_name = self._clean_query_injection(table_name)
         col_query = self._format_column_declaration(columns)
+
+        if foreign_key_info is not None:
+            col_query = self._add_foreign_key_constraint(
+                col_query,
+                foreign_key_info['column'],
+                foreign_key_info['ref_table'],
+                foreign_key_info['ref_column'],
+            )
+
         logger.info(f'Creating table {table_name}...')
         query = f'CREATE TABLE IF NOT EXISTS {table_name} ({col_query})'
-        con = self.get_connection()
+        logger.debug(f'Query: {query}.')
         try:
-            with con:
+            if self.con is None:
+                raise ValueError('No connection to database established.')
+            with self.con as con:
                 con.execute(query)
         except Exception as error:
             raise error
         else:
             logger.info(f'Table {table_name} created successfully.')
-        finally:
-            self.close_connection()
 
     def prepare_insertion_query(
         self,
@@ -255,17 +307,16 @@ class Database:
         data: tuple[Any, ...],
     ) -> None:
         query = self.prepare_insertion(table_name, data)
-        con = self.get_connection()
         logger.debug(f'Inserting data into table {table_name} with {query=}.')
         try:
-            with con:
+            if self.con is None:
+                raise ValueError('No connection to database established.')
+            with self.con as con:
                 con.execute(query, data)
         except Exception as error:
             raise error
         else:
             logger.debug('Data inserted successfully.')
-        finally:
-            self.close_connection()
 
     def insert_many(
         self,
@@ -273,14 +324,56 @@ class Database:
         data: Sequence[tuple[Any, ...]],
     ) -> None:
         query = self.prepare_insertion(table_name, data[0])
-        con = self.get_connection()
         logger.debug(f'Inserting data into table {table_name} with {query=}.')
         try:
-            with con:
+            if self.con is None:
+                raise ValueError('No connection to database established.')
+            with self.con as con:
                 con.executemany(query, data)
         except Exception as error:
             raise error
         else:
             logger.debug('Data inserted successfully.')
-        finally:
-            self.close_connection()
+
+
+"""
+database definitions, later moved to other place
+# Infrastructure Manager
+## Production Area
+name = 'production_areas'
+cols_props = {
+    'id': 'INTEGER PRIMARY KEY',
+    'custom_id': 'TEXT',
+    'name': 'TEXT',
+    'containing_proc_station': 'BOOLEAN',
+}
+## Station Groups
+name = 'station_groups'
+cols_props = {
+    'id': 'INTEGER PRIMARY KEY',
+    'production_area_id': 'INTEGER NOT NULL',
+    'custom_id': 'TEXT',
+    'name': 'TEXT',
+    'containing_proc_station': 'BOOLEAN',
+}
+fk_info = db.create_foreign_key_info(
+    column='production_area_id',
+    ref_table='production_areas',
+    ref_column='id',
+)
+## Resources
+name = 'resources'
+cols_props = {
+    'id': 'INTEGER PRIMARY KEY',
+    'station_group_id': 'INTEGER NOT NULL',
+    'custom_id': 'TEXT',
+    'name': 'TEXT',
+    'type': 'TEXT',
+    'state': 'TEXT',
+}
+fk_info = db.create_foreign_key_info(
+    column='station_group_id',
+    ref_table='station_groups',
+    ref_column='id',
+)
+"""

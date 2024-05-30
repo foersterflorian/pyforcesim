@@ -5,7 +5,7 @@
 groups = ["default", "notebooks", "linting"]
 strategy = ["cross_platform", "inherit_metadata"]
 lock_version = "4.4.1"
-content_hash = "sha256:6974226b9a7224830f47d7c7387b3e6732bf6c6ba29b2996c5d487801ad8e918"
+content_hash = "sha256:59d846b024f0d0e2df7d6ae72c79cd2348ae74257d1d9338049de04cd902f5b1"
 
 [[package]]
 name = "aiofiles"
