@@ -13,17 +13,17 @@ T = TypeVar('T')
 
 
 class Policy(ABC):
-    @abstractmethod
-    def apply(
-        self,
-        items: Sequence[T],
-    ) -> T: ...
-
     def __str__(self) -> str:
         return f'Policy({self.__class__.__name__})'
 
     def __repr__(self) -> str:
         return self.__str__()
+
+    @abstractmethod
+    def apply(
+        self,
+        items: Sequence[T],
+    ) -> T: ...
 
 
 class GeneralPolicy(Policy):
@@ -77,9 +77,6 @@ class LIFOPolicy(GeneralPolicy):
 
 
 class AgentPolicy(GeneralPolicy):
-    def __init__(self) -> Never:
-        raise NotImplementedError('AgentPolicy implemented in different way.')
-
     def apply(self) -> Never:
         raise NotImplementedError('AgentPolicy implemented in different way.')
 

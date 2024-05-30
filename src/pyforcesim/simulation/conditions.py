@@ -182,7 +182,7 @@ class TriggerAgentCondition(BaseCondition):
         # wait till transient state is over
         yield self.sim_control.wait(self.env.transient_cond_state, priority=-9)
         # change allocation rule of dispatcher
-        self.env.dispatcher.curr_alloc_rule = 'AGENT'
+        self.env.dispatcher.alloc_rule = 'AGENT'
         loggers.conditions.info((f'[CONDITION {self}]: Set allocation rule to >>AGENT<<'))
 
     def post_process(self) -> None:

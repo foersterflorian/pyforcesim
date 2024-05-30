@@ -1122,7 +1122,7 @@ class Dispatcher:
 
         ####################################
         # priority rules
-        self._sequencing_rules: set[str] = set(POLICIES_SEQ.keys())
+        self._sequencing_rules: frozenset[str] = frozenset(POLICIES_SEQ.keys())
         # set current priority rule
         # if sequencing_rule not in self._seq_rules:
         #     raise ValueError(
@@ -1135,7 +1135,7 @@ class Dispatcher:
         #     self._curr_seq_rule = sequencing_rule
 
         # allocation rule
-        self._allocation_rules: set[str] = set(POLICIES_ALLOC.keys())
+        self._allocation_rules: frozenset[str] = frozenset(POLICIES_ALLOC.keys())
         # # set current allocation rule
         # if allocation_rule not in self._allocation_rules:
         #     raise ValueError(
@@ -1180,15 +1180,15 @@ class Dispatcher:
             )
         else:
             self._seq_rule = rule
-            self.seq_policy = POLICIES_SEQ[rule]()
+            self.seq_policy = POLICIES_SEQ[rule]
             loggers.dispatcher.info(f'Changed priority rule to {rule}')
 
     @property
-    def sequencing_rules(self) -> set[str]:
+    def sequencing_rules(self) -> frozenset[str]:
         return self._sequencing_rules
 
     @property
-    def allocation_rules(self) -> set[str]:
+    def allocation_rules(self) -> frozenset[str]:
         return self._allocation_rules
 
     @property
@@ -1206,7 +1206,7 @@ class Dispatcher:
             )
         else:
             self._alloc_rule = rule
-            self.alloc_policy = POLICIES_ALLOC[rule]()
+            self.alloc_policy = POLICIES_ALLOC[rule]
             loggers.dispatcher.info(f'Changed allocation rule to {rule}')
 
     def _obtain_load_obj_id(

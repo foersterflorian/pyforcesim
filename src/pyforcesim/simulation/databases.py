@@ -207,14 +207,11 @@ class Database:
     ) -> list[SQLiteColumnDescription]:
         table_name = self._clean_query_injection(table_name)
         query = f'PRAGMA table_info({table_name})'
-        try:
-            if self.con is None:
-                raise ValueError('No connection to database established.')
-            with self.con as con:
-                res = con.execute(query)
-                columns = cast(list[SQLiteColumnDescription], res.fetchall())
-        except Exception as error:
-            raise error
+        if self.con is None:
+            raise ValueError('No connection to database established.')
+        with self.con as con:
+            res = con.execute(query)
+            columns = cast(list[SQLiteColumnDescription], res.fetchall())r
 
         if not columns:
             raise CommonSQLError(
@@ -229,14 +226,11 @@ class Database:
         self,
         query: str,
     ) -> list[tuple[Any, ...]] | None:
-        try:
-            if self.con is None:
-                raise ValueError('No connection to database established.')
-            with self.con as con:
-                res = con.execute(query)
-                response = res.fetchall()
-        except Exception as error:
-            raise error
+        if self.con is None:
+            raise ValueError('No connection to database established.')
+        with self.con as con:
+            res = con.execute(query)
+            response = res.fetchall()
 
         if response:
             return response
