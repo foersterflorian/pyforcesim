@@ -248,65 +248,68 @@ class SimulationEnvironment(salabim.Environment):
     #         )
 
     # [DISPATCHING SIGNALS]
-    # ?? still needed?
-    @property
-    def signal_allocation(self) -> bool:
-        return self._signal_allocation
 
-    @property
-    def signal_sequencing(self) -> bool:
-        return self._signal_sequencing
+    # @property
+    # def signal_allocation(self) -> bool:
+    #     return self._signal_allocation
 
-    def set_dispatching_signal(
-        self,
-        sequencing: bool,
-        reset: bool = False,
-    ) -> None:
-        # obtain current value
-        if sequencing:
-            signal = self._signal_sequencing
-            signal_type = 'SEQ'
-        else:
-            signal = self._signal_allocation
-            signal_type = 'ALLOC'
+    # @property
+    # def signal_sequencing(self) -> bool:
+    #     return self._signal_sequencing
 
-        # check flag and determine value
-        if not reset:
-            # check if already set
-            if signal:
-                raise RuntimeError(
-                    (
-                        f'Dispatching type >>{signal_type}<<: Flag for '
-                        f'Env {self.name()} was already set.'
-                    )
-                )
-            else:
-                signal = True
-        # reset
-        else:
-            # check if already not set
-            if not signal:
-                raise RuntimeError(
-                    (
-                        f'Dispatching type >>{signal_type}<<: Flag '
-                        f'for Env {self.name()} was already reset.'
-                    )
-                )
-            else:
-                signal = False
+    # def set_dispatching_signal(
+    #     self,
+    #     sequencing: bool,
+    #     reset: bool = False,
+    # ) -> None:
+    #     # obtain current value
+    #     if sequencing:
+    #         signal = self._signal_sequencing
+    #         signal_type = 'SEQ'
+    #     else:
+    #         signal = self._signal_allocation
+    #         signal_type = 'ALLOC'
 
-        # set flag
-        if sequencing:
-            self._signal_sequencing = signal
-        else:
-            self._signal_allocation = signal
+    #     # check flag and determine value
+    #     if not reset:
+    #         # check if already set
+    #         if signal:
+    #             raise RuntimeError(
+    #                 (
+    #                     f'Dispatching type >>{signal_type}<<: Flag for '
+    #                     f'Env {self.name()} was already set.'
+    #                 )
+    #             )
+    #         else:
+    #             signal = True
+    #     # reset
+    #     else:
+    #         # check if already not set
+    #         if not signal:
+    #             raise RuntimeError(
+    #                 (
+    #                     f'Dispatching type >>{signal_type}<<: Flag '
+    #                     f'for Env {self.name()} was already reset.'
+    #                 )
+    #             )
+    #         else:
+    #             signal = False
 
-        loggers.pyf_env.debug(
-            (
-                f'Dispatching type >>{signal_type}<<: Flag for '
-                f'Env {self.name()} was set to >>{signal}<<.'
-            )
-        )
+    #     # set flag
+    #     if sequencing:
+    #         self._signal_sequencing = signal
+    #     else:
+    #         self._signal_allocation = signal
+
+    #     loggers.pyf_env.debug(
+    #         (
+    #             f'Dispatching type >>{signal_type}<<: Flag for '
+    #             f'Env {self.name()} was set to >>{signal}<<.'
+    #         ),
+    #         signal_type,
+    #         self.name(),
+    #         signal,
+    #     )
 
     # ?? adding to Dispatcher class?
     def check_feasible_agent_alloc(
@@ -356,7 +359,9 @@ class SimulationEnvironment(salabim.Environment):
         elif not self._infstruct_mgr.verify_system_association():
             raise AssociationError('Non-associated subsystems detected!')
 
-        loggers.pyf_env.info(f'Integrity check for Environment {self.name()} successful.')
+        loggers.pyf_env.info(
+            'Integrity check for Environment >>%s<< successful.', self.name()
+        )
 
     def initialise(self) -> None:
         # infrastructure manager instance
@@ -379,7 +384,7 @@ class SimulationEnvironment(salabim.Environment):
             # set internal flag indicating that servers are started
             self.servers_connected = True
 
-        loggers.pyf_env.info(f'Initialisation for Environment {self.name()} successful.')
+        loggers.pyf_env.info('Initialisation for Environment >>%s<< successful.', self.name())
 
     def finalise(self) -> None:
         """
@@ -540,11 +545,12 @@ class InfrastructureManager:
                 # there are NA values
                 loggers.infstrct.error(
                     (
-                        f'There are non-associated systems for '
-                        f'system type >>{system_type}<<. '
+                        'There are non-associated systems for '
+                        'system type >>%s<<. '
                         'Please check these systems and add them to a '
                         'corresponding supersystem.'
-                    )
+                    ),
+                    system_type,
                 )
                 return False
 
@@ -705,7 +711,9 @@ class InfrastructureManager:
                 self._res_db = pd.concat([self._res_db, new_entry])
 
         loggers.infstrct.info(
-            f'Successfully registered object with SystemID {system_id} and name {name}'
+            'Successfully registered object with SystemID >>%s<< and name >>%s<<',
+            system_id,
+            name,
         )
 
         return system_id, name
@@ -872,11 +880,13 @@ class InfrastructureManager:
                 # warn user
                 loggers.infstrct.warning(
                     (
-                        f'CAUTION: There are multiple subsystems which share the '
-                        f'same value >>{lookup_val}<< for the '
-                        f'lookup property >>{lookup_property}<<. '
-                        f'Only the first entry is returned.'
-                    )
+                        'CAUTION: There are multiple subsystems which share the '
+                        'same value >>%s<< for the '
+                        'lookup property >>%s<<. '
+                        'Only the first entry is returned.'
+                    ),
+                    lookup_val,
+                    lookup_property,
                 )
 
             return multi_res.iat[0]
@@ -947,7 +957,7 @@ class InfrastructureManager:
         reset_temp: bool = False,
     ) -> None:
         """method to update the state of a resource object in the resource database"""
-        loggers.infstrct.debug(f'Set state of {obj} to {state}')
+        loggers.infstrct.debug('Set state of >>%s<< to >>%s<<', obj, state)
 
         # check if 'TEMP' state should be reset
         if reset_temp:
@@ -958,7 +968,7 @@ class InfrastructureManager:
             obj.stat_monitor.set_state(state=state)
 
         self._res_db.at[obj.system_id, 'state'] = state
-        loggers.infstrct.debug(f'Executed state setting of {obj} to {state}')
+        loggers.infstrct.debug('Executed state setting of >>%s<< to >>%s<<', obj, state)
 
     def res_objs_temp_state(
         self,
@@ -1181,7 +1191,7 @@ class Dispatcher:
         else:
             self._seq_rule = rule
             self.seq_policy = POLICIES_SEQ[rule]
-            loggers.dispatcher.info(f'Changed priority rule to {rule}')
+            loggers.dispatcher.info('Changed priority rule to %s', rule)
 
     @property
     def sequencing_rules(self) -> frozenset[str]:
@@ -1207,7 +1217,7 @@ class Dispatcher:
         else:
             self._alloc_rule = rule
             self.alloc_policy = POLICIES_ALLOC[rule]
-            loggers.dispatcher.info(f'Changed allocation rule to {rule}')
+            loggers.dispatcher.info('Changed allocation rule to >>%s<<', rule)
 
     def _obtain_load_obj_id(
         self,
@@ -1284,7 +1294,7 @@ class Dispatcher:
         new_entry = new_entry.set_index('job_id')
         self._job_db = pd.concat([self._job_db, new_entry])
 
-        loggers.dispatcher.info(f'Successfully registered job with JobID {job_id}')
+        loggers.dispatcher.info('Successfully registered job with JobID >>%s<<', job_id)
 
         # write job information directly
         job.time_creation = creation_date
@@ -1402,21 +1412,13 @@ class Dispatcher:
             )
         elif preprocess:
             # operation enters Processing Station
-            # self.release_operation(op=current_op)
-
-            # if first operation if given job add job's starting information
+            # if first operation of given job add job's starting information
             if job.num_finished_ops == 0:
                 self.enter_job(job=job)
-
             self.enter_operation(op=current_op)
-            ############# ENTRY OF JOB
-            # current_op.start_time = self.env.now()
-        # after processing
         else:
-            # finalise current op
-            # loggers.dispatcher.debug(f"OP {current_op} is finalised")
+            # after processing
             self.finish_operation(op=current_op)
-            # current_op.finalise()
             job.num_finished_ops += 1
 
     def update_job_state(
@@ -1579,7 +1581,7 @@ class Dispatcher:
         new_entry = new_entry.set_index('op_id')
         self._op_db = pd.concat([self._op_db, new_entry])
 
-        loggers.dispatcher.info(f'Successfully registered operation with OpID {op_id}')
+        loggers.dispatcher.info('Successfully registered operation with OpID >>%s<<', op_id)
 
         # write operation information directly
         op.target_exec_system = exec_system
@@ -1699,10 +1701,11 @@ class Dispatcher:
 
         # update databases
         loggers.dispatcher.debug(
-            (
-                f'Update databases for OP {op} ID {op.op_id} with '
-                f'[{op.time_actual_ending, op.lead_time}]'
-            )
+            'Update databases for OP %s ID %s with [%s, %s]',
+            op,
+            op.op_id,
+            op.time_actual_ending,
+            op.lead_time,
         )
         self.update_operation_state(op=op, state='FINISH')
         # self.update_operation_db(op=op, property='exit_date', val=op.time_exit)
@@ -1798,9 +1801,11 @@ class Dispatcher:
                 loggers.dispatcher.warning(
                     (
                         'CAUTION: There are multiple jobs which share the '
-                        f'same value >>{val}<< for the property >>{property}<<. '
+                        'same value >>%s<< for the property >>%s<<. '
                         'Only the first entry is returned.'
-                    )
+                    ),
+                    val,
+                    property,
                 )
 
             return multi_res.iat[0]
@@ -1857,7 +1862,7 @@ class Dispatcher:
 
         # request decision from agent, sets internal flag
         agent.request_decision(job=job, op=op)
-        loggers.dispatcher.debug(f'[DISPATCHER: {self}] Alloc Agent: Decision request made.')
+        loggers.dispatcher.debug('[DISPATCHER] Alloc Agent: Decision request made.')
 
         # reset TEMP state
         self.env.infstruct_mgr.res_objs_temp_state(
@@ -1882,7 +1887,7 @@ class Dispatcher:
         request for: infrastructure object instance
         """
 
-        loggers.dispatcher.debug(f'[DISPATCHER: {self}] REQUEST TO DISPATCHER FOR ALLOCATION')
+        loggers.dispatcher.debug('[DISPATCHER] REQUEST TO DISPATCHER FOR ALLOCATION')
 
         ## NEW TOP-DOWN-APPROACH
         # routing of jobs is now organized in a hierarchical fashion and can be described
@@ -1915,7 +1920,7 @@ class Dispatcher:
             if target_station_group is None:
                 raise ValueError('No target station group assigned.')
 
-            loggers.dispatcher.debug(f'[DISPATCHER: {self}] Next operation {op}')
+            loggers.dispatcher.debug('[DISPATCHER] Next operation %s', op)
             # obtain target station (InfrastructureObject)
             target_station = self._choose_target_station_from_exec_system(
                 exec_system=target_exec_system,
@@ -1935,10 +1940,9 @@ class Dispatcher:
             target_station = sinks[0]
 
         loggers.dispatcher.debug(
-            (
-                f'[DISPATCHER: {self}] Next operation is {op} with '
-                f'machine group (machine) {target_station}'
-            )
+            '[DISPATCHER] Next operation is %s with machine group (machine) %s',
+            op,
+            target_station,
         )
 
         return target_station
@@ -2051,7 +2055,7 @@ class Dispatcher:
             agent.action_feasible = self._env.check_feasible_agent_alloc(
                 target_station=target_station, op=op
             )
-            loggers.agents.debug(f'Action feasibility status: {agent.action_feasible}')
+            loggers.agents.debug('Action feasibility status: %s', agent.action_feasible)
 
         return target_station
 
@@ -2076,7 +2080,7 @@ class Dispatcher:
         ## trigger agent decision --> map decision to feasible jobs
         ## [*] use implemented priority rules as intermediate step
 
-        loggers.dispatcher.info(f'[DISPATCHER: {self}] REQUEST TO DISPATCHER FOR SEQUENCING')
+        loggers.dispatcher.info('[DISPATCHER] REQUEST TO DISPATCHER FOR SEQUENCING')
 
         # get logic queue of requesting object
         # contains all feasible jobs for this resource
@@ -2403,7 +2407,8 @@ class System(dict):
                     self._alloc_agent = agent
                     self._alloc_agent_registered = True
                     loggers.pyf_env.info(
-                        f'Successfully registered Allocation Agent in {self}'
+                        'Successfully registered Allocation Agent in %s',
+                        self,
                     )
                 elif not isinstance(agent, AllocationAgent):
                     raise TypeError(
@@ -2613,7 +2618,7 @@ class System(dict):
             # update property in database
             infstruct_mgr.set_contain_proc_station(system=self)
 
-        loggers.infstrct.info(f'Successfully added {subsystem} to {self}.')
+        loggers.infstrct.info('Successfully added %s to %s.', subsystem, self)
 
     @overload
     def lowest_level_subsystems(
@@ -2720,12 +2725,22 @@ class System(dict):
 class ProductionArea(System):
     def __init__(
         self,
-        **kwargs,
+        env: SimulationEnvironment,
+        custom_identifier: CustomID,
+        name: str | None = None,
+        state: str | None = None,
     ) -> None:
         """Group of processing stations which are considered parallel machines"""
 
         # initialise base class
-        super().__init__(system_type='ProductionArea', abstraction_level=2, **kwargs)
+        super().__init__(
+            env=env,
+            system_type='ProductionArea',
+            custom_identifier=custom_identifier,
+            abstraction_level=2,
+            name=name,
+            state=state,
+        )
 
     def add_subsystem(
         self,
@@ -2758,12 +2773,22 @@ class ProductionArea(System):
 class StationGroup(System):
     def __init__(
         self,
-        **kwargs,
+        env: SimulationEnvironment,
+        custom_identifier: CustomID,
+        name: str | None = None,
+        state: str | None = None,
     ) -> None:
         """Group of processing stations which are considered parallel machines"""
 
         # initialise base class
-        super().__init__(system_type='StationGroup', abstraction_level=1, **kwargs)
+        super().__init__(
+            env=env,
+            system_type='StationGroup',
+            custom_identifier=custom_identifier,
+            abstraction_level=1,
+            name=name,
+            state=state,
+        )
 
         return None
 
@@ -2987,20 +3012,20 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 # ** [only step] Calc reward in Gym-Env
                 loggers.agents.debug(
                     (
-                        '--------------- DEBUG: call before hold(0) at '
-                        f'{self.env.t()}, {self.env.t_as_dt()}'
+                        '--------------- DEBUG: call before hold(0) at %s, %s',
+                        self.env.t(),
+                        self.env.t_as_dt(),
                     )
                 )
                 yield self.sim_control.hold(0)
                 # ** make and set decision in Gym-Env --> RESET external Gym flag
                 loggers.agents.debug(
-                    (f'--------------- DEBUG: call after hold(0) at {self.env.t()}')
+                    ('--------------- DEBUG: call after hold(0) at %s', self.env.t())
                 )
                 loggers.agents.debug(
-                    (
-                        f'current {alloc_agent.action_feasible}, '
-                        f'past {alloc_agent.past_action_feasible}'
-                    )
+                    'Action feasibility: current %s, past %s',
+                    alloc_agent.action_feasible,
+                    alloc_agent.past_action_feasible,
                 )
 
                 # obtain target station, check for feasibility
@@ -3023,7 +3048,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             pass
         elif isinstance(target_station, ProcessingStation):
             # check if associated buffers exist
-            loggers.prod_stations.debug(f'[{self}] Check for buffers')
+            loggers.prod_stations.debug('[%s] Check for buffers', self)
             buffers = target_station.buffers
 
             if buffers:
@@ -3055,10 +3080,11 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 # [STATS:Buffer] count number of inputs
                 buffer.num_inputs += 1
                 loggers.prod_stations.debug(
-                    (
-                        f'obj = {self} \t type of buffer >>{buffer}<< = '
-                        f'{type(buffer)} at {self.env.now()}'
-                    )
+                    'obj = %s \t type of buffer >>%s<< = %s at %s',
+                    self,
+                    buffer,
+                    type(buffer),
+                    self.env.now(),
                 )
             else:
                 # adding request to machine
@@ -3081,7 +3107,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         if target_station.sim_control.ispassive():
             target_station.sim_control.activate()
 
-        loggers.prod_stations.debug(f'[{self}] Put Job {job} in queue {logic_queue}')
+        loggers.prod_stations.debug('[%s] Put Job %s in queue %s', self, job, logic_queue)
 
         # [STATE:InfrStructObj] WAITING
         infstruct_mgr.update_res_state(obj=self, state='WAITING')
@@ -3119,10 +3145,13 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         if job_setup_time is not None:
             loggers.prod_stations.debug(
                 (
-                    f'[SETUP TIME DETECTED] job ID {job.job_id} at '
-                    f'{self.env.now()} on machine ID {self.custom_identifier} '
-                    f'with setup time {self.setup_time}'
-                )
+                    '[SETUP TIME DETECTED] job ID %s at %s on machine ID %s '
+                    'with setup time %s'
+                ),
+                job.job_id,
+                self.env.now(),
+                self.custom_identifier,
+                self.setup_time,
             )
             self.setup_time = job_setup_time
 
@@ -3157,11 +3186,11 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             # [STATE:Job]
             dispatcher.update_job_state(job=job, state='SETUP')
             loggers.prod_stations.debug(
-                (
-                    f'[START SETUP] job ID {job.job_id} at '
-                    f'{self.env.now()} on machine ID {self.custom_identifier} '
-                    f'with setup time {self.setup_time}'
-                )
+                '[START SETUP] job ID %s at %s on machine ID %s with setup time %s',
+                job.job_id,
+                self.env.now(),
+                self.custom_identifier,
+                self.setup_time,
             )
             sim_time = self.env.td_to_simtime(timedelta=self.setup_time)
             yield self.sim_control.hold(sim_time)
@@ -3384,10 +3413,11 @@ class ProcessingStation(InfrastructureObject):
         else:
             loggers.prod_stations.warning(
                 (
-                    f'The Buffer >>{buffer}<< is already '
-                    f'associated with the resource >>{self}<<. '
+                    'The Buffer >>%s<< is already associated with the resource >>%s<<. '
                     'Buffer was not added to the resource.'
-                )
+                ),
+                buffer,
+                self,
             )
 
     def remove_buffer(
@@ -3421,27 +3451,27 @@ class ProcessingStation(InfrastructureObject):
             # resources are activated by other resources
             if len(self.logic_queue) == 0:
                 yield self.sim_control.passivate()
-            loggers.prod_stations.debug(f'[MACHINE: {self}] is getting job from queue')
+            loggers.prod_stations.debug('[MACHINE: %s] is getting job from queue', self)
 
             # ONLY PROCESSING STATIONS ARE ASKING FOR SEQUENCING
             job = yield from self.get_job()
 
             loggers.prod_stations.debug(
-                (
-                    f'[START] job ID {job.job_id} at {self.env.now()} on '
-                    f'machine ID {self.custom_identifier} '
-                    f'with proc time {self.proc_time}'
-                )
+                '[START] job ID %s at %s on machine ID %s with proc time %s',
+                job.job_id,
+                self.env.now(),
+                self.custom_identifier,
+                self.proc_time,
             )
             # PROCESSING
             sim_time = self.env.td_to_simtime(timedelta=self.proc_time)
             yield self.sim_control.hold(sim_time)
             dispatcher.update_job_process_info(job=job, preprocess=False)
             loggers.prod_stations.debug(
-                (
-                    f'[END] job ID {job.job_id} at {self.env.now()} on '
-                    f'machine ID {self.custom_identifier}'
-                )
+                '[END] job ID %s at %s on machine ID %s',
+                job.job_id,
+                self.env.now(),
+                self.custom_identifier,
             )
 
             _ = yield from self.put_job(job=job)
@@ -3582,10 +3612,12 @@ class Buffer(StorageLike):
         else:
             loggers.buffers.warning(
                 (
-                    f'The Processing Station >>{prod_station}<< is '
-                    f'already associated with the resource >>{self}<<. '
+                    'The Processing Station >>%s<< is '
+                    'already associated with the resource >>%s<<. '
                     'Processing Station was not added to the resource.'
-                )
+                ),
+                prod_station,
+                self,
             )
 
     def remove_prod_station(
@@ -3614,13 +3646,15 @@ class Buffer(StorageLike):
     def sim_logic(self) -> Generator[None, None, None]:
         infstruct_mgr = self.env.infstruct_mgr
         while True:
-            loggers.prod_stations.debug(f'[BUFFER: {self}] Invoking at {self.env.now()}')
+            loggers.prod_stations.debug('[BUFFER: %s] Invoking at %s', self, self.env.now())
             # full
             if self.sim_control.store.available_quantity() == 0:
                 # [STATE] FULL
                 infstruct_mgr.update_res_state(obj=self, state='FULL')
                 loggers.prod_stations.debug(
-                    f"[BUFFER: {self}] Set to 'FULL' at {self.env.now()}"
+                    '[BUFFER: %s] Set to >>FULL<< at %s',
+                    self,
+                    self.env.now(),
                 )
             # empty
             elif (
@@ -3630,16 +3664,19 @@ class Buffer(StorageLike):
                 # [STATE] EMPTY
                 infstruct_mgr.update_res_state(obj=self, state='EMPTY')
                 loggers.prod_stations.debug(
-                    f"[BUFFER: {self}] Set to 'EMPTY' at {self.env.now()}"
+                    '[BUFFER: %s] Set to >>EMPTY<< at %s',
+                    self,
+                    self.env.now(),
                 )
             else:
                 # [STATE] INTERMEDIATE
                 infstruct_mgr.update_res_state(obj=self, state='INTERMEDIATE')
                 loggers.prod_stations.debug(
-                    f"[BUFFER: {self}] Neither 'EMPTY' nor 'FULL' at {self.env.now()}"
+                    '[BUFFER: %s] Neither >>EMPTY<< nor >>FULL<< at %s',
+                    self,
+                    self.env.now(),
                 )
 
-            # yield self.passivate()
             yield self.sim_control.passivate()
 
     def post_process(self) -> None:
@@ -3832,8 +3869,8 @@ class Source(InfrastructureObject):
             start_date_init = Datetime(2023, 11, 20, hour=6, tzinfo=TIMEZONE_UTC)
             end_date_init = Datetime(2023, 12, 1, hour=10, tzinfo=TIMEZONE_UTC)
 
-            # loggers.sources.debug(f"[SOURCE: {self}] {job_ex_order=}")
-            # loggers.sources.debug(f"[SOURCE: {self}] {job_target_station_groups=}")
+            # loggers.sources.debug('[SOURCE: %s] Exec Order: %s', self, job_ex_order)
+            # loggers.sources.debug('[SOURCE: %s] %s', self, job_target_station_groups)
             # !! job init with CustomID, but SystemID used
             # TODO: change initialisation to SystemID
             """
@@ -3857,10 +3894,9 @@ class Source(InfrastructureObject):
                 planned_ending_date=end_date_init,
             )
             loggers.sources.debug(
-                (
-                    f'[SOURCE: {self}] Job target station group '
-                    f'{job.operations[0].target_station_group}'
-                )
+                '[SOURCE: %s] Job target station group: %s',
+                self,
+                job.operations[0].target_station_group,
             )
             # [Call:DISPATCHER]
             dispatcher.release_job(job=job)
@@ -3868,14 +3904,16 @@ class Source(InfrastructureObject):
             # (source: generation of jobs or entry in pipeline)
             # implemented in 'get_job' method which is not executed by source objects
             self.num_inputs += 1
-            loggers.sources.debug(f'[SOURCE: {self}] Generated {job} at {self.env.now()}')
+            loggers.sources.debug(
+                '[SOURCE: %s] Generated %s at %s', self, job, self.env.now()
+            )
 
-            loggers.sources.debug(f'[SOURCE: {self}] Request allocation...')
+            loggers.sources.debug('[SOURCE: %s] Request allocation...', self)
             # put job via 'put_job' function,
             # implemented in parent class 'InfrastructureObject'
             target_proc_station = yield from self.put_job(job=job)
             loggers.sources.debug(
-                f'[SOURCE: {self}] PUT JOB with ret = {target_proc_station}'
+                '[SOURCE: %s] PUT JOB with ret = %s', self, target_proc_station
             )
             # [STATE:Source] put in 'WAITING' by 'put_job' method but still processing
             # only 'WAITING' if all jobs are generated
@@ -3885,9 +3923,9 @@ class Source(InfrastructureObject):
             # if hold time elapsed start new generation
             proc_time = self._obtain_proc_time()
             loggers.sources.debug(
-                f'[SOURCE: {self}] Hold for >>{proc_time}<< at {self.env.now()}'
+                '[SOURCE: %s] Hold for >>%s<< at %s', self, proc_time, self.env.now()
             )
-            # yield self.hold(proc_time)
+
             yield self.sim_control.hold(proc_time)
             # set counter up
             count += 1
@@ -3944,7 +3982,7 @@ class Sink(InfrastructureObject):
         while True:
             if len(self.logic_queue) == 0:
                 yield self.sim_control.passivate()
-            loggers.sinks.debug(f'[SINK: {self}] is getting job from queue')
+            loggers.sinks.debug('[SINK: %s] is getting job from queue', self)
             job = cast(Job, self.logic_queue.pop())
             # [Call:DISPATCHER] data collection: finalise job
             dispatcher.finish_job(job=job)
@@ -4288,25 +4326,15 @@ class Job(salabim.Component):
         # true for each new job, maybe reworked in future for jobs with
         # a start date later than creation date
         self.is_disposable: bool = True
-        # add job to disposable ones
-        # ret = self.dispatcher.add_disposable_job(self)
-        # last operation ended --> finished job
         self.is_finished: bool = False
 
         # inter-process time characteristics
-        # time of release
         self.time_release = DEFAULT_DATETIME
-        # time of first operation starting point
         self.time_actual_starting = DEFAULT_DATETIME
-        # starting date deviation
         self.starting_date_deviation: Timedelta | None = None
-        # time of last operation ending point
         self.time_actual_ending = DEFAULT_DATETIME
-        # ending date deviation
         self.ending_date_deviation: Timedelta | None = None
-        # lead time
         self.lead_time = Timedelta()
-        # time of creation
         self.time_creation = DEFAULT_DATETIME
 
         # current resource location
@@ -4328,7 +4356,8 @@ class Job(salabim.Component):
         )
 
         # initialise base class
-        super().__init__(env=env, process='', **kwargs)
+        name = f'Job (ID: {self._job_id})'
+        super().__init__(env=env, name=name, process='', **kwargs)
 
         ### OPERATIONS ##
         self.operations: deque[Operation] = deque()

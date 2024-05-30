@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import logging
 import random
-import sys
 import typing
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
@@ -13,6 +11,7 @@ import numpy as np
 import numpy.typing as npt
 from numpy.random._generator import Generator as NPRandomGenerator
 
+from pyforcesim import loggers
 from pyforcesim.datetime import DTManager
 
 if TYPE_CHECKING:
@@ -23,12 +22,6 @@ if TYPE_CHECKING:
         StationGroup,
         SystemID,
     )
-
-# ** logging
-logging.basicConfig(stream=sys.stdout)
-LOGGING_LEVEL_LOADS = 'DEBUG'
-logger_sequences = logging.getLogger('loads.sequences')
-logger_sequences.setLevel(LOGGING_LEVEL_LOADS)
 
 
 # order time management
@@ -96,7 +89,7 @@ class RandomJobGenerator(BaseGenerator):
         n_machines: number of machines
         n_tasks: number of tasks
         mat_ProcTimes: matrix of processing times | shape=(n_jobs,n_machines)
-        mat_JobMachID: matrix of machine IDs per job starting 
+        mat_JobMachID: matrix of machine IDs per job starting
             by index 1 | shape=(n_jobs,n_machines)
         mat_OpID: matrix of operation IDs starting
             by index 1 | shape=(n_jobs,n_machines)
@@ -302,20 +295,20 @@ class ProductionSequenceSinglePA(ProductionSequence):
         stat_groups: list['StationGroup'] = filter_by_prod_area['station_group'].tolist()
         # stat_group_ids = filter_by_prod_area['station_group_id'].tolist()
 
-        logger_sequences.debug(f'{stat_groups=}')
+        loggers.loads.debug('stat_groups: %s', stat_groups)
 
         # number of all processing stations in associated production area
         total_num_proc_stations: int = self._prod_area.num_assoc_proc_station
 
-        logger_sequences.debug(f'{total_num_proc_stations=}')
+        loggers.loads.debug('total_num_proc_stations: %s', total_num_proc_stations)
 
         # order time equally distributed between all station within given ProductionArea
         # source distributes loads in round robin principle
-        # order time for each station has to be the order time of the source 
+        # order time for each station has to be the order time of the source
         # times the number of stations the source delivers to
         station_order_time = order_time_source * total_num_proc_stations
 
-        logger_sequences.debug(f'{station_order_time=}')
+        loggers.loads.debug('station_order_time: %s', station_order_time)
 
         # generate endless sequence
         while True:

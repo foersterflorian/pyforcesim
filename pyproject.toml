@@ -56,6 +56,10 @@ notebooks = [
 general = [
     "ruff>=0.4.5",
 ]
+tests = [
+    "pytest>=8.2.1",
+    "pytest-cov>=5.0.0",
+]
 
 [tool.ruff]
 line-length = 94
@@ -68,3 +72,12 @@ skip-magic-trailing-comma = false
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+addopts = [
+    "--import-mode=importlib",
+    "--cov=src/",
+]
+testpaths = [
+    "tests",
+]

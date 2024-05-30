@@ -73,8 +73,8 @@ class TransientCondition(BaseCondition):
     def __init__(
         self,
         env: SimulationEnvironment,
-        name: str,
         duration_transient: Timedelta,
+        name: str = 'TransientCondition',
     ) -> None:
         super().__init__(env=env, name=name)
         # duration after which the condition is set
@@ -96,9 +96,11 @@ class TransientCondition(BaseCondition):
         self.env.transient_cond_state.set()
         loggers.conditions.info(
             (
-                f'[CONDITION {self}]: Transient Condition over. Set >>is_transient_cond<< '
-                f'of env to >>{self.env.is_transient_cond}<<'
-            )
+                '[CONDITION %s]: Transient Condition over. Set >>is_transient_cond<< '
+                'of env to >>%s<<'
+            ),
+            self,
+            self.env.is_transient_cond,
         )
 
     def post_process(self) -> None:
@@ -109,8 +111,8 @@ class JobGenDurationCondition(BaseCondition):
     def __init__(
         self,
         env: SimulationEnvironment,
-        name: str,
         target_obj: Source,
+        name: str = 'JobGenDurationCondition',
         sim_run_until: Datetime | None = None,
         sim_run_duration: Timedelta | None = None,
     ) -> None:
@@ -156,7 +158,7 @@ class JobGenDurationCondition(BaseCondition):
         yield self.sim_control.hold(sim_time, priority=-10)
         self.target_obj.stop_job_gen_state.set()
         loggers.conditions.info(
-            (f'[CONDITION {self}]: Job Generation Condition met at ' f'{self.env.t_as_dt()}')
+            '[CONDITION %s]: Job Generation Condition met at %s', self, self.env.t_as_dt()
         )
 
     def post_process(self) -> None:
@@ -167,7 +169,7 @@ class TriggerAgentCondition(BaseCondition):
     def __init__(
         self,
         env: SimulationEnvironment,
-        name: str,
+        name: str = 'TriggerAgentCondition',
     ) -> None:
         # initialise base class
         super().__init__(env=env, name=name)
@@ -183,7 +185,7 @@ class TriggerAgentCondition(BaseCondition):
         yield self.sim_control.wait(self.env.transient_cond_state, priority=-9)
         # change allocation rule of dispatcher
         self.env.dispatcher.alloc_rule = 'AGENT'
-        loggers.conditions.info((f'[CONDITION {self}]: Set allocation rule to >>AGENT<<'))
+        loggers.conditions.info('[CONDITION %s]: Set allocation rule to >>AGENT<<', self)
 
     def post_process(self) -> None:
         pass

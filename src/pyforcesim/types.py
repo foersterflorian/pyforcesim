@@ -1,15 +1,19 @@
+import enum
 from typing import Any, Literal, NewType, TypeAlias, TypedDict
 
 from plotly.graph_objs._figure import Figure
 
+
+# ** logging
+class LoggingLevels(enum.IntEnum):
+    DEBUG = 10
+    INFO = 20
+    WARNING = 30
+    ERROR = 40
+    CRITICAL = 50
+
+
 # ** common
-LoggingLevels: TypeAlias = Literal[
-    'DEBUG',
-    'INFO',
-    'WARNING',
-    'ERROR',
-    'CRITICAL',
-]
 PlotlyFigure: TypeAlias = Figure
 
 # ** simulation

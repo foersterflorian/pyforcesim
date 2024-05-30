@@ -211,7 +211,7 @@ class Database:
             raise ValueError('No connection to database established.')
         with self.con as con:
             res = con.execute(query)
-            columns = cast(list[SQLiteColumnDescription], res.fetchall())r
+            columns = cast(list[SQLiteColumnDescription], res.fetchall())
 
         if not columns:
             raise CommonSQLError(
@@ -256,15 +256,11 @@ class Database:
         logger.info(f'Creating table {table_name}...')
         query = f'CREATE TABLE IF NOT EXISTS {table_name} ({col_query})'
         logger.debug(f'Query: {query}.')
-        try:
-            if self.con is None:
-                raise ValueError('No connection to database established.')
-            with self.con as con:
-                con.execute(query)
-        except Exception as error:
-            raise error
-        else:
-            logger.info(f'Table {table_name} created successfully.')
+        if self.con is None:
+            raise ValueError('No connection to database established.')
+        with self.con as con:
+            con.execute(query)
+        logger.info(f'Table {table_name} created successfully.')
 
     def prepare_insertion_query(
         self,
@@ -302,15 +298,11 @@ class Database:
     ) -> None:
         query = self.prepare_insertion(table_name, data)
         logger.debug(f'Inserting data into table {table_name} with {query=}.')
-        try:
-            if self.con is None:
-                raise ValueError('No connection to database established.')
-            with self.con as con:
-                con.execute(query, data)
-        except Exception as error:
-            raise error
-        else:
-            logger.debug('Data inserted successfully.')
+        if self.con is None:
+            raise ValueError('No connection to database established.')
+        with self.con as con:
+            con.execute(query, data)
+        logger.debug('Data inserted successfully.')
 
     def insert_many(
         self,
@@ -319,15 +311,11 @@ class Database:
     ) -> None:
         query = self.prepare_insertion(table_name, data[0])
         logger.debug(f'Inserting data into table {table_name} with {query=}.')
-        try:
-            if self.con is None:
-                raise ValueError('No connection to database established.')
-            with self.con as con:
-                con.executemany(query, data)
-        except Exception as error:
-            raise error
-        else:
-            logger.debug('Data inserted successfully.')
+        if self.con is None:
+            raise ValueError('No connection to database established.')
+        with self.con as con:
+            con.executemany(query, data)
+        logger.debug('Data inserted successfully.')
 
 
 """

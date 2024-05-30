@@ -55,15 +55,16 @@ class Monitor:
         self._target_object = obj
 
         # [STATE] state parameters
-        # all possible/allowed states
-        self.states_possible: set[str] = set(possible_states)
         # always add states 'INIT', 'FINISH', 'TEMP' for control flow
-        if 'INIT' not in self.states_possible:
-            self.states_possible.add('INIT')
-        if 'FINISH' not in self.states_possible:
-            self.states_possible.add('FINISH')
-        if 'TEMP' not in self.states_possible:
-            self.states_possible.add('TEMP')
+        states_possible = set(possible_states)
+        if 'INIT' not in states_possible:
+            states_possible.add('INIT')
+        if 'FINISH' not in states_possible:
+            states_possible.add('FINISH')
+        if 'TEMP' not in states_possible:
+            states_possible.add('TEMP')
+        # all possible/allowed states
+        self.states_possible: frozenset[str] = frozenset(states_possible)
 
         # check integrity of the given state
         if init_state in self.states_possible:
@@ -120,9 +121,12 @@ class Monitor:
 
         # time handling
         # self._dt_parser: DTParser = DTParser()
+        # if isinstance(self.target_object, Operation):
+        loggers.monitors.debug('Monitor states: %s', self.states_possible)
+        loggers.monitors.debug('Monitor state times: %s', self.state_times)
 
     def __repr__(self) -> str:
-        return f'Monitor instance of {self._target_object}'
+        return f'Monitor instance of {self.target_object}'
 
     @property
     def env(self) -> SimulationEnvironment:
@@ -160,9 +164,10 @@ class Monitor:
         # check if state is already set
         if self.state_status[target_state] and target_state != 'TEMP':
             loggers.monitors.info(
-                f'Tried to set state of {self._target_object} '
-                f'to >>{target_state}<<, but this state was already set.'
-                f' State of object was not changed.'
+                'Tried to set state of %s to >>%s<<, but this state was already set.'
+                ' State of object was not changed.',
+                self.target_object,
+                target_state,
             )
         # check if the 'TEMP' state was already set, this should never happen
         # if it happens raise an error to catch wrong behaviour
@@ -207,10 +212,10 @@ class Monitor:
             self.is_available: bool = False
 
         loggers.monitors.debug(
-            (
-                f'Duration for state {current_state} on {self._target_object} '
-                f'was {current_state_duration}'
-            )
+            'Duration for state %s on %s was %s',
+            current_state,
+            self.target_object,
+            current_state_duration,
         )
 
     def reset_temp_state(self) -> None:
@@ -219,7 +224,7 @@ class Monitor:
         if not self._is_temp:
             raise RuntimeError(
                 (
-                    f"Tried to reset {self._target_object} from 'TEMP' state but "
+                    f'Tried to reset {self._target_object} from >>TEMP<< state but '
                     f'the current state is >>{self.state_current}<<'
                 )
             )
@@ -251,6 +256,11 @@ class Monitor:
             State duration table with absolute and relative values
         """
         # build state duration table
+        # loggers.monitors.debug(
+        #     'State durations for %s: %s',
+        #     self.target_object,
+        #     self.state_times,
+        # )
         temp1: Series = pd.Series(data=self.state_times)
         temp2: DataFrame = temp1.to_frame()
         temp2.columns = ['abs [Timedelta]']
@@ -398,6 +408,10 @@ class StorageMonitor(Monitor):
         self._target_object = obj
 
     @property
+    def target_object(self) -> StorageLike:
+        return self._target_object
+
+    @property
     def wei_avg_fill_level(self) -> float | None:
         return self._wei_avg_fill_level
 
@@ -428,10 +442,11 @@ class StorageMonitor(Monitor):
         current_time = self.env.t_as_dt()
         duration: Timedelta = current_time - self._fill_level_starting_time
         loggers.buffers.debug(
-            (
-                f'[BUFFER: {self._target_object}] Current time is {current_time} with level '
-                f' {len(self._target_object)} and old level {self._current_fill_level}'
-            )
+            '[BUFFER: %s] Current time is %s with level %s and old level %s',
+            self.target_object,
+            current_time,
+            len(self.target_object),
+            self._current_fill_level,
         )
         # if ((self._current_fill_level != len(self)) and (duration > 0.0)) or is_finalise:
         if self._current_fill_level != self._target_object.fill_level or is_finalise:
