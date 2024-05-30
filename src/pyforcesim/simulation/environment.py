@@ -2084,7 +2084,6 @@ class Dispatcher:
         # get job from logic queue with currently defined priority rule
         job = self._seq_priority_rule(req_obj=req_obj, queue=logic_queue)
         # reset environment signal for SEQUENCING
-
         if job.current_proc_time is None:
             raise ValueError(f'No processing time defined for job {job}.')
 

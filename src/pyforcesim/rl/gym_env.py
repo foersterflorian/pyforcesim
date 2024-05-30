@@ -199,7 +199,6 @@ class JSSEnv(gym.Env):
                 self.terminated = True
                 break
             self.sim_env.step()
-
         # feature vector already built internally when dispatching signal is set
         observation = self.agent.feat_vec
         # ?? leave additional info empty?
