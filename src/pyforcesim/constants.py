@@ -45,6 +45,27 @@ LOGGING_LEVEL_DB: Final[loglevel] = loglevel.DEBUG
 INF: Final[Infinite] = float('inf')
 
 
+# ** dates
+class TimeUnitsDatetime(enum.StrEnum):
+    YEAR = enum.auto()
+    MONTH = enum.auto()
+    DAY = enum.auto()
+    HOUR = enum.auto()
+    MINUTE = enum.auto()
+    SECOND = enum.auto()
+    MICROSECOND = enum.auto()
+
+
+class TimeUnitsTimedelta(enum.StrEnum):
+    WEEKS = enum.auto()
+    DAYS = enum.auto()
+    HOURS = enum.auto()
+    MINUTES = enum.auto()
+    SECONDS = enum.auto()
+    MILLISECONDS = enum.auto()
+    MICROSECONDS = enum.auto()
+
+
 # ** database
 DB_ROOT: Final[str] = 'databases'
 DB_DATA_TYPES: Final[set[str]] = {
@@ -65,6 +86,9 @@ DB_SUPPORTED_COL_CONSTRAINTS: Final[frozenset[str]] = frozenset(
         'UNIQUE',
         'PRIMARY KEY',
     ]
+)
+DB_INJECTION_PATTERN: Final[str] = (
+    r'(^[_0-9]+)|[^\w ]|(true|false|select|where|drop|delete|create)'
 )
 
 
@@ -90,6 +114,12 @@ class SimStatesStorage(enum.StrEnum):
     FULL = enum.auto()
     EMPTY = enum.auto()
     INTERMEDIATE = enum.auto()
+
+
+class SimSystemTypes(enum.StrEnum):
+    PRODUCTION_AREA = enum.auto()
+    STATION_GROUP = enum.auto()
+    RESOURCE = enum.auto()
 
 
 # ** policies

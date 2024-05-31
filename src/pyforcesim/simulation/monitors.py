@@ -10,7 +10,7 @@ import plotly.express as px
 from pandas import DataFrame, Series
 
 from pyforcesim import loggers
-from pyforcesim.constants import INF
+from pyforcesim.constants import INF, TimeUnitsTimedelta
 from pyforcesim.datetime import DTManager
 from pyforcesim.types import PlotlyFigure
 
@@ -290,7 +290,7 @@ class Monitor:
         save_img: bool = False,
         save_html: bool = False,
         file_name: str = 'state_distribution_bar',
-        time_unit: str = 'hours',
+        time_unit: TimeUnitsTimedelta = TimeUnitsTimedelta.HOURS,
     ) -> PlotlyFigure:
         """draws the collected state times of the object as bar chart"""
         data = pd.DataFrame.from_dict(
@@ -329,7 +329,7 @@ class Monitor:
         save_img: bool = False,
         save_html: bool = False,
         file_name: str = 'state_distribution_pie',
-        time_unit: str = 'hours',
+        time_unit: TimeUnitsTimedelta = TimeUnitsTimedelta.HOURS,
     ) -> PlotlyFigure:
         """draws the collected state times of the object as bar chart"""
         data = pd.DataFrame.from_dict(
@@ -744,7 +744,7 @@ class InfStructMonitor(Monitor):
         save_img: bool = False,
         save_html: bool = False,
         file_name: str = 'fill_level',
-        time_unit_load_time: str = 'hours',
+        time_unit_load_time: TimeUnitsTimedelta = TimeUnitsTimedelta.HOURS,
     ) -> PlotlyFigure:
         """
         method to draw and display the fill level expansion of the corresponding buffer

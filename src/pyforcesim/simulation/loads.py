@@ -12,6 +12,7 @@ import numpy.typing as npt
 from numpy.random._generator import Generator as NPRandomGenerator
 
 from pyforcesim import loggers
+from pyforcesim.constants import SimSystemTypes, TimeUnitsTimedelta
 from pyforcesim.datetime import DTManager
 
 if TYPE_CHECKING:
@@ -155,7 +156,7 @@ class RandomJobGenerator(BaseGenerator):
         gen_setup_times: bool = False,
         min_setup_time: int = 1,
         max_setup_time: int = 10,
-        time_unit: str = 'hours',
+        time_unit: TimeUnitsTimedelta = TimeUnitsTimedelta.HOURS,
     ) -> tuple[
         list[CustomID], list[CustomID] | None, list[Timedelta], list[Timedelta] | None
     ]:
@@ -261,7 +262,7 @@ class ProductionSequenceSinglePA(ProductionSequence):
         self._prod_area = typing.cast(
             'ProductionArea',
             self.env.infstruct_mgr.lookup_subsystem_info(
-                system_type='ProductionArea',
+                system_type=SimSystemTypes.PRODUCTION_AREA,
                 lookup_val=self._prod_area_id,
             ),
         )

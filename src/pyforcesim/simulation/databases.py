@@ -11,17 +11,18 @@ from itertools import product
 from pathlib import Path
 from typing import Any, Final, cast
 
-from pyforcesim.constants import DB_DATA_TYPES, DB_ROOT, DB_SUPPORTED_COL_CONSTRAINTS
+from pyforcesim.constants import (
+    DB_DATA_TYPES,
+    DB_INJECTION_PATTERN,
+    DB_ROOT,
+    DB_SUPPORTED_COL_CONSTRAINTS,
+)
 from pyforcesim.errors import CommonSQLError
 from pyforcesim.loggers import databases as logger
 from pyforcesim.types import (
     DBColumnDeclaration,
     ForeignKeyInfo,
     SQLiteColumnDescription,
-)
-
-DB_INJECTION_PATTERN: Final[str] = (
-    r'(^[_0-9]+)|[^\w ]|(true|false|select|where|drop|delete|create)'
 )
 
 db_col_combinations = product(DB_DATA_TYPES, DB_SUPPORTED_COL_CONSTRAINTS)

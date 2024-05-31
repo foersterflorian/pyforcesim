@@ -12,6 +12,8 @@ from zoneinfo import ZoneInfo
 
 from pandas import DataFrame
 
+from pyforcesim.constants import TimeUnitsDatetime, TimeUnitsTimedelta
+
 # local time-zone, currently static
 TIMEZONE_CEST: Final[ZoneInfo] = ZoneInfo('Europe/Berlin')
 TIMEZONE_UTC: Final[Timezone] = Timezone.utc
@@ -24,29 +26,12 @@ class DTManager:
         date and time parser with convenient methods
         to parse time units as timedelta and datetime objects
         """
-
-        self._time_units_datetime: set[str] = set(
-            [
-                'year',
-                'month',
-                'day',
-                'hour',
-                'minute',
-                'second',
-                'microsecond',
-            ]
+        self._time_units_datetime: frozenset[str] = frozenset(
+            (val.value for val in TimeUnitsDatetime)
         )
 
-        self._time_units_timedelta: set[str] = set(
-            [
-                'weeks',
-                'days',
-                'hours',
-                'minutes',
-                'seconds',
-                'milliseconds',
-                'microseconds',
-            ]
+        self._time_units_timedelta: frozenset[str] = frozenset(
+            (val.value for val in TimeUnitsTimedelta)
         )
 
     def dt_with_tz_UTC(
@@ -59,7 +44,7 @@ class DTManager:
     def timedelta_from_val(
         self,
         val: float,
-        time_unit: str,
+        time_unit: TimeUnitsTimedelta,
     ) -> Timedelta:
         """create Python timedelta object by choosing time value and time unit
 
@@ -80,7 +65,6 @@ class DTManager:
         ValueError
             if chosen time unit not implemented
         """
-
         if time_unit not in self._time_units_timedelta:
             raise ValueError(
                 (
@@ -89,23 +73,8 @@ class DTManager:
                 )
             )
 
-        match time_unit:
-            case 'weeks':
-                ret = datetime.timedelta(weeks=val)
-            case 'days':
-                ret = datetime.timedelta(days=val)
-            case 'hours':
-                ret = datetime.timedelta(hours=val)
-            case 'minutes':
-                ret = datetime.timedelta(minutes=val)
-            case 'seconds':
-                ret = datetime.timedelta(seconds=val)
-            case 'milliseconds':
-                ret = datetime.timedelta(milliseconds=val)
-            case 'microseconds':
-                ret = datetime.timedelta(microseconds=val)
-
-        return ret
+        kwargs = {time_unit: val}
+        return datetime.timedelta(**kwargs)
 
     def round_td_by_seconds(
         self,
@@ -176,7 +145,7 @@ class DTManager:
 
         if starting_dt.tzinfo is None:
             # no time zone information
-            raise RuntimeError(
+            raise ValueError(
                 'The provided starting date does not contain time zone information.'
             )
         else:
@@ -244,7 +213,7 @@ class DTManager:
 
         if dt.tzinfo is None:
             # no time zone information
-            raise RuntimeError(
+            raise ValueError(
                 'The provided starting date does not contain time zone information.'
             )
         # transform to given target time zone
@@ -259,9 +228,7 @@ class DTManager:
         return dt.replace(microsecond=0)
 
 
-# data wrangling
-
-
+# TODO rework after change to database usage
 def get_date_cols_from_db(
     db: DataFrame,
 ) -> list[str]:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Sequence, Iterable
 from operator import attrgetter
 from random import Random
 from typing import TYPE_CHECKING, Never, TypeVar
@@ -63,7 +63,7 @@ class RandomPolicy(GeneralPolicy):
 class FIFOPolicy(GeneralPolicy):
     def apply(
         self,
-        items: list[T],
+        items: Sequence[T],
     ) -> T:
         return items[0]
 
@@ -71,13 +71,16 @@ class FIFOPolicy(GeneralPolicy):
 class LIFOPolicy(GeneralPolicy):
     def apply(
         self,
-        items: list[T],
+        items: Sequence[T],
     ) -> T:
         return items[-1]
 
 
 class AgentPolicy(GeneralPolicy):
-    def apply(self) -> Never:
+    def apply(
+        self,
+        _: Sequence[T],
+    ) -> Never:
         raise NotImplementedError('AgentPolicy implemented in different way.')
 
 
@@ -87,7 +90,7 @@ class AgentPolicy(GeneralPolicy):
 class SPTPolicy(SequencingPolicy):
     def apply(
         self,
-        items: list[Job],
+        items: Sequence[Job],
     ) -> Job:
         return min(items, key=attrgetter('current_proc_time'))
 
@@ -95,7 +98,7 @@ class SPTPolicy(SequencingPolicy):
 class LPTPolicy(SequencingPolicy):
     def apply(
         self,
-        items: list[Job],
+        items: Sequence[Job],
     ) -> Job:
         return max(items, key=attrgetter('current_proc_time'))
 
@@ -103,7 +106,7 @@ class LPTPolicy(SequencingPolicy):
 class SSTPolicy(SequencingPolicy):
     def apply(
         self,
-        items: list[Job],
+        items: Sequence[Job],
     ) -> Job:
         return min(items, key=attrgetter('current_setup_time'))
 
@@ -111,7 +114,7 @@ class SSTPolicy(SequencingPolicy):
 class LSTPolicy(SequencingPolicy):
     def apply(
         self,
-        items: list[Job],
+        items: Sequence[Job],
     ) -> Job:
         return max(items, key=attrgetter('current_setup_time'))
 
@@ -119,7 +122,7 @@ class LSTPolicy(SequencingPolicy):
 class PriorityPolicy(SequencingPolicy):
     def apply(
         self,
-        items: list[Job],
+        items: Sequence[Job],
     ) -> Job:
         return max(items, key=attrgetter('prio'))
 
@@ -130,15 +133,15 @@ class PriorityPolicy(SequencingPolicy):
 class UtilisationPolicy(AllocationPolicy):
     def apply(
         self,
-        items: Sequence[ProcessingStation],
+        items: Iterable[ProcessingStation],
     ) -> ProcessingStation:
-        return min(items, key=attrgetter('stat_monitor.WIP_load_time'))
+        return min(items, key=attrgetter('stat_monitor.utilisation'))
 
 
 class LoadTimePolicy(AllocationPolicy):
     def apply(
         self,
-        items: Sequence[ProcessingStation],
+        items: Iterable[ProcessingStation],
     ) -> ProcessingStation:
         return min(items, key=attrgetter('stat_monitor.WIP_load_time'))
 
@@ -146,6 +149,6 @@ class LoadTimePolicy(AllocationPolicy):
 class LoadJobsPolicy(AllocationPolicy):
     def apply(
         self,
-        items: Sequence[ProcessingStation],
+        items: Iterable[ProcessingStation],
     ) -> ProcessingStation:
         return min(items, key=attrgetter('stat_monitor.WIP_load_num_jobs'))

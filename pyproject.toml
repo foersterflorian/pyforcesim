@@ -75,8 +75,12 @@ select = ["E", "F", "I"]
 
 [tool.pytest.ini_options]
 addopts = [
+    "-vvl",
     "--import-mode=importlib",
-    "--cov=src/",
+    "--cov=src",
+    "--cov=tests",
+    "--no-cov-on-fail"
+    #"--cov-report=html",
 ]
 testpaths = [
     "tests",

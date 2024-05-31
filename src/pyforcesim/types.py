@@ -22,6 +22,7 @@ CustomID = NewType('CustomID', str)
 LoadID = NewType('LoadID', int)
 Infinite: TypeAlias = float
 
+
 # ** agents
 AgentTasks: TypeAlias = Literal['SEQ', 'ALLOC']
 

@@ -29,7 +29,14 @@ from websocket import create_connection
 
 from pyforcesim import loggers
 from pyforcesim.common import flatten
-from pyforcesim.constants import INF, POLICIES_ALLOC, POLICIES_SEQ
+from pyforcesim.constants import (
+    INF,
+    POLICIES_ALLOC,
+    POLICIES_SEQ,
+    SimStatesCommon,
+    SimStatesStorage,
+    SimSystemTypes,
+)
 from pyforcesim.dashboard.dashboard import (
     WS_URL,
     start_dashboard,
@@ -68,7 +75,7 @@ from pyforcesim.types import (
 
 # ** constants
 # definition of routing system level
-EXEC_SYSTEM_TYPE: Final[str] = 'ProductionArea'
+EXEC_SYSTEM_TYPE: Final[str] = SimSystemTypes.PRODUCTION_AREA
 # time after a store request is failed
 FAIL_DELAY: Final[float] = 20.0
 
@@ -107,7 +114,20 @@ class SimulationEnvironment(salabim.Environment):
         debug_dashboard: bool = False,
         **kwargs,
     ) -> None:
-        """ """
+        """Simulation Environment:
+        contains all simulation entities and manages the simulation run
+        every entity is registered in or associated with the environment
+
+        Parameters
+        ----------
+        time_unit : str, optional
+            time unit internally used to represent intervals, by default 'seconds'
+        starting_datetime : Datetime | None, optional
+            starting date and time (t=0 for environment), by default None
+        debug_dashboard : bool, optional
+            using a debug dashboard implemented in Dash for testing purposes,
+            by default False
+        """
         # time units
         self.time_unit = time_unit
         # if starting datetime not provided use current time
@@ -128,18 +148,13 @@ class SimulationEnvironment(salabim.Environment):
         )
 
         # [RESOURCE] infrastructure manager
-        # self._infstruct_mgr_registered: bool = False
         self._infstruct_mgr = InfrastructureManager(env=self)
         loggers.pyf_env.info(
             'Successfully registered Infrastructure Manager in Env >>%s<<', self.name()
         )
-
         # [LOAD] job dispatcher
-        # self._dispatcher_registered: bool = False
         self._dispatcher: Dispatcher = Dispatcher(env=self)
         loggers.pyf_env.info('Successfully registered Dispatcher in Env >>%s<<', self.name())
-
-        # ?? transient condition (working properly?)
         # transient condition
         # state allows direct waiting for flag changes
         self.is_transient_cond: bool = True
@@ -184,132 +199,6 @@ class SimulationEnvironment(salabim.Environment):
             raise ValueError('No Dipsatcher instance registered.')
         else:
             return self._dispatcher
-
-    # def register_infrastructure_manager(
-    #     self,
-    #     infstruct_mgr: InfrastructureManager,
-    # ) -> None:
-    # """
-    # Registers a dispatcher instance for the environment. Only one instance
-    # per environment is allowed.
-    # returns: EnvID for the dispatcher instance
-    # """
-    # if not self._infstruct_mgr_registered and isinstance(
-    #     infstruct_mgr, InfrastructureManager
-    # ):
-    #     self._infstruct_mgr = infstruct_mgr
-    #     self._infstruct_mgr_registered = True
-    #     loggers.pyf_env.info(
-    #         f'Successfully registered Infrastructure Manager in Env >>{self.name()}<<'
-    #     )
-    # elif not isinstance(infstruct_mgr, InfrastructureManager):
-    #     raise TypeError(
-    #         (
-    #             f'The object must be of type >>InfrastructureManager<< '
-    #             f'but is type >>{type(infstruct_mgr)}<<'
-    #         )
-    #     )
-    # else:
-    #     raise AttributeError(
-    #         (
-    #             'There is already a registered Infrastructure Manager instance '
-    #             'Only one instance per environement is allowed.'
-    #         )
-    #     )
-
-    # def register_dispatcher(
-    #     self,
-    #     dispatcher: Dispatcher,
-    # ) -> None:
-    #     """
-    #     Registers a dispatcher instance for the environment. Only one instance per
-    #     environment is allowed.
-    #     returns: EnvID for the dispatcher instance
-    #     """
-    #     if not self._dispatcher_registered and isinstance(dispatcher, Dispatcher):
-    #         self._dispatcher = dispatcher
-    #         self._dispatcher_registered = True
-    #         loggers.pyf_env.info(
-    #             f'Successfully registered Dispatcher in Env >>{self.name()}<<'
-    #         )
-    #     elif not isinstance(dispatcher, Dispatcher):
-    #         raise TypeError(
-    #             (
-    #                 f'The object must be of type >>Dispatcher<< but '
-    #                 f'is type >>{type(dispatcher)}<<'
-    #             )
-    #         )
-    #     else:
-    #         raise AttributeError(
-    #             (
-    #                 'There is already a registered Dispatcher instance '
-    #                 'Only one instance per environment is allowed.'
-    #             )
-    #         )
-
-    # [DISPATCHING SIGNALS]
-
-    # @property
-    # def signal_allocation(self) -> bool:
-    #     return self._signal_allocation
-
-    # @property
-    # def signal_sequencing(self) -> bool:
-    #     return self._signal_sequencing
-
-    # def set_dispatching_signal(
-    #     self,
-    #     sequencing: bool,
-    #     reset: bool = False,
-    # ) -> None:
-    #     # obtain current value
-    #     if sequencing:
-    #         signal = self._signal_sequencing
-    #         signal_type = 'SEQ'
-    #     else:
-    #         signal = self._signal_allocation
-    #         signal_type = 'ALLOC'
-
-    #     # check flag and determine value
-    #     if not reset:
-    #         # check if already set
-    #         if signal:
-    #             raise RuntimeError(
-    #                 (
-    #                     f'Dispatching type >>{signal_type}<<: Flag for '
-    #                     f'Env {self.name()} was already set.'
-    #                 )
-    #             )
-    #         else:
-    #             signal = True
-    #     # reset
-    #     else:
-    #         # check if already not set
-    #         if not signal:
-    #             raise RuntimeError(
-    #                 (
-    #                     f'Dispatching type >>{signal_type}<<: Flag '
-    #                     f'for Env {self.name()} was already reset.'
-    #                 )
-    #             )
-    #         else:
-    #             signal = False
-
-    #     # set flag
-    #     if sequencing:
-    #         self._signal_sequencing = signal
-    #     else:
-    #         self._signal_allocation = signal
-
-    #     loggers.pyf_env.debug(
-    #         (
-    #             f'Dispatching type >>{signal_type}<<: Flag for '
-    #             f'Env {self.name()} was set to >>{signal}<<.'
-    #         ),
-    #         signal_type,
-    #         self.name(),
-    #         signal,
-    #     )
 
     # ?? adding to Dispatcher class?
     def check_feasible_agent_alloc(
@@ -428,15 +317,15 @@ class InfrastructureManager:
     ) -> None:
         # COMMON
         self._env = env
-        # self._env.register_infrastructure_manager(infstruct_mgr=self)
         # subsystem types
-        self._system_types: set[str] = set(
-            [
-                'ProductionArea',
-                'StationGroup',
-                'Resource',
-            ]
-        )
+        # self._system_types: set[str] = set(
+        #     [
+        #         'ProductionArea',
+        #         'StationGroup',
+        #         'Resource',
+        #     ]
+        # )
+        self._system_types: frozenset[str] = frozenset((val.value for val in SimSystemTypes))
 
         # PRODUCTION AREAS database as simple Pandas DataFrame
         self._prod_area_prop: dict[str, type] = {
@@ -529,14 +418,14 @@ class InfrastructureManager:
         """
         # check all subsystem types with reference to supersystems if there are
         # any open references (NA values as secondary key)
-        relevant_subsystems = ('StationGroup', 'Resource')
+        relevant_subsystems = (SimSystemTypes.STATION_GROUP, SimSystemTypes.RESOURCE)
 
         for system_type in relevant_subsystems:
             match system_type:
-                case 'StationGroup':
+                case SimSystemTypes.STATION_GROUP:
                     target_db = self._station_group_db
                     secondary_key: str = 'prod_area_id'
-                case 'Resource':
+                case SimSystemTypes.RESOURCE:
                     target_db = self._res_db
                     secondary_key: str = 'station_group_id'
             # check if there are any NA values as secondary key
@@ -567,7 +456,7 @@ class InfrastructureManager:
     ### REWORK TO MULTIPLE SUBSYSTEMS
     def _obtain_system_id(
         self,
-        system_type: str,
+        system_type: SimSystemTypes,
     ) -> SystemID:
         """Simple counter function for managing system IDs
 
@@ -586,13 +475,13 @@ class InfrastructureManager:
 
         system_id: SystemID
         match system_type:
-            case 'ProductionArea':
+            case SimSystemTypes.PRODUCTION_AREA:
                 system_id = self._prod_area_counter
                 self._prod_area_counter += 1
-            case 'StationGroup':
+            case SimSystemTypes.STATION_GROUP:
                 system_id = self._station_group_counter
                 self._station_group_counter += 1
-            case 'Resource':
+            case SimSystemTypes.RESOURCE:
                 system_id = self._res_counter
                 self._res_counter += 1
 
@@ -600,7 +489,7 @@ class InfrastructureManager:
 
     def register_subsystem(
         self,
-        system_type: str,
+        system_type: SimSystemTypes,
         obj: System,
         custom_identifier: CustomID,
         name: str | None,
@@ -627,11 +516,11 @@ class InfrastructureManager:
             )
 
         match system_type:
-            case 'ProductionArea':
+            case SimSystemTypes.PRODUCTION_AREA:
                 custom_identifiers = self._prod_area_custom_identifiers
-            case 'StationGroup':
+            case SimSystemTypes.STATION_GROUP:
                 custom_identifiers = self._station_groups_custom_identifiers
-            case 'Resource':
+            case SimSystemTypes.RESOURCE:
                 custom_identifiers = self._res_custom_identifiers
             case _:
                 raise ValueError(f'Unknown subsystem type of {system_type}')
@@ -667,7 +556,7 @@ class InfrastructureManager:
 
         # new entry for corresponding database
         match system_type:
-            case 'ProductionArea':
+            case SimSystemTypes.PRODUCTION_AREA:
                 new_entry: DataFrame = pd.DataFrame(
                     {
                         'prod_area_id': [system_id],
@@ -680,7 +569,7 @@ class InfrastructureManager:
                 new_entry = new_entry.astype(self._prod_area_prop)
                 new_entry = new_entry.set_index('prod_area_id')
                 self._prod_area_db = pd.concat([self._prod_area_db, new_entry])
-            case 'StationGroup':
+            case SimSystemTypes.STATION_GROUP:
                 new_entry: DataFrame = pd.DataFrame(
                     {
                         'station_group_id': [system_id],
@@ -694,7 +583,7 @@ class InfrastructureManager:
                 new_entry = new_entry.astype(self._station_group_prop)
                 new_entry = new_entry.set_index('station_group_id')
                 self._station_group_db = pd.concat([self._station_group_db, new_entry])
-            case 'Resource':
+            case SimSystemTypes.RESOURCE:
                 new_entry: DataFrame = pd.DataFrame(
                     {
                         'res_id': [system_id],
@@ -736,10 +625,10 @@ class InfrastructureManager:
         system_type = subsystem.system_type
 
         match system_type:
-            case 'StationGroup':
+            case SimSystemTypes.STATION_GROUP:
                 target_db = self._station_group_db
                 target_property: str = 'prod_area_id'
-            case 'Resource':
+            case SimSystemTypes.RESOURCE:
                 target_db = self._res_db
                 target_property: str = 'station_group_id'
         # system IDs
@@ -753,9 +642,9 @@ class InfrastructureManager:
         system: System,
     ) -> None:
         match system.system_type:
-            case 'ProductionArea':
+            case SimSystemTypes.PRODUCTION_AREA:
                 lookup_db = self._prod_area_db
-            case 'StationGroup':
+            case SimSystemTypes.STATION_GROUP:
                 lookup_db = self._station_group_db
 
         lookup_db.at[system.system_id, 'containing_proc_stations'] = True
@@ -768,7 +657,7 @@ class InfrastructureManager:
 
     def lookup_subsystem_info(
         self,
-        system_type: str,
+        system_type: SimSystemTypes,
         lookup_val: SystemID | CustomID,
         lookup_property: str | None = None,
         target_property: str | None = None,
@@ -787,19 +676,19 @@ class InfrastructureManager:
 
         id_prop: str
         match system_type:
-            case 'ProductionArea':
+            case SimSystemTypes.PRODUCTION_AREA:
                 allowed_lookup_props = self._prod_area_lookup_props
                 lookup_db = self._prod_area_db
                 if target_property is None:
                     target_property = 'prod_area'
                 id_prop = 'prod_area_id'
-            case 'StationGroup':
+            case SimSystemTypes.STATION_GROUP:
                 allowed_lookup_props = self._station_group_lookup_props
                 lookup_db = self._station_group_db
                 if target_property is None:
                     target_property = 'station_group'
                 id_prop = 'station_group_id'
-            case 'Resource':
+            case SimSystemTypes.RESOURCE:
                 allowed_lookup_props = self._res_lookup_props
                 lookup_db = self._res_db
                 if target_property is None:
@@ -893,16 +782,16 @@ class InfrastructureManager:
 
     def lookup_custom_ID(
         self,
-        system_type: str,
+        system_type: SimSystemTypes,
         system_ID: SystemID,
     ) -> CustomID:
         id_prop: str
         match system_type:
-            case 'ProductionArea':
+            case SimSystemTypes.PRODUCTION_AREA:
                 id_prop = 'prod_area_id'
-            case 'StationGroup':
+            case SimSystemTypes.STATION_GROUP:
                 id_prop = 'station_group_id'
-            case 'Resource':
+            case SimSystemTypes.RESOURCE:
                 id_prop = 'res_id'
 
         custom_id = cast(
@@ -919,7 +808,7 @@ class InfrastructureManager:
 
     def lookup_system_ID(
         self,
-        system_type: str,
+        system_type: SimSystemTypes,
         custom_ID: CustomID,
     ) -> SystemID:
         system = cast(
@@ -1537,7 +1426,8 @@ class Dispatcher:
             target_station_group = cast(
                 StationGroup,
                 infstruct_mgr.lookup_subsystem_info(
-                    system_type='StationGroup', lookup_val=target_station_group_identifier
+                    system_type=SimSystemTypes.STATION_GROUP,
+                    lookup_val=target_station_group_identifier,
                 ),
             )
             # validity check: only target stations allowed which are
@@ -2324,7 +2214,7 @@ class System(dict):
     def __init__(
         self,
         env: SimulationEnvironment,
-        system_type: str,
+        system_type: SimSystemTypes,
         custom_identifier: CustomID,
         abstraction_level: int,
         name: str | None = None,
@@ -2735,7 +2625,7 @@ class ProductionArea(System):
         # initialise base class
         super().__init__(
             env=env,
-            system_type='ProductionArea',
+            system_type=SimSystemTypes.PRODUCTION_AREA,
             custom_identifier=custom_identifier,
             abstraction_level=2,
             name=name,
@@ -2783,7 +2673,7 @@ class StationGroup(System):
         # initialise base class
         super().__init__(
             env=env,
-            system_type='StationGroup',
+            system_type=SimSystemTypes.STATION_GROUP,
             custom_identifier=custom_identifier,
             abstraction_level=1,
             name=name,
@@ -2858,7 +2748,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # calls to Infrastructure Manager to register object
         super().__init__(
             env=env,
-            system_type='Resource',
+            system_type=SimSystemTypes.RESOURCE,
             custom_identifier=custom_identifier,
             abstraction_level=0,
             name=name,

@@ -21,6 +21,8 @@ file_system_backend/
 # PDM files
 *.pdm-python
 .pdm-build/
+# testing
+htmlcov/
 
 # VSCode
 .vscode/
