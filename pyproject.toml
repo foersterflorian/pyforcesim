@@ -58,7 +58,7 @@ general = [
 ]
 tests = [
     "pytest>=8.2.1",
-    "pytest-cov>=5.0.0",
+    "coverage>=7.5.3",
 ]
 
 [tool.ruff]
@@ -77,11 +77,23 @@ select = ["E", "F", "I"]
 addopts = [
     "-vvl",
     "--import-mode=importlib",
-    "--cov=src",
-    "--cov=tests",
-    "--no-cov-on-fail"
-    #"--cov-report=html",
 ]
 testpaths = [
     "tests",
 ]
+
+[tool.coverage.run]
+relative_files = true
+source = [
+    "pyforcesim",
+    "tests/",
+]
+
+[tool.coverage.report]
+exclude_also = [
+    "def __repr__",
+    "def __str__",
+]
+
+[tool.coverage.html]
+directory = "reports/coverage"

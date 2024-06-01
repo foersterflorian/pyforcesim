@@ -23,6 +23,7 @@ file_system_backend/
 .pdm-build/
 # testing
 htmlcov/
+reports/
 
 # VSCode
 .vscode/
