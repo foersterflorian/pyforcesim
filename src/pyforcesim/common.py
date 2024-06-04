@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
-from typing import Any, TypeAlias
+from collections.abc import Hashable, Iterator
+from enum import Enum, IntEnum, StrEnum
+from typing import Any, Type, overload, Literal
 
-FlattableObject: TypeAlias = (
-    list['FlattableObject | Any']
-    | tuple['FlattableObject | Any', ...]
-    | set['FlattableObject | Any']
-)
+from pyforcesim.types import FlattableObject
 
 
 def flatten(
@@ -32,3 +29,21 @@ def flatten(
             yield from flatten(x)
         else:
             yield x
+
+
+def enum_str_values_as_frzset(
+    enum: Type[StrEnum],
+) -> frozenset[str]:
+    """returns the values of an Enum class as a frozenset
+
+    Parameters
+    ----------
+    enum_cls : Any
+        Enum class
+
+    Returns
+    -------
+    frozenset
+        values of the Enum class
+    """
+    return frozenset(val.value for val in enum)

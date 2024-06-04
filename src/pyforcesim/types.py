@@ -16,6 +16,12 @@ class LoggingLevels(enum.IntEnum):
 # ** common
 PlotlyFigure: TypeAlias = Figure
 
+FlattableObject: TypeAlias = (
+    list['FlattableObject | Any']
+    | tuple['FlattableObject | Any', ...]
+    | set['FlattableObject | Any']
+)
+
 # ** simulation
 SystemID = NewType('SystemID', int)
 CustomID = NewType('CustomID', str)

@@ -28,7 +28,7 @@ from pandas import DataFrame
 from websocket import create_connection
 
 from pyforcesim import loggers
-from pyforcesim.common import flatten
+from pyforcesim.common import enum_str_values_as_frzset, flatten
 from pyforcesim.constants import (
     INF,
     POLICIES_ALLOC,
@@ -75,7 +75,7 @@ from pyforcesim.types import (
 
 # ** constants
 # definition of routing system level
-EXEC_SYSTEM_TYPE: Final[str] = SimSystemTypes.PRODUCTION_AREA
+EXEC_SYSTEM_TYPE: Final = SimSystemTypes.PRODUCTION_AREA
 # time after a store request is failed
 FAIL_DELAY: Final[float] = 20.0
 
@@ -325,7 +325,8 @@ class InfrastructureManager:
         #         'Resource',
         #     ]
         # )
-        self._system_types: frozenset[str] = frozenset((val.value for val in SimSystemTypes))
+        # self._system_types: frozenset[str] = frozenset((val.value for val in SimSystemTypes))
+        self._system_types = enum_str_values_as_frzset(SimSystemTypes)
 
         # PRODUCTION AREAS database as simple Pandas DataFrame
         self._prod_area_prop: dict[str, type] = {
@@ -1432,7 +1433,7 @@ class Dispatcher:
             )
             # validity check: only target stations allowed which are
             # part of the current execution system
-            if target_station_group.system_id not in exec_system:
+            if target_station_group.system_id not in exec_system.subsystems:
                 raise ValueError(f'{target_station_group} is not part of {exec_system}. \
                     Mismatch between execution system and associated station groups.')
         else:
@@ -2210,7 +2211,7 @@ class Dispatcher:
 # ** systems
 
 
-class System(dict):
+class System:
     def __init__(
         self,
         env: SimulationEnvironment,
@@ -2223,12 +2224,15 @@ class System(dict):
         # [BASIC INFO]
         # environment
         self._env = env
-        # subsystem information
         self._system_type = system_type
+        # subsystem information
+        self.subsystems: dict[SystemID, System] = {}
+        self.subsystems_ids: set[SystemID] = set()
+        self.subsystems_custom_ids: set[CustomID] = set()
         # supersystem information
-        self._supersystems: dict[SystemID, System] = {}
-        self._supersystems_ids: set[SystemID] = set()
-        self._supersystems_custom_ids: set[CustomID] = set()
+        self.supersystems: dict[SystemID, System] = {}
+        self.supersystems_ids: set[SystemID] = set()
+        self.supersystems_custom_ids: set[CustomID] = set()
         # number of lower levels, how many levels of subsystems are possible
         self._abstraction_level = abstraction_level
         # collection of all associated ProcessingStations
@@ -2328,36 +2332,6 @@ class System(dict):
         else:
             return self._alloc_agent
 
-    # def register_alloc_agent(
-    #     self,
-    #     alloc_agent: 'AllocationAgent',
-    # ) -> None:
-    #     if self._abstraction_level == 0:
-    #         raise RuntimeError(
-    #             'Can not register allocation agents for lowest hierarchy level objects.'
-    #         )
-
-    #     if not self._alloc_agent_registered and isinstance(alloc_agent, AllocationAgent):
-    #         self._alloc_agent = alloc_agent
-    #         self._alloc_agent_registered = True
-    #         loggers.pyf_env.info(
-    #             f'Successfully registered Allocation Agent in Area = {self.name}'
-    #         )
-    #     elif not isinstance(alloc_agent, AllocationAgent):
-    #         raise TypeError(
-    #             (
-    #                 f'The object must be of type >>AllocationAgent<<, '
-    #                 f'but is type >>{type(alloc_agent)}<<'
-    #             )
-    #         )
-    #     else:
-    #         raise AttributeError(
-    #             (
-    #                 'There is already a registered AllocationAgent instance '
-    #                 'Only one instance per system is allowed.'
-    #             )
-    #         )
-
     def check_alloc_agent(self) -> bool:
         """checks if an allocation agent is registered for the system"""
         if self._alloc_agent_registered:
@@ -2414,19 +2388,7 @@ class System(dict):
 
         self._containing_proc_stations = val
 
-    @property
-    def supersystems(self) -> dict[SystemID, System]:
-        return self._supersystems
-
-    @property
-    def supersystems_ids(self) -> set[SystemID]:
-        return self._supersystems_ids
-
-    @property
-    def supersystems_custom_ids(self) -> set[CustomID]:
-        return self._supersystems_custom_ids
-
-    def as_list(self) -> list[System]:
+    def subsystems_as_list(self) -> list[System]:
         """output the associated subsystems as list
 
         Returns
@@ -2434,9 +2396,9 @@ class System(dict):
         list[System]
             list of associated subsystems
         """
-        return list(self.values())
+        return list(self.subsystems.values())
 
-    def as_tuple(self) -> tuple[System, ...]:
+    def subsystems_as_tuple(self) -> tuple[System, ...]:
         """output the associated subsystems as tuple
 
         Returns
@@ -2444,9 +2406,9 @@ class System(dict):
         tuple[System, ...]
             tuple of associated subsystems
         """
-        return tuple(self.values())
+        return tuple(self.subsystems.values())
 
-    def as_set(self) -> set[System]:
+    def subsystems_as_set(self) -> set[System]:
         """output the associated subsystems as set
 
         Returns
@@ -2454,16 +2416,16 @@ class System(dict):
         set[System]
             set of associated subsystems
         """
-        return set(self.values())
+        return set(self.subsystems.values())
 
     def add_supersystem(
         self,
         supersystem: System,
     ) -> None:
-        if supersystem.system_id not in self._supersystems:
-            self._supersystems[supersystem.system_id] = supersystem
-            self._supersystems_ids.add(supersystem.system_id)
-            self._supersystems_custom_ids.add(supersystem.custom_identifier)
+        if supersystem.system_id not in self.supersystems:
+            self.supersystems[supersystem.system_id] = supersystem
+            self.supersystems_ids.add(supersystem.system_id)
+            self.supersystems_custom_ids.add(supersystem.custom_identifier)
 
     def add_subsystem(
         self,
@@ -2490,8 +2452,8 @@ class System(dict):
                 )
             )
 
-        if subsystem.system_id not in self:
-            self[subsystem.system_id] = subsystem
+        if subsystem.system_id not in self.subsystems:
+            self.subsystems[subsystem.system_id] = subsystem
         else:
             raise UserWarning(f'Subsystem {subsystem} was already in supersystem {self}!')
 
@@ -2509,24 +2471,6 @@ class System(dict):
             infstruct_mgr.set_contain_proc_station(system=self)
 
         loggers.infstrct.info('Successfully added %s to %s.', subsystem, self)
-
-    @overload
-    def lowest_level_subsystems(
-        self,
-        only_processing_stations: Literal[False],
-    ) -> tuple[InfrastructureObject, ...]: ...
-
-    @overload
-    def lowest_level_subsystems(
-        self,
-        only_processing_stations: Literal[True],
-    ) -> tuple[ProcessingStation, ...]: ...
-
-    @overload
-    def lowest_level_subsystems(
-        self,
-        only_processing_stations: bool,
-    ) -> tuple[InfrastructureObject, ...] | tuple[ProcessingStation, ...]: ...
 
     @overload
     def lowest_level_subsystems(
@@ -2573,16 +2517,15 @@ class System(dict):
             )
 
         remaining_abstraction_level = self._abstraction_level - 1
-        subsystems = self.as_set()
+        subsystems = self.subsystems_as_set()
 
         while remaining_abstraction_level > 0:
             temp: set[System] = set()
 
             for subsystem in subsystems:
-                children = subsystem.as_set()
+                children = subsystem.subsystems_as_set()
                 temp |= children
 
-            # subsystems = cast(set[System], set(flatten(temp)))
             subsystems = temp
             remaining_abstraction_level -= 1
 

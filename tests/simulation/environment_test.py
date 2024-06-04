@@ -1,3 +1,5 @@
+import datetime
+
 import pytest
 from pyforcesim.datetime import DTManager
 from pyforcesim.rl import agents
@@ -73,11 +75,11 @@ def build_sim_env(dt_manager, env):
     duration_transient = dt_manager.timedelta_from_val(val=2, time_unit='hours')
     _ = conditions.TransientCondition(env=env, duration_transient=duration_transient)
     # agent_decision_cond = conditions.TriggerAgentCondition(env=env)
-    sim_dur = dt_manager.timedelta_from_val(val=2.0, time_unit='days')
+    # sim_dur = dt_manager.timedelta_from_val(val=2.0, time_unit='days')
     # sim_end_date = dt_manager.dt_with_tz_UTC(2024, 3, 23, 12)
-    _ = conditions.JobGenDurationCondition(
-        env=env, target_obj=source, sim_run_duration=sim_dur
-    )
+    # _ = conditions.JobGenDurationCondition(
+    #    env=env, target_obj=source, sim_run_duration=sim_dur
+    # )
 
     return env, alloc_agent
 
@@ -94,3 +96,5 @@ def test_build_env(dt_manager, env):
     assert isinstance(env.dispatcher.alloc_policy, LoadTimePolicy)
     assert env.initialise() is None
     assert env.run() is None
+    assert env.finalise() is None
+    assert env.dispatcher.cycle_time == datetime.timedelta(seconds=57600)

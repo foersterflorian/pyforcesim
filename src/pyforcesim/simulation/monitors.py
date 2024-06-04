@@ -445,7 +445,7 @@ class StorageMonitor(Monitor):
             '[BUFFER: %s] Current time is %s with level %s and old level %s',
             self.target_object,
             current_time,
-            len(self.target_object),
+            self.target_object.fill_level,
             self._current_fill_level,
         )
         # if ((self._current_fill_level != len(self)) and (duration > 0.0)) or is_finalise:
