@@ -23,21 +23,21 @@ from pyforcesim.types import Infinite
 from pyforcesim.types import LoggingLevels as loglevel
 
 # ** logging
-LOGGING_LEVEL_BASE: Final[loglevel] = loglevel.DEBUG
+LOGGING_LEVEL_BASE: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_ENV: Final[loglevel] = loglevel.INFO
-LOGGING_LEVEL_DISPATCHER: Final[loglevel] = loglevel.ERROR
+LOGGING_LEVEL_DISPATCHER: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_INFSTRCT: Final[loglevel] = loglevel.INFO
-LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.ERROR
+LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_SINKS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_PRODSTATIONS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_JOBS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_BUFFERS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.ERROR
-LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.DEBUG
-LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.DEBUG
-LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.DEBUG
-LOGGING_LEVEL_DB: Final[loglevel] = loglevel.DEBUG
+LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.ERROR
+LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.ERROR
+LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.INFO
+LOGGING_LEVEL_DB: Final[loglevel] = loglevel.ERROR
 
 
 # ** common
@@ -105,6 +105,10 @@ class SimStatesCommon(enum.StrEnum):
     FAILED = enum.auto()
 
 
+class SimStatesAvailability(enum.StrEnum):
+    IDLE = enum.auto()
+
+
 class SimStatesStorage(enum.StrEnum):
     INIT = enum.auto()
     FINISH = enum.auto()
@@ -114,6 +118,18 @@ class SimStatesStorage(enum.StrEnum):
     FULL = enum.auto()
     EMPTY = enum.auto()
     INTERMEDIATE = enum.auto()
+
+
+UTIL_PROPERTIES: Final[tuple[SimStatesCommon, ...]] = (
+    SimStatesCommon.PROCESSING,
+    SimStatesCommon.SETUP,
+    SimStatesCommon.PAUSED,
+)
+HELPER_STATES: Final[tuple[SimStatesCommon, ...]] = (
+    SimStatesCommon.INIT,
+    SimStatesCommon.FINISH,
+    SimStatesCommon.TEMP,
+)
 
 
 class SimSystemTypes(enum.StrEnum):

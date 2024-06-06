@@ -49,6 +49,19 @@ class SimulationComponent(salabim.Component):
             ret = self.post_process()
 
 
+class CustomSalabimStore(salabim.Store):
+    """class to override the not defined setup method for Salabim store components
+    which allows to successfully pass keyword arguments to the constructor of the
+    store component and finally to the associated queue class
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def setup(self, **kwargs) -> None:
+        pass
+
+
 class StorageComponent(SimulationComponent):
     """thin wrapper for Salabim store components to add them as component
     to simulation entities"""
@@ -70,10 +83,11 @@ class StorageComponent(SimulationComponent):
             post_process=post_process,
         )
         storage_name = f'{name}_storage'
-        self._store = salabim.Store(
+        self._store = CustomSalabimStore(
             env=env,
             name=storage_name,
             capacity=capacity,  # type: ignore Salabim wrong type hint
+            monitor=False,
         )
         self._store_name = self._store.name()
 

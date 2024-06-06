@@ -158,7 +158,7 @@ class SimulationEnvironment(salabim.Environment):
         # transient condition
         # state allows direct waiting for flag changes
         self.is_transient_cond: bool = True
-        self.transient_cond_state = salabim.State('trans_cond', env=self)
+        self.transient_cond_state = salabim.State('trans_cond', env=self, monitor=False)
 
         # ** debug dashboard
         self.debug_dashboard = debug_dashboard
@@ -229,19 +229,15 @@ class SimulationEnvironment(salabim.Environment):
             return False
 
     def check_integrity(self) -> None:
+        """checks if all necessary components are registered and associated
+
+        Raises
+        ------
+        ValueError
+            if no sink is registered
+        AssociationError
+            if any subsystem is not associated to a supersystem
         """
-        method to evaluate if certain criteria for the simulation run are satisfied
-        checks for:
-        - registered dispatcher (min: 1, max: 1)
-        - registered sink (min: 1, max: INF)
-        """
-        # registration of an Infrastructure Manager
-        # if not self._infstruct_mgr_registered:
-        #     raise ValueError('No Infrastructure Manager instance registered.')
-        # registration of a Dispatcher
-        # if not self._dispatcher_registered:
-        #     raise ValueError('No Dispatcher instance registered.')
-        # registration of sinks
         if not self._infstruct_mgr.sink_registered:
             raise ValueError('No Sink instance registered.')
         # check if all subsystems are associated to supersystems
@@ -317,21 +313,12 @@ class InfrastructureManager:
     ) -> None:
         # COMMON
         self._env = env
-        # subsystem types
-        # self._system_types: set[str] = set(
-        #     [
-        #         'ProductionArea',
-        #         'StationGroup',
-        #         'Resource',
-        #     ]
-        # )
-        # self._system_types: frozenset[str] = frozenset((val.value for val in SimSystemTypes))
         self._system_types = enum_str_values_as_frzset(SimSystemTypes)
 
         # PRODUCTION AREAS database as simple Pandas DataFrame
         self._prod_area_prop: dict[str, type] = {
             'prod_area_id': int,
-            'custom_id': object,
+            'custom_id': str,
             'name': str,
             'prod_area': object,
             'containing_proc_stations': bool,
@@ -349,7 +336,7 @@ class InfrastructureManager:
         # [STATION GROUPS] database as simple Pandas DataFrame
         self._station_group_prop: dict[str, type | pd.Int64Dtype] = {
             'station_group_id': int,
-            'custom_id': object,
+            'custom_id': str,
             'name': str,
             'station_group': object,
             'prod_area_id': pd.Int64Dtype(),
@@ -370,7 +357,7 @@ class InfrastructureManager:
         # [RESOURCES] database as simple Pandas DataFrame
         self._infstruct_prop: dict[str, type | pd.Int64Dtype] = {
             'res_id': int,
-            'custom_id': object,
+            'custom_id': str,
             'resource': object,
             'name': str,
             'res_type': str,
@@ -494,7 +481,7 @@ class InfrastructureManager:
         obj: System,
         custom_identifier: CustomID,
         name: str | None,
-        state: str | None = None,
+        state: SimStatesCommon | SimStatesStorage | None = None,
     ) -> tuple[SystemID, str]:
         """
         registers an infrastructure object in the environment by assigning an unique id and 
@@ -843,7 +830,7 @@ class InfrastructureManager:
     def update_res_state(
         self,
         obj: InfrastructureObject,
-        state: str,
+        state: SimStatesCommon | SimStatesStorage,
         reset_temp: bool = False,
     ) -> None:
         """method to update the state of a resource object in the resource database"""
@@ -855,7 +842,7 @@ class InfrastructureManager:
             obj.stat_monitor.reset_temp_state()
             state = obj.stat_monitor.state_current
         else:
-            obj.stat_monitor.set_state(state=state)
+            obj.stat_monitor.set_state(target_state=state)
 
         self._res_db.at[obj.system_id, 'state'] = state
         loggers.infstrct.debug('Executed state setting of >>%s<< to >>%s<<', obj, state)
@@ -875,7 +862,7 @@ class InfrastructureManager:
             indicates if the temp state should be set or reset
         """
         for obj in res_objs:
-            self.update_res_state(obj=obj, state='TEMP', reset_temp=reset_temp)
+            self.update_res_state(obj=obj, state=SimStatesCommon.TEMP, reset_temp=reset_temp)
             # calculate KPIs if 'TEMP' state is set
             if not reset_temp:
                 obj.stat_monitor.calc_KPI()
@@ -903,8 +890,6 @@ class Dispatcher:
     def __init__(
         self,
         env: SimulationEnvironment,
-        # sequencing_rule: str = 'FIFO',
-        # allocation_rule: str = 'RANDOM',
     ) -> None:
         """
         Dispatcher class for given environment (only one dispatcher for each environment)
@@ -914,10 +899,11 @@ class Dispatcher:
 
         # job data base as simple Pandas DataFrame
         # column data types
+        self._jobs: dict[LoadID, Job] = {}
         self._job_prop: dict[str, type] = {
             'job_id': int,
             'custom_id': object,
-            'job': object,
+            #'job': object,
             'job_type': str,
             'prio': object,
             'total_proc_time': object,
@@ -958,18 +944,19 @@ class Dispatcher:
 
         # operation data base as simple Pandas DataFrame
         # column data types
+        self._ops: dict[LoadID, Operation] = {}
         self._op_prop: dict[str, type] = {
             'op_id': int,
             'job_id': int,
             'custom_id': object,
-            'op': object,
+            #'op': object,
             'prio': object,
             'execution_system': object,
             'execution_system_custom_id': object,
             'execution_system_name': str,
             'execution_system_type': str,
             'target_station_custom_id': object,
-            'target_station_name': str,
+            'target_station_name': object,
             'proc_time': object,
             'setup_time': object,
             'order_time': object,
@@ -1021,38 +1008,14 @@ class Dispatcher:
         self._op_id_counter = LoadID(0)
 
         ####################################
-        # priority rules
+        # sequencing rules
         self._sequencing_rules: frozenset[str] = frozenset(POLICIES_SEQ.keys())
-        # set current priority rule
-        # if sequencing_rule not in self._seq_rules:
-        #     raise ValueError(
-        #         (
-        #             f'Sequencing rule {sequencing_rule} unknown. '
-        #             f'Must be one of {self._seq_rules}'
-        #         )
-        #     )
-        # else:
-        #     self._curr_seq_rule = sequencing_rule
-
+        self._seq_rule: str | None = None
+        self.seq_policy: GeneralPolicy | SequencingPolicy | None = None
         # allocation rule
         self._allocation_rules: frozenset[str] = frozenset(POLICIES_ALLOC.keys())
-        # # set current allocation rule
-        # if allocation_rule not in self._allocation_rules:
-        #     raise ValueError(
-        #         (
-        #             f'Allocation rule {allocation_rule} unknown. '
-        #             f'Must be one of {self._allocation_rules}'
-        #         )
-        #     )
-        # else:
-        #     self._curr_alloc_rule = allocation_rule
-
-        self._seq_rule: str | None = None
         self._alloc_rule: str | None = None
-        self.seq_policy: GeneralPolicy | SequencingPolicy | None = None
-        # = POLICIES_SEQ[self._curr_seq_rule]()
         self.alloc_policy: GeneralPolicy | AllocationPolicy | None = None
-        # POLICIES_ALLOC[self._curr_alloc_rule]()
 
         # [STATS] cycle time
         self._cycle_time: Timedelta = Timedelta()
@@ -1064,6 +1027,14 @@ class Dispatcher:
     @property
     def env(self) -> SimulationEnvironment:
         return self._env
+
+    @property
+    def sequencing_rules(self) -> frozenset[str]:
+        return self._sequencing_rules
+
+    @property
+    def allocation_rules(self) -> frozenset[str]:
+        return self._allocation_rules
 
     @property
     def seq_rule(self) -> str | None:
@@ -1082,14 +1053,6 @@ class Dispatcher:
             self._seq_rule = rule
             self.seq_policy = POLICIES_SEQ[rule]
             loggers.dispatcher.info('Changed priority rule to %s', rule)
-
-    @property
-    def sequencing_rules(self) -> frozenset[str]:
-        return self._sequencing_rules
-
-    @property
-    def allocation_rules(self) -> frozenset[str]:
-        return self._allocation_rules
 
     @property
     def alloc_rule(self) -> str | None:
@@ -1137,8 +1100,8 @@ class Dispatcher:
         """
         Obtaining the current cycle time of all operations
         """
-        self._cycle_time: Timedelta = (
-            self._op_db['actual_ending_date'].max() - self._env.starting_datetime
+        self._cycle_time = cast(
+            Timedelta, self._op_db['actual_ending_date'].max() - self._env.starting_datetime
         )
 
     ### JOBS ###
@@ -1164,7 +1127,7 @@ class Dispatcher:
             {
                 'job_id': [job_id],
                 'custom_id': [custom_identifier],
-                'job': [job],
+                #'job': [job],
                 'job_type': [job.job_type],
                 'prio': [job.prio],
                 'total_proc_time': [job.total_proc_time],
@@ -1183,13 +1146,14 @@ class Dispatcher:
         new_entry = new_entry.astype(self._job_prop)
         new_entry = new_entry.set_index('job_id')
         self._job_db = pd.concat([self._job_db, new_entry])
+        self._jobs[job_id] = job
 
-        loggers.dispatcher.info('Successfully registered job with JobID >>%s<<', job_id)
+        loggers.dispatcher.debug('Successfully registered job with JobID >>%s<<', job_id)
 
         # write job information directly
         job.time_creation = creation_date
 
-        # return current env, job ID, job name
+        # return current env, job ID
         return self._env, job_id
 
     def update_job_db(
@@ -1276,12 +1240,19 @@ class Dispatcher:
             )
 
         # update databases
-        self.update_job_state(job=job, state='FINISH')
+        self.update_job_state(job=job, state=SimStatesCommon.FINISH)
         # self.update_job_db(job=job, property='exit_date', val=job.time_exit)
         self.update_job_db(job=job, property='actual_ending_date', val=job.time_actual_ending)
         self.update_job_db(job=job, property='lead_time', val=job.lead_time)
         # [MONITOR] finalise stats
         job.stat_monitor.finalise_stats()
+        # delete job and operations from dispatcher
+        # keep operations alive as long as the associated job is alive
+        for op in job.operations:
+            del self._ops[op.op_id]
+            del op
+        del self._jobs[job.job_id]
+        del job
 
     def update_job_process_info(
         self,
@@ -1314,11 +1285,11 @@ class Dispatcher:
     def update_job_state(
         self,
         job: Job,
-        state: str,
+        state: SimStatesCommon,
     ) -> None:
         """method to update the state of a job in the job database"""
         # update state tracking of the job instance
-        job.stat_monitor.set_state(state=state)
+        job.stat_monitor.set_state(target_state=state)
         # update job database
         self.update_job_db(job=job, property='state', val=state)
         # only update operation state if it is not finished
@@ -1445,7 +1416,7 @@ class Dispatcher:
                 'op_id': [op_id],
                 'job_id': [op.job_id],
                 'custom_id': [custom_identifier],
-                'op': [op],
+                #'op': [op],
                 'prio': [op.prio],
                 'execution_system': [exec_system],
                 'execution_system_custom_id': [exec_system.custom_identifier],
@@ -1471,8 +1442,9 @@ class Dispatcher:
         new_entry: DataFrame = new_entry.astype(self._op_prop)
         new_entry = new_entry.set_index('op_id')
         self._op_db = pd.concat([self._op_db, new_entry])
+        self._ops[op_id] = op
 
-        loggers.dispatcher.info('Successfully registered operation with OpID >>%s<<', op_id)
+        loggers.dispatcher.debug('Successfully registered operation with OpID >>%s<<', op_id)
 
         # write operation information directly
         op.target_exec_system = exec_system
@@ -1505,11 +1477,11 @@ class Dispatcher:
     def update_operation_state(
         self,
         op: Operation,
-        state: str,
+        state: SimStatesCommon,
     ) -> None:
         """method to update the state of a operation in the operation database"""
         # update state tracking of the operation instance
-        op.stat_monitor.set_state(state=state)
+        op.stat_monitor.set_state(target_state=state)
         # update operation database
         self.update_operation_db(op=op, property='state', val=state)
 
@@ -1598,7 +1570,7 @@ class Dispatcher:
             op.time_actual_ending,
             op.lead_time,
         )
-        self.update_operation_state(op=op, state='FINISH')
+        self.update_operation_state(op=op, state=SimStatesCommon.FINISH)
         # self.update_operation_db(op=op, property='exit_date', val=op.time_exit)
         self.update_operation_db(
             op=op, property='actual_ending_date', val=op.time_actual_ending
@@ -1971,7 +1943,7 @@ class Dispatcher:
         ## trigger agent decision --> map decision to feasible jobs
         ## [*] use implemented priority rules as intermediate step
 
-        loggers.dispatcher.info('[DISPATCHER] REQUEST TO DISPATCHER FOR SEQUENCING')
+        loggers.dispatcher.debug('[DISPATCHER] REQUEST TO DISPATCHER FOR SEQUENCING')
 
         # get logic queue of requesting object
         # contains all feasible jobs for this resource
@@ -2106,17 +2078,17 @@ class Dispatcher:
             'target_station_custom_id': True,
             'execution_system_custom_id': True,
             'prio': True,
-            'planned_starting_date': True,
-            'actual_starting_date': True,
-            'planned_ending_date': True,
-            'actual_ending_date': True,
+            'planned_starting_date': '|%d.%m.%Y %H:%M:%S',
+            'actual_starting_date': '|%d.%m.%Y %H:%M:%S',
+            'planned_ending_date': '|%d.%m.%Y %H:%M:%S',
+            'actual_ending_date': '|%d.%m.%Y %H:%M:%S',
             'proc_time': True,
             'setup_time': True,
             'order_time': True,
         }
         # TODO: disable hover infos if some entries are None
 
-        # hover_template: str = "proc_time: %{proc_time|%d:%H:%M:%S}"
+        # hover_template: str = 'proc_time: %{customdata[-3]|%d:%H:%M:%S}'
         # TODO: use dedicated method to transform dates of job and op databases
         if dates_to_local_tz:
             self._job_db_date_adjusted = adjust_db_dates_local_tz(db=self._job_db)
@@ -2126,7 +2098,7 @@ class Dispatcher:
             target_db = self._op_db
 
         # filter only finished operations (for debug display)
-        target_db = target_db.loc[(target_db['state'] == 'FINISH')]
+        target_db = target_db.loc[(target_db['state'] == SimStatesCommon.FINISH)]
 
         df = target_db.filter(items=filter_items)
         # calculate delta time between start and end
@@ -2219,7 +2191,7 @@ class System:
         custom_identifier: CustomID,
         abstraction_level: int,
         name: str | None = None,
-        state: str | None = None,
+        state: SimStatesCommon | SimStatesStorage | None = None,
     ) -> None:
         # [BASIC INFO]
         # environment
@@ -2561,7 +2533,7 @@ class ProductionArea(System):
         env: SimulationEnvironment,
         custom_identifier: CustomID,
         name: str | None = None,
-        state: str | None = None,
+        state: SimStatesCommon | SimStatesStorage | None = None,
     ) -> None:
         """Group of processing stations which are considered parallel machines"""
 
@@ -2609,7 +2581,7 @@ class StationGroup(System):
         env: SimulationEnvironment,
         custom_identifier: CustomID,
         name: str | None = None,
-        state: str | None = None,
+        state: SimStatesCommon | SimStatesStorage | None = None,
     ) -> None:
         """Group of processing stations which are considered parallel machines"""
 
@@ -2664,18 +2636,8 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
-        state: str = 'INIT',
-        possible_states: Iterable[str] = (
-            'INIT',
-            'FINISH',
-            'TEMP',
-            'WAITING',
-            'PROCESSING',
-            'SETUP',
-            'BLOCKED',
-            'FAILED',
-            'PAUSED',
-        ),
+        current_state: SimStatesCommon | None = SimStatesCommon.INIT,
+        states: type[SimStatesCommon] | None = SimStatesCommon,
     ) -> None:
         """
         env: simulation environment in which the infrastructure object is embedded
@@ -2695,17 +2657,18 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             custom_identifier=custom_identifier,
             abstraction_level=0,
             name=name,
-            state=state,
+            state=current_state,
         )
         self.capacity = capacity
         self.res_type: str
         # [STATS] Monitoring
-        self._stat_monitor = monitors.InfStructMonitor(
-            env=env,
-            obj=self,
-            init_state=state,
-            possible_states=possible_states,
-        )
+        if current_state is not None and states is not None:
+            self._stat_monitor = monitors.InfStructMonitor(
+                env=env,
+                obj=self,
+                current_state=current_state,
+                states=states,
+            )
         # [SALABIM COMPONENT]
         self._sim_control = SimulationComponent(
             env=env,
@@ -2718,7 +2681,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # each resource uses one associated logic queue, logic queues are not
         # physically available
         queue_name: str = f'queue_{self.name}'
-        self.logic_queue = salabim.Queue(name=queue_name, env=self.env)
+        self.logic_queue = salabim.Queue(name=queue_name, env=self.env, monitor=False)
         # currently available jobs on that resource
         self.contents: dict[LoadID, Job] = {}
         # [STATS] additional information
@@ -2886,9 +2849,9 @@ class InfrastructureObject(System, metaclass=ABCMeta):
 
             if buffers:
                 # [STATE:InfrStructObj] BLOCKED
-                infstruct_mgr.update_res_state(obj=self, state='BLOCKED')
+                infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.BLOCKED)
                 # [STATE:Job] BLOCKED
-                dispatcher.update_job_state(job=job, state='BLOCKED')
+                dispatcher.update_job_state(job=job, state=SimStatesCommon.BLOCKED)
                 yield self.sim_control.to_store(
                     store=target_station.stores,
                     item=job,
@@ -2943,9 +2906,9 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         loggers.prod_stations.debug('[%s] Put Job %s in queue %s', self, job, logic_queue)
 
         # [STATE:InfrStructObj] WAITING
-        infstruct_mgr.update_res_state(obj=self, state='WAITING')
+        infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
         # [STATE:Job] successfully placed --> WAITING
-        dispatcher.update_job_state(job=job, state='WAITING')
+        dispatcher.update_job_state(job=job, state=SimStatesCommon.IDLE)
         # [STATS:InfrStructObj] count number of outputs
         self.num_outputs += 1
 
@@ -3015,9 +2978,9 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # SETUP
         if self.setup_time is not None:
             # [STATE:InfrStructObj]
-            infstruct_mgr.update_res_state(obj=self, state='SETUP')
+            infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.SETUP)
             # [STATE:Job]
-            dispatcher.update_job_state(job=job, state='SETUP')
+            dispatcher.update_job_state(job=job, state=SimStatesCommon.SETUP)
             loggers.prod_stations.debug(
                 '[START SETUP] job ID %s at %s on machine ID %s with setup time %s',
                 job.job_id,
@@ -3029,9 +2992,9 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             yield self.sim_control.hold(sim_time)
 
         # [STATE:InfrStructObj] PROCESSING
-        infstruct_mgr.update_res_state(obj=self, state='PROCESSING')
+        infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
         # [STATE:Job] PROCESSING
-        dispatcher.update_job_state(job=job, state='PROCESSING')
+        dispatcher.update_job_state(job=job, state=SimStatesCommon.PROCESSING)
 
         return job
 
@@ -3060,7 +3023,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         """
         infstruct_mgr = self.env.infstruct_mgr
         # set finish state for each infrastructure object no matter of which child class
-        infstruct_mgr.update_res_state(obj=self, state='FINISH')
+        infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.FINISH)
         # finalise stat gathering
         self._stat_monitor.finalise_stats()
 
@@ -3073,17 +3036,8 @@ class StorageLike(InfrastructureObject):
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: int | Infinite = INF,
-        state: str = 'INIT',
-        possible_states: Iterable[str] = (
-            'INIT',
-            'FINISH',
-            'TEMP',
-            'FULL',
-            'EMPTY',
-            'INTERMEDIATE',
-            'FAILED',
-            'PAUSED',
-        ),
+        current_state: SimStatesStorage = SimStatesStorage.INIT,
+        states: type[SimStatesStorage] = SimStatesStorage,
         fill_level_init: int = 0,
     ) -> None:
         super().__init__(
@@ -3092,16 +3046,16 @@ class StorageLike(InfrastructureObject):
             name=name,
             setup_time=setup_time,
             capacity=capacity,
-            state=state,
-            possible_states=possible_states,
+            current_state=None,
+            states=None,
         )
 
         self.fill_level_init = fill_level_init
         self._stat_monitor = monitors.StorageMonitor(
             env=env,
             obj=self,
-            init_state=state,
-            possible_states=possible_states,
+            current_state=current_state,
+            states=states,
         )
 
         self._sim_control = StorageComponent(
@@ -3134,18 +3088,8 @@ class ProcessingStation(InfrastructureObject):
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
-        state: str = 'INIT',
-        possible_states: Iterable[str] = (
-            'INIT',
-            'FINISH',
-            'TEMP',
-            'WAITING',
-            'PROCESSING',
-            'SETUP',
-            'BLOCKED',
-            'FAILED',
-            'PAUSED',
-        ),
+        current_state: SimStatesCommon = SimStatesCommon.INIT,
+        states: type[SimStatesCommon] = SimStatesCommon,
         buffers: Iterable[Buffer] | None = None,
     ) -> None:
         """
@@ -3160,8 +3104,8 @@ class ProcessingStation(InfrastructureObject):
             name=name,
             setup_time=setup_time,
             capacity=capacity,
-            state=state,
-            possible_states=possible_states,
+            current_state=current_state,
+            states=states,
         )
 
         # add physical buffers, more than one allowed
@@ -3275,7 +3219,7 @@ class ProcessingStation(InfrastructureObject):
 
     def pre_process(self) -> None:
         infstruct_mgr = self.env.infstruct_mgr
-        infstruct_mgr.update_res_state(obj=self, state='WAITING')
+        infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
 
     def sim_logic(self) -> Generator[Any, None, None]:
         dispatcher = self.env.dispatcher
@@ -3332,18 +3276,8 @@ class Machine(ProcessingStation):
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
-        state: str = 'INIT',
-        possible_states: Iterable[str] = (
-            'INIT',
-            'FINISH',
-            'TEMP',
-            'WAITING',
-            'PROCESSING',
-            'SETUP',
-            'BLOCKED',
-            'FAILED',
-            'PAUSED',
-        ),
+        current_state: SimStatesCommon = SimStatesCommon.INIT,
+        states: type[SimStatesCommon] = SimStatesCommon,
         buffers: Iterable[Buffer] | None = None,
     ) -> None:
         """
@@ -3359,8 +3293,8 @@ class Machine(ProcessingStation):
             name=name,
             setup_time=setup_time,
             capacity=capacity,
-            state=state,
-            possible_states=possible_states,
+            current_state=current_state,
+            states=states,
             buffers=buffers,
         )
 
@@ -3373,17 +3307,8 @@ class Buffer(StorageLike):
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: int | Infinite = INF,
-        state: str = 'INIT',
-        possible_states: Iterable[str] = (
-            'INIT',
-            'FINISH',
-            'TEMP',
-            'FULL',
-            'EMPTY',
-            'INTERMEDIATE',
-            'FAILED',
-            'PAUSED',
-        ),
+        current_state: SimStatesStorage = SimStatesStorage.INIT,
+        states: type[SimStatesStorage] = SimStatesStorage,
         fill_level_init: int = 0,
     ) -> None:
         """
@@ -3396,8 +3321,8 @@ class Buffer(StorageLike):
             name=name,
             setup_time=setup_time,
             capacity=capacity,
-            state=state,
-            possible_states=possible_states,
+            current_state=current_state,
+            states=states,
             fill_level_init=fill_level_init,
         )
         # material flow relationships
@@ -3474,7 +3399,7 @@ class Buffer(StorageLike):
 
     def pre_process(self) -> None:
         infstruct_mgr = self.env.infstruct_mgr
-        infstruct_mgr.update_res_state(obj=self, state='EMPTY')
+        infstruct_mgr.update_res_state(obj=self, state=SimStatesStorage.EMPTY)
 
     def sim_logic(self) -> Generator[None, None, None]:
         infstruct_mgr = self.env.infstruct_mgr
@@ -3483,7 +3408,7 @@ class Buffer(StorageLike):
             # full
             if self.sim_control.store.available_quantity() == 0:
                 # [STATE] FULL
-                infstruct_mgr.update_res_state(obj=self, state='FULL')
+                infstruct_mgr.update_res_state(obj=self, state=SimStatesStorage.FULL)
                 loggers.prod_stations.debug(
                     '[BUFFER: %s] Set to >>FULL<< at %s',
                     self,
@@ -3495,7 +3420,7 @@ class Buffer(StorageLike):
                 == self.sim_control.store.capacity()
             ):
                 # [STATE] EMPTY
-                infstruct_mgr.update_res_state(obj=self, state='EMPTY')
+                infstruct_mgr.update_res_state(obj=self, state=SimStatesStorage.EMPTY)
                 loggers.prod_stations.debug(
                     '[BUFFER: %s] Set to >>EMPTY<< at %s',
                     self,
@@ -3503,7 +3428,7 @@ class Buffer(StorageLike):
                 )
             else:
                 # [STATE] INTERMEDIATE
-                infstruct_mgr.update_res_state(obj=self, state='INTERMEDIATE')
+                infstruct_mgr.update_res_state(obj=self, state=SimStatesStorage.INTERMEDIATE)
                 loggers.prod_stations.debug(
                     '[BUFFER: %s] Neither >>EMPTY<< nor >>FULL<< at %s',
                     self,
@@ -3533,18 +3458,8 @@ class Source(InfrastructureObject):
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
-        state: str = 'INIT',
-        possible_states: Iterable[str] = (
-            'INIT',
-            'FINISH',
-            'TEMP',
-            'WAITING',
-            'PROCESSING',
-            'SETUP',
-            'BLOCKED',
-            'FAILED',
-            'PAUSED',
-        ),
+        current_state: SimStatesCommon = SimStatesCommon.INIT,
+        states: type[SimStatesCommon] = SimStatesCommon,
         proc_time: Timedelta = Timedelta(hours=2),
         job_generator: RandomJobGenerator | None = None,
         job_sequence: Iterator[tuple[SystemID, SystemID, OrderTime]] | None = None,
@@ -3562,8 +3477,8 @@ class Source(InfrastructureObject):
             name=name,
             setup_time=setup_time,
             capacity=capacity,
-            state=state,
-            possible_states=possible_states,
+            current_state=current_state,
+            states=states,
         )
 
         # generation method
@@ -3593,7 +3508,7 @@ class Source(InfrastructureObject):
 
         # triggers and flags
         self.stop_job_gen_cond_reg: bool = False
-        self.stop_job_gen_state = salabim.State('stop_job_gen', env=self.env)
+        self.stop_job_gen_state = salabim.State('stop_job_gen', env=self.env, monitor=False)
 
     def _obtain_proc_time(self) -> float:
         """
@@ -3604,7 +3519,7 @@ class Source(InfrastructureObject):
 
     def pre_process(self) -> None:
         infstruct_mgr = self.env.infstruct_mgr
-        infstruct_mgr.update_res_state(obj=self, state='PROCESSING')
+        infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
 
         # check if ConditionSetter is registered if needed
         if self.use_stop_time and not self.stop_job_gen_cond_reg:
@@ -3750,7 +3665,7 @@ class Source(InfrastructureObject):
             )
             # [STATE:Source] put in 'WAITING' by 'put_job' method but still processing
             # only 'WAITING' if all jobs are generated
-            infstruct_mgr.update_res_state(obj=self, state='PROCESSING')
+            infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
 
             # hold for defined generation time (constant or statistically distributed)
             # if hold time elapsed start new generation
@@ -3764,7 +3679,7 @@ class Source(InfrastructureObject):
             count += 1
 
         # [STATE:Source] WAITING
-        infstruct_mgr.update_res_state(obj=self, state='WAITING')
+        infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
 
     def post_process(self) -> None:
         pass
@@ -3778,18 +3693,8 @@ class Sink(InfrastructureObject):
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
-        state: str = 'INIT',
-        possible_states: Iterable[str] = (
-            'INIT',
-            'FINISH',
-            'TEMP',
-            'WAITING',
-            'PROCESSING',
-            'SETUP',
-            'BLOCKED',
-            'FAILED',
-            'PAUSED',
-        ),
+        current_state: SimStatesCommon = SimStatesCommon.INIT,
+        states: type[SimStatesCommon] = SimStatesCommon,
     ) -> None:
         """
         num_gen_jobs: total number of jobs to be generated
@@ -3801,14 +3706,14 @@ class Sink(InfrastructureObject):
             name=name,
             setup_time=setup_time,
             capacity=capacity,
-            state=state,
-            possible_states=possible_states,
+            current_state=current_state,
+            states=states,
         )
 
     def pre_process(self) -> None:
         # currently sinks are 'PROCESSING' the whole time
         infstruct_mgr = self.env.infstruct_mgr
-        infstruct_mgr.update_res_state(obj=self, state='PROCESSING')
+        infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
 
     def sim_logic(self) -> Generator[None, None, None]:
         dispatcher = self.env.dispatcher
@@ -3844,17 +3749,8 @@ class Operation:
         planned_starting_date: Datetime | None = None,
         planned_ending_date: Datetime | None = None,
         custom_identifier: CustomID | None = None,
-        state: str = 'INIT',
-        possible_states: Iterable[str] = (
-            'INIT',
-            'FINISH',
-            'WAITING',
-            'SETUP',
-            'PROCESSING',
-            'BLOCKED',
-            'FAILED',
-            'PAUSED',
-        ),
+        current_state: SimStatesCommon = SimStatesCommon.INIT,
+        states: type[SimStatesCommon] = SimStatesCommon,
     ) -> None:
         """
         ADD DESCRIPTION
@@ -3876,8 +3772,8 @@ class Operation:
         self._stat_monitor = monitors.Monitor(
             env=self._dispatcher.env,
             obj=self,
-            init_state=state,
-            possible_states=possible_states,
+            current_state=current_state,
+            states=states,
         )
 
         # process information
@@ -3920,7 +3816,7 @@ class Operation:
         # assignment of machine instance by dispatcher
         # from dispatcher: op_id, name, target_machine
         # register operation instance
-        current_state = self._stat_monitor.get_current_state()
+        current_state = cast(SimStatesCommon, self._stat_monitor.get_current_state())
 
         # registration: only return OpID, other properties directly
         # written by dispatcher method
@@ -4016,17 +3912,8 @@ class Job(salabim.Component):
         planned_starting_date: Datetime | Sequence[Datetime | None] | None = None,
         planned_ending_date: Datetime | Sequence[Datetime | None] | None = None,
         custom_identifier: CustomID | None = None,
-        state: str = 'INIT',
-        possible_states: Iterable[str] = (
-            'INIT',
-            'FINISH',
-            'WAITING',
-            'SETUP',
-            'PROCESSING',
-            'BLOCKED',
-            'FAILED',
-            'PAUSED',
-        ),
+        current_state: SimStatesCommon = SimStatesCommon.INIT,
+        states: type[SimStatesCommon] = SimStatesCommon,
         additional_info: dict[str, CustomID] | None = None,
         **kwargs,
     ) -> None:
@@ -4177,12 +4064,12 @@ class Job(salabim.Component):
         self._stat_monitor = monitors.Monitor(
             env=self._dispatcher.env,
             obj=self,
-            init_state=state,
-            possible_states=possible_states,
+            current_state=current_state,
+            states=states,
         )
 
         # register job instance
-        current_state = self._stat_monitor.get_current_state()
+        current_state = cast(SimStatesCommon, self._stat_monitor.get_current_state())
 
         env, self._job_id = self._dispatcher.register_job(
             job=self, custom_identifier=self.custom_identifier, state=current_state

@@ -2,6 +2,8 @@
 
 import logging
 import sys
+import time
+from typing import Final
 
 from pyforcesim.constants import (
     LOGGING_LEVEL_AGENTS,
@@ -21,8 +23,15 @@ from pyforcesim.constants import (
     LOGGING_LEVEL_SOURCES,
 )
 
-# IPython compatibility
-logging.basicConfig(stream=sys.stdout)
+# IPython compatibility with stdout
+logging.Formatter.converter = time.gmtime
+LOG_FMT: Final[str] = ' %(asctime)s | pyfsim - %(module)s:%(levelname)s | %(message)s'
+LOG_DATE_FMT: Final[str] = '%Y-%m-%d %H:%M:%S +0000'
+logging.basicConfig(
+    stream=sys.stdout,
+    format=LOG_FMT,
+    datefmt=LOG_DATE_FMT,
+)
 
 base = logging.getLogger('pyforcesim.base')
 base.setLevel(LOGGING_LEVEL_BASE)

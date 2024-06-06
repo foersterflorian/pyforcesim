@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
 from typing import TYPE_CHECKING, cast
@@ -10,7 +9,16 @@ import plotly.express as px
 from pandas import DataFrame, Series
 
 from pyforcesim import loggers
-from pyforcesim.constants import INF, TimeUnitsTimedelta
+from pyforcesim.common import enum_str_values_as_frzset
+from pyforcesim.constants import (
+    INF,
+    SimStatesAvailability,
+    SimStatesCommon,
+    SimStatesStorage,
+    TimeUnitsTimedelta,
+    UTIL_PROPERTIES,
+    HELPER_STATES,
+)
 from pyforcesim.datetime import DTManager
 from pyforcesim.types import PlotlyFigure
 
@@ -31,18 +39,8 @@ class Monitor:
         self,
         env: SimulationEnvironment,
         obj: InfrastructureObject | Job | Operation,
-        init_state: str = 'INIT',
-        possible_states: Iterable[str] = (
-            'INIT',
-            'FINISH',
-            'TEMP',
-            'WAITING',
-            'PROCESSING',
-            'SETUP',
-            'BLOCKED',
-            'FAILED',
-            'PAUSED',
-        ),
+        current_state: SimStatesCommon | SimStatesStorage = SimStatesCommon.INIT,
+        states: type[SimStatesCommon | SimStatesStorage] = SimStatesCommon,
     ) -> None:
         """
         Class to monitor associated objects (load and resource)
@@ -54,37 +52,20 @@ class Monitor:
         self._env = env
         self._target_object = obj
 
-        # [STATE] state parameters
-        # always add states 'INIT', 'FINISH', 'TEMP' for control flow
-        states_possible = set(possible_states)
-        if 'INIT' not in states_possible:
-            states_possible.add('INIT')
-        if 'FINISH' not in states_possible:
-            states_possible.add('FINISH')
-        if 'TEMP' not in states_possible:
-            states_possible.add('TEMP')
-        # all possible/allowed states
-        self.states_possible: frozenset[str] = frozenset(states_possible)
+        if current_state == SimStatesCommon.TEMP or current_state == SimStatesStorage.TEMP:
+            raise ValueError('TEMP state is not allowed as initial state.')
 
+        # [STATE] state parameters
+        self.states_possible = enum_str_values_as_frzset(states)
         # check integrity of the given state
-        if init_state in self.states_possible:
-            self.state_current: str = init_state
-        else:
-            raise ValueError(
-                (
-                    f'The state {init_state} is not allowed. '
-                    f'Must be one of {self.states_possible}'
-                )
-            )
+        self.state_current = current_state
 
         # boolean indicator if a state is set
         self.state_status: dict[str, bool] = {}
         # time counter for each state
-        # self.state_times: dict[str, float] = {}
         self.state_times: dict[str, Timedelta] = {}
         # starting time variable indicating when the last state assignment took place
-        # self.state_starting_time: float = self._env.t()
-        self.state_starting_time: Datetime = self._env.t_as_dt()
+        self.state_starting_time = self._env.t_as_dt()
 
         for state in self.states_possible:
             # init state time dictionary
@@ -100,11 +81,7 @@ class Monitor:
         self.state_durations: DataFrame | None = None
 
         # availability indicator
-        self._availability_states: set[str] = set(
-            [
-                'WAITING',
-            ]
-        )
+        self._availability_states = enum_str_values_as_frzset(SimStatesAvailability)
         if self.state_current in self._availability_states:
             self.is_available: bool = True
         else:
@@ -114,7 +91,7 @@ class Monitor:
         # indicator if state was 'TEMP'
         self._is_temp: bool = False
         # state before 'TEMP' was set
-        self._state_before_temp: str = self.state_current
+        self._state_before_temp = self.state_current
         # time components
         self.time_active: float = 0.0
         # self.time_active: Timedelta = Timedelta()
@@ -136,23 +113,21 @@ class Monitor:
     def target_object(self) -> InfrastructureObject | Job | Operation:
         return self._target_object
 
-    def get_current_state(self) -> str:
+    def get_current_state(self) -> SimStatesCommon | SimStatesStorage:
         """get the current state of the associated resource"""
         return self.state_current
 
     def set_state(
         self,
-        state: str,
+        target_state: SimStatesCommon | SimStatesStorage,
     ) -> None:
         """
         function to set the object in the given state
         state: name of the state in which the object should be placed, must be part \
             of the object's possible states
         """
-        # eliminate lower-case letters
-        target_state = state.upper()
 
-        # check if state is allowed
+        # validity check
         if target_state not in self.states_possible:
             raise ValueError(
                 (
@@ -162,7 +137,7 @@ class Monitor:
             )
 
         # check if state is already set
-        if self.state_status[target_state] and target_state != 'TEMP':
+        if self.state_status[target_state] and target_state != SimStatesCommon.TEMP:
             loggers.monitors.info(
                 'Tried to set state of %s to >>%s<<, but this state was already set.'
                 ' State of object was not changed.',
@@ -171,7 +146,7 @@ class Monitor:
             )
         # check if the 'TEMP' state was already set, this should never happen
         # if it happens raise an error to catch wrong behaviour
-        elif self.state_status[target_state] and target_state == 'TEMP':
+        elif self.state_status[target_state] and target_state == SimStatesCommon.TEMP:
             raise RuntimeError(
                 (
                     f'Tried to set state of {self._target_object} to >>TEMP<<, '
@@ -180,16 +155,14 @@ class Monitor:
             )
 
         # calculate time for which the object was in the current state before changing it
-        current_state_start = self.state_starting_time
-        # current_time = self._env.now()
-        current_time = self._env.t_as_dt()
-        current_state_duration: Timedelta = current_time - current_state_start
-        # add time to the time counter for the current state
         current_state = self.state_current
+        current_state_start = self.state_starting_time
+        current_time = self._env.t_as_dt()
+        current_state_duration = current_time - current_state_start
         self.state_times[current_state] += current_state_duration
 
         # check if 'TEMP' state shall be set
-        if target_state == 'TEMP':
+        if target_state == SimStatesCommon.TEMP:
             # set 'TEMP' state indicator to true
             self._is_temp = True
             # save current state for the state reset
@@ -200,12 +173,11 @@ class Monitor:
         self.state_status[target_state] = True
         # assign new state as current one
         self.state_current = target_state
-        # set state starting time to current time
         self.state_starting_time = current_time
         # availability
         if self.state_current in self._availability_states:
             self.is_available: bool = True
-        elif self.state_current == 'TEMP':
+        elif self.state_current == SimStatesStorage.TEMP:
             # 'TEMP' state shall not change the availability indicator
             pass
         else:
@@ -230,7 +202,7 @@ class Monitor:
             )
         else:
             self._is_temp = False
-            self.set_state(state=self._state_before_temp)
+            self.set_state(target_state=self._state_before_temp)
 
     def calc_KPI(
         self,
@@ -267,8 +239,9 @@ class Monitor:
         temp2['abs [seconds]'] = temp2['abs [Timedelta]'].apply(
             func=lambda x: x.total_seconds()
         )
-        temp2['rel [%]'] = temp2['abs [seconds]'] / temp2.sum(axis=0)['abs [seconds]'] * 100
-        temp2 = temp2.drop(labels=['INIT', 'FINISH', 'TEMP'], axis=0)
+        temp2['rel [%]'] = temp2['abs [seconds]'] / temp2.sum(axis=0)['abs [seconds]'] * 100.0
+        drop_labels = list(HELPER_STATES)
+        temp2 = temp2.drop(labels=drop_labels, axis=0)
         temp2 = temp2.sort_index(axis=0, ascending=True, kind='stable')
         state_durations_df = temp2.copy()
 
@@ -367,24 +340,15 @@ class StorageMonitor(Monitor):
         self,
         env: SimulationEnvironment,
         obj: StorageLike,
-        init_state: str = 'INIT',
-        possible_states: Iterable[str] = (
-            'INIT',
-            'FINISH',
-            'TEMP',
-            'FULL',
-            'EMPTY',
-            'INTERMEDIATE',
-            'FAILED',
-            'PAUSED',
-        ),
+        current_state: SimStatesStorage = SimStatesStorage.INIT,
+        states: type[SimStatesStorage] = SimStatesStorage,
     ) -> None:
         # initialise parent class
         super().__init__(
             env=env,
             obj=obj,
-            init_state=init_state,
-            possible_states=possible_states,
+            current_state=current_state,
+            states=states,
         )
 
         # fill level tracking
@@ -421,13 +385,13 @@ class StorageMonitor(Monitor):
 
     def set_state(
         self,
-        state: str,
+        target_state: SimStatesStorage,
     ) -> None:
         """additional level tracking functionality"""
-        super().set_state(state=state)
+        super().set_state(target_state=target_state)
 
         is_finalise: bool = False
-        if self.state_current == 'FINISH':
+        if self.state_current == SimStatesCommon.FINISH:
             is_finalise: bool = True
         self._track_fill_level(is_finalise=is_finalise)
 
@@ -531,25 +495,15 @@ class InfStructMonitor(Monitor):
         self,
         env: SimulationEnvironment,
         obj: InfrastructureObject,
-        init_state: str = 'INIT',
-        possible_states: Iterable[str] = (
-            'INIT',
-            'FINISH',
-            'TEMP',
-            'WAITING',
-            'PROCESSING',
-            'SETUP',
-            'BLOCKED',
-            'FAILED',
-            'PAUSED',
-        ),
+        current_state: SimStatesCommon = SimStatesCommon.INIT,
+        states: type[SimStatesCommon] = SimStatesCommon,
     ) -> None:
         # initialise parent class
         super().__init__(
             env=env,
             obj=obj,
-            init_state=init_state,
-            possible_states=possible_states,
+            current_state=current_state,
+            states=states,
         )
 
         # WIP tracking time load
@@ -660,14 +614,17 @@ class InfStructMonitor(Monitor):
         self,
         is_finalise: bool = False,
     ) -> None:
-        super().calc_KPI()
+        super().calc_KPI(is_finalise=is_finalise)
 
         # [OCCUPATION]
         # properties which count as occupied
         # paused counts in because pausing the processing station is an external factor
-        util_props = ['PROCESSING', 'SETUP', 'PAUSED']
-        self.time_occupied = self.state_durations.loc[util_props, 'abs [seconds]'].sum()  # type: ignore
-
+        if self.state_durations is None:
+            raise RuntimeError('State durations are not available. Can not calculate KPIs.')
+        self.time_occupied = cast(
+            float,
+            self.state_durations.loc[list(UTIL_PROPERTIES), 'abs [seconds]'].sum(),  # type: ignore
+        )
         # [UTILISATION]
         # avoid division by 0
         if self.time_active > 0.0:

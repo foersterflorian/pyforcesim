@@ -1,7 +1,6 @@
 import datetime
 
 import pytest
-from pyforcesim.datetime import DTManager
 from pyforcesim.rl import agents
 from pyforcesim.simulation import conditions, loads
 from pyforcesim.simulation import environment as sim
@@ -84,6 +83,10 @@ def build_sim_env(dt_manager, env):
     return env, alloc_agent
 
 
+def export_results(env):
+    fig = env.dispatcher.draw_gantt_chart(dates_to_local_tz=False, save_html=True)
+
+
 def test_build_env(dt_manager, env):
     env, agent = build_sim_env(dt_manager, env)
     assert isinstance(agent, agents.AllocationAgent)
@@ -98,3 +101,4 @@ def test_build_env(dt_manager, env):
     assert env.run() is None
     assert env.finalise() is None
     assert env.dispatcher.cycle_time == datetime.timedelta(seconds=57600)
+    export_results(env)

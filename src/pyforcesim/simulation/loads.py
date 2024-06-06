@@ -293,7 +293,7 @@ class ProductionSequenceSinglePA(ProductionSequence):
         filter_by_prod_area = stat_group_db.loc[
             stat_group_db['prod_area_id'] == self._prod_area_id, :
         ]
-        stat_groups: list['StationGroup'] = filter_by_prod_area['station_group'].tolist()
+        stat_groups: list[StationGroup] = filter_by_prod_area['station_group'].tolist()
         # stat_group_ids = filter_by_prod_area['station_group_id'].tolist()
 
         loggers.loads.debug('stat_groups: %s', stat_groups)

@@ -32,7 +32,7 @@ def flatten(
 
 
 def enum_str_values_as_frzset(
-    enum: Type[StrEnum],
+    enum_class: Type[StrEnum],
 ) -> frozenset[str]:
     """returns the values of an Enum class as a frozenset
 
@@ -46,4 +46,4 @@ def enum_str_values_as_frzset(
     frozenset
         values of the Enum class
     """
-    return frozenset(val.value for val in enum)
+    return frozenset(val.value for val in enum_class)

@@ -27,6 +27,7 @@ class Agent(ABC):
         self,
         assoc_system: 'System',
         agent_task: AgentTasks,
+        seed: int = 42,
     ) -> None:
         # basic information
         self._agent_task = agent_task
@@ -36,6 +37,8 @@ class Agent(ABC):
         )
         # dispatching signal: no matter if allocation or sequencing
         self._dispatching_signal: bool = False
+
+        self._rng = random.Random(seed)
 
     def __str__(self) -> str:
         return f'Agent(type={self._agent_task}, Assoc_Syst_ID={self._assoc_system.system_id})'
@@ -51,6 +54,10 @@ class Agent(ABC):
     @property
     def env(self) -> 'SimulationEnvironment':
         return self._env
+
+    @property
+    def rng(self) -> random.Random:
+        return self._rng
 
     @property
     def dispatching_signal(self) -> bool:
@@ -80,29 +87,26 @@ class Agent(ABC):
         )
 
     @abstractmethod
-    def request_decision(self) -> Any:
-        pass
+    def request_decision(self) -> Any: ...
 
     @abstractmethod
-    def set_decision(self) -> Any:
-        pass
+    def set_decision(self) -> Any: ...
 
     @abstractmethod
-    def build_feat_vec(self) -> Any:
-        pass
+    def build_feat_vec(self) -> Any: ...
 
     @abstractmethod
-    def calc_reward(self) -> Any:
-        pass
+    def calc_reward(self) -> Any: ...
 
 
 class AllocationAgent(Agent):
     def __init__(
         self,
         assoc_system: 'System',
+        seed: int = 42,
     ) -> None:
         # init base class
-        super().__init__(assoc_system=assoc_system, agent_task='ALLOC')
+        super().__init__(assoc_system=assoc_system, agent_task='ALLOC', seed=seed)
 
         # get associated systems
         self._assoc_proc_stations = self._assoc_system.lowest_level_subsystems(
@@ -185,7 +189,7 @@ class AllocationAgent(Agent):
 
     def set_decision(
         self,
-        action: int | None,
+        action: int,
     ) -> None:
         # get action from RL agent
         self._action = action
@@ -239,16 +243,7 @@ class AllocationAgent(Agent):
             raise ValueError(
                 ('Tried to build feature vector for job without ' 'current operation.')
             )
-        # TODO: remove, internal identifiers now all SystemIDs
-        """
-        # SGI is type CustomID, but system ID (SystemID) is needed
-        # lookup system ID by custom ID in Infrastructure Manager
-        infstruct_mgr = self.env.infstruct_mgr
-        system_id = infstruct_mgr.lookup_system_ID(
-            subsystem_type='StationGroup',
-            custom_ID=job_SGI,
-        )
-        """
+
         job_info = (job_SGI, order_time)
         job_info_arr = np.array(job_info, dtype=np.float32)
 
@@ -261,7 +256,7 @@ class AllocationAgent(Agent):
         """
         Generate random action based on associated objects
         """
-        return random.randint(0, len(self._assoc_proc_stations) - 1)
+        return self.rng.randint(0, len(self._assoc_proc_stations) - 1)
 
     def calc_reward(self) -> float:
         # !! REWORK
