@@ -1,121 +1,73 @@
-from typing import Any
+from typing import Any, Final, cast
 
 import gymnasium as gym
 import numpy as np
 import numpy.typing as npt
 
-from pyforcesim.constants import TimeUnitsTimedelta
-from pyforcesim.datetime import DTManager
-from pyforcesim.rl import agents
-from pyforcesim.simulation import conditions, loads
+from pyforcesim.env_builder import build_sim_env
 from pyforcesim.simulation import environment as sim
-from pyforcesim.simulation.policies import FIFOPolicy, LoadTimePolicy
-from pyforcesim.types import CustomID
+from pyforcesim.loggers import gym_env as logger
 
-
-def build_sim_env() -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]:
-    dt_manager = DTManager()
-    starting_dt = dt_manager.dt_with_tz_UTC(2024, 3, 28, 0)
-    env = sim.SimulationEnvironment(
-        name='base', time_unit='seconds', starting_datetime=starting_dt, debug_dashboard=False
-    )
-    # sink
-    area_sink = sim.ProductionArea(env=env, custom_identifier=CustomID('2000'))
-    group_sink = sim.StationGroup(env=env, custom_identifier=CustomID('2000'))
-    area_sink.add_subsystem(group_sink)
-    sink = sim.Sink(env=env, custom_identifier=CustomID('sink'))
-    group_sink.add_subsystem(sink)
-
-    # processing stations
-    # prod area 1
-    area_prod = sim.ProductionArea(env=env, custom_identifier=CustomID('1'))
-    group_prod = sim.StationGroup(env=env, custom_identifier=CustomID('1'))
-    area_prod.add_subsystem(group_prod)
-    group_prod2 = sim.StationGroup(env=env, custom_identifier=CustomID('2'))
-    area_prod.add_subsystem(group_prod2)
-    # machines
-    for machine in range(3):
-        buffer = sim.Buffer(
-            capacity=20, env=env, custom_identifier=CustomID(str(10 + machine))
-        )
-        MachInst = sim.Machine(
-            env=env, custom_identifier=CustomID(str(machine)), buffers=[buffer]
-        )
-
-        if machine < 2:
-            group_prod.add_subsystem(buffer)
-            group_prod.add_subsystem(MachInst)
-        else:
-            group_prod2.add_subsystem(buffer)
-            group_prod2.add_subsystem(MachInst)
-
-    alloc_agent = agents.AllocationAgent(assoc_system=area_prod)
-
-    # source
-    area_source = sim.ProductionArea(env=env, custom_identifier=CustomID('1000'))
-    group_source = sim.StationGroup(env=env, custom_identifier=CustomID('1000'))
-    area_source.add_subsystem(group_source)
-    proc_time = dt_manager.timedelta_from_val(val=2.0, time_unit=TimeUnitsTimedelta.HOURS)
-    sequence_generator = loads.ProductionSequenceSinglePA(
-        env=env, seed=100, prod_area_id=area_prod.system_id
-    )
-    prod_sequence_PA = sequence_generator.constant_sequence(order_time_source=proc_time)
-    source = sim.Source(
-        env=env,
-        custom_identifier=CustomID('source'),
-        proc_time=proc_time,
-        job_sequence=prod_sequence_PA,
-        num_gen_jobs=None,
-    )
-    group_source.add_subsystem(source)
-
-    # conditions
-    duration_transient = dt_manager.timedelta_from_val(
-        val=12, time_unit=TimeUnitsTimedelta.HOURS
-    )
-    conditions.TransientCondition(env=env, duration_transient=duration_transient)
-    # agent_decision_cond = conditions.TriggerAgentCondition(env=env)
-    sim_dur = dt_manager.timedelta_from_val(val=3, time_unit=TimeUnitsTimedelta.WEEKS)
-    # sim_end_date = dt_manager.dt_with_tz_UTC(2024, 3, 23, 12)
-    conditions.JobGenDurationCondition(env=env, target_obj=source, sim_run_duration=sim_dur)
-
-    return env, alloc_agent
+MAX_WIP_TIME: Final[int] = 100
+MAX_NON_FEASIBLE: Final[int] = 20
 
 
 class JSSEnv(gym.Env):
     """Custom Environment that follows gym interface."""
 
-    metadata = {'render_modes': ['human'], 'render_fps': 30}
+    metadata = {'render_modes': [None]}
 
     def __init__(
         self,
         seed: int = 42,
     ) -> None:
         super().__init__()
-
+        super().reset(seed=seed)
+        self.seed = seed
         # build env
         self.sim_env, self.agent = build_sim_env()
         # action space for allocation agent is length of all associated
         # infrastructure objects
-        n_actions = len(self.agent.assoc_proc_stations)
-        self.action_space = gym.spaces.Discrete(n=n_actions, seed=seed)
+        n_machines = len(self.agent.assoc_proc_stations)
+        self.action_space = gym.spaces.Discrete(n=n_machines, seed=seed)
         # Example for using image as input (channel-first; channel-last also works):
         # TODO change observation space
-        self.observation_space = gym.spaces.Box(low=0, high=255, shape=(), dtype=np.float32)
+        target_system = cast(sim.ProductionArea, self.agent.assoc_system)
+        min_SGI = target_system.get_min_subsystem_id()
+        max_SGI = target_system.get_max_subsystem_id()
+        # observation: N_machines * (res_sys_SGI, avail, WIP_time)
+        machine_low = np.array([min_SGI, 0, 0])
+        machine_high = np.array([max_SGI, 1, MAX_WIP_TIME])
+        # observation jobs: (job_SGI, order_time)
+        job_low = np.array([0, 0])
+        job_high = np.array([max_SGI, 1000])
+
+        low = np.tile(machine_low, n_machines)
+        high = np.tile(machine_high, n_machines)
+        low = np.append(low, job_low)
+        high = np.append(high, job_high)
+
+        self.observation_space = gym.spaces.Box(
+            low=low,
+            high=high,
+            dtype=np.float32,
+            seed=seed,
+        )
 
         self.terminated: bool = False
+        self.truncated: bool = False
 
     def step(
         self,
         action: int,
-    ) -> tuple[npt.NDArray[np.float32], float, bool, dict, dict]:
+    ) -> tuple[npt.NDArray[np.float32], float, bool, bool, dict]:
         # process given action
         # step through sim_env till new decision should be made
         # calculate reward based on new observation
-
+        logger.debug('Taking step in environment')
         ## ** action is provided as parameter, set action
         # ?? should still be checked? necessary?
-        # should not be needed anymore, empty event list is checked below
+        # should not be needed any more, empty event list is checked below
         self.agent.set_decision(action=action)
 
         # ** Run till next action is needed
@@ -124,6 +76,9 @@ class JSSEnv(gym.Env):
             # empty event list, simulation run ended
             if not self.sim_env._event_list:
                 self.terminated = True
+                break
+            if self.agent.non_feasible_counter > MAX_NON_FEASIBLE:
+                self.truncated = True
                 break
 
             self.sim_env.step()
@@ -137,22 +92,33 @@ class JSSEnv(gym.Env):
             raise ValueError('No Observation in step!')
 
         # additional info
-        truncated = {}
         info = {}
 
         # finalise simulation environment
         if self.terminated:
             self.sim_env.finalise()
 
-        return observation, reward, self.terminated, truncated, info
+        logger.debug(
+            'Step in environment finished. Return: %s, %s, %s, %s',
+            observation,
+            reward,
+            self.terminated,
+            self.truncated,
+        )
+
+        return observation, reward, self.terminated, self.truncated, info
 
     def reset(
         self,
         seed: int = 42,
         options: dict[str, Any] | None = None,
     ) -> tuple[npt.NDArray[np.float32], dict]:
+        logger.debug('Resetting environment')
+        self.terminated = False
+        self.truncated = False
         # re-init simulation environment
         self.sim_env, self.agent = build_sim_env()
+        logger.debug('Environment re-initialised')
         # evaluate if all needed components are registered
         self.sim_env.check_integrity()
         # initialise simulation environment
@@ -177,8 +143,6 @@ class JSSEnv(gym.Env):
             raise ValueError('No Observation in reset!')
         info = {}
 
+        logger.info('Environment reset finished')
+
         return observation, info
-
-    def render(self): ...
-
-    def close(self): ...

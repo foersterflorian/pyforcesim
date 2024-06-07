@@ -23,11 +23,12 @@ from pyforcesim.types import Infinite
 from pyforcesim.types import LoggingLevels as loglevel
 
 # ** logging
-LOGGING_LEVEL_BASE: Final[loglevel] = loglevel.INFO
-LOGGING_LEVEL_ENV: Final[loglevel] = loglevel.INFO
-LOGGING_LEVEL_DISPATCHER: Final[loglevel] = loglevel.DEBUG
-LOGGING_LEVEL_INFSTRCT: Final[loglevel] = loglevel.INFO
-LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.DEBUG
+LOGGING_LEVEL_BASE: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_ENV: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_GYM_ENV: Final[loglevel] = loglevel.INFO
+LOGGING_LEVEL_DISPATCHER: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_INFSTRCT: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_SINKS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_PRODSTATIONS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_JOBS: Final[loglevel] = loglevel.ERROR
@@ -36,7 +37,7 @@ LOGGING_LEVEL_BUFFERS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.ERROR
-LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.INFO
+LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_DB: Final[loglevel] = loglevel.ERROR
 
 

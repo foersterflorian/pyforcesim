@@ -13,6 +13,7 @@ from pyforcesim.constants import (
     LOGGING_LEVEL_DB,
     LOGGING_LEVEL_DISPATCHER,
     LOGGING_LEVEL_ENV,
+    LOGGING_LEVEL_GYM_ENV,
     LOGGING_LEVEL_INFSTRCT,
     LOGGING_LEVEL_JOBS,
     LOGGING_LEVEL_LOADS,
@@ -25,7 +26,7 @@ from pyforcesim.constants import (
 
 # IPython compatibility with stdout
 logging.Formatter.converter = time.gmtime
-LOG_FMT: Final[str] = ' %(asctime)s | pyfsim - %(module)s:%(levelname)s | %(message)s'
+LOG_FMT: Final[str] = ' %(asctime)s | pyfsim:%(module)s:%(levelname)s | %(message)s'
 LOG_DATE_FMT: Final[str] = '%Y-%m-%d %H:%M:%S +0000'
 logging.basicConfig(
     stream=sys.stdout,
@@ -64,3 +65,6 @@ jobs = logging.getLogger('pyforcesim.jobs')
 jobs.setLevel(LOGGING_LEVEL_JOBS)
 operations = logging.getLogger('pyforcesim.operations')
 operations.setLevel(LOGGING_LEVEL_OPERATIONS)
+
+gym_env = logging.getLogger('pyforcesime.gym_env')
+gym_env.setLevel(LOGGING_LEVEL_GYM_ENV)

@@ -1,17 +1,10 @@
 import datetime
 
-import pytest
 from pyforcesim.rl import agents
 from pyforcesim.simulation import conditions, loads
 from pyforcesim.simulation import environment as sim
 from pyforcesim.simulation.policies import FIFOPolicy, LoadTimePolicy
 from pyforcesim.types import CustomID
-
-
-@pytest.fixture(scope='session')
-def starting_dt(dt_manager):
-    starting_dt = dt_manager.dt_with_tz_UTC(2024, 3, 28, 0)
-    return starting_dt
 
 
 def test_base_env(env, starting_dt):
@@ -84,15 +77,13 @@ def build_sim_env(dt_manager, env):
 
 
 def export_results(env):
-    fig = env.dispatcher.draw_gantt_chart(dates_to_local_tz=False, save_html=True)
+    _ = env.dispatcher.draw_gantt_chart(dates_to_local_tz=False, save_html=True)
 
 
 def test_build_env(dt_manager, env):
     env, agent = build_sim_env(dt_manager, env)
     assert isinstance(agent, agents.AllocationAgent)
     assert env.check_integrity() is None
-    env.dispatcher.seq_rule = 'FIFO'
-    env.dispatcher.alloc_rule = 'LOAD_TIME'
     assert env.dispatcher.seq_rule == 'FIFO'
     assert env.dispatcher.alloc_rule == 'LOAD_TIME'
     assert isinstance(env.dispatcher.seq_policy, FIFOPolicy)

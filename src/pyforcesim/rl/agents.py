@@ -4,11 +4,14 @@ import random
 import statistics
 from abc import ABC, abstractmethod
 from datetime import timedelta as Timedelta
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import numpy.typing as npt
+
 from pyforcesim import loggers
+from pyforcesim.constants import TimeUnitsTimedelta
+from pyforcesim.datetime import DTManager
 from pyforcesim.types import AgentTasks
 
 if TYPE_CHECKING:
@@ -25,7 +28,7 @@ if TYPE_CHECKING:
 class Agent(ABC):
     def __init__(
         self,
-        assoc_system: 'System',
+        assoc_system: System,
         agent_task: AgentTasks,
         seed: int = 42,
     ) -> None:
@@ -39,12 +42,13 @@ class Agent(ABC):
         self._dispatching_signal: bool = False
 
         self._rng = random.Random(seed)
+        self.dt_manager = DTManager()
 
     def __str__(self) -> str:
         return f'Agent(type={self._agent_task}, Assoc_Syst_ID={self._assoc_system.system_id})'
 
     @property
-    def assoc_system(self) -> 'System':
+    def assoc_system(self) -> System:
         return self._assoc_system
 
     @property
@@ -52,7 +56,7 @@ class Agent(ABC):
         return self._agent_task
 
     @property
-    def env(self) -> 'SimulationEnvironment':
+    def env(self) -> SimulationEnvironment:
         return self._env
 
     @property
@@ -87,22 +91,22 @@ class Agent(ABC):
         )
 
     @abstractmethod
-    def request_decision(self) -> Any: ...
+    def request_decision(self) -> None: ...
 
     @abstractmethod
-    def set_decision(self) -> Any: ...
+    def set_decision(self) -> None: ...
 
     @abstractmethod
-    def build_feat_vec(self) -> Any: ...
+    def build_feat_vec(self) -> npt.NDArray[np.float32]: ...
 
     @abstractmethod
-    def calc_reward(self) -> Any: ...
+    def calc_reward(self) -> float: ...
 
 
 class AllocationAgent(Agent):
     def __init__(
         self,
-        assoc_system: 'System',
+        assoc_system: System,
         seed: int = 42,
     ) -> None:
         # init base class
@@ -114,10 +118,10 @@ class AllocationAgent(Agent):
         )
 
         # job-related properties
-        self._current_job: 'Job | None' = None
-        self._last_job: 'Job | None' = None
-        self._current_op: 'Operation | None' = None
-        self._last_op: 'Operation | None' = None
+        self._current_job: Job | None = None
+        self._last_job: Job | None = None
+        self._current_op: Operation | None = None
+        self._last_op: Operation | None = None
 
         # RL related properties
         self.feat_vec: npt.NDArray[np.float32] | None = None
@@ -126,23 +130,25 @@ class AllocationAgent(Agent):
         # [ACTIONS]
         # action chosen by RL agent
         self._action: int | None = None
-        self.action_feasible: bool = False
+        self._action_feasible: bool = False
         self.past_action_feasible: bool = False
+        # count number of consecutive non-feasible actions
+        self.non_feasible_counter: int = 0
 
     @property
-    def current_job(self) -> 'Job | None':
+    def current_job(self) -> Job | None:
         return self._current_job
 
     @property
-    def last_job(self) -> 'Job | None':
+    def last_job(self) -> Job | None:
         return self._last_job
 
     @property
-    def current_op(self) -> 'Operation | None':
+    def current_op(self) -> Operation | None:
         return self._current_op
 
     @property
-    def last_op(self) -> 'Operation | None':
+    def last_op(self) -> Operation | None:
         return self._last_op
 
     @property
@@ -150,8 +156,23 @@ class AllocationAgent(Agent):
         return self._action
 
     @property
-    def assoc_proc_stations(self) -> tuple['ProcessingStation', ...]:
+    def assoc_proc_stations(self) -> tuple[ProcessingStation, ...]:
         return self._assoc_proc_stations
+
+    @property
+    def action_feasible(self) -> bool:
+        return self._action_feasible
+
+    @action_feasible.setter
+    def action_feasible(
+        self,
+        feasible: bool,
+    ) -> None:
+        if feasible:
+            self.non_feasible_counter = 0
+        else:
+            self.non_feasible_counter += 1
+        self._action_feasible = feasible
 
     def update_assoc_proc_stations(self) -> None:
         # get associated systems
@@ -161,8 +182,8 @@ class AllocationAgent(Agent):
 
     def request_decision(
         self,
-        job: 'Job',
-        op: 'Operation',
+        job: Job,
+        op: Operation,
     ) -> None:
         # for each request, decision not done yet
         # indicator for internal loop
@@ -202,7 +223,7 @@ class AllocationAgent(Agent):
     # ?? REWORK necessary?
     def build_feat_vec(
         self,
-        job: 'Job',
+        job: Job,
     ) -> npt.NDArray[np.float32]:
         # resources
         # needed properties
@@ -233,7 +254,8 @@ class AllocationAgent(Agent):
         # needed properties
         # target station group ID, order time
         assert job.current_order_time is not None
-        order_time = job.current_order_time / Timedelta(hours=1)
+        norm_td = self.dt_manager.timedelta_from_val(1.0, TimeUnitsTimedelta.HOURS)
+        order_time = job.current_order_time / norm_td
         # current op: obtain StationGroupID
         current_op = job.current_op
         if current_op is not None:
@@ -248,7 +270,7 @@ class AllocationAgent(Agent):
         job_info_arr = np.array(job_info, dtype=np.float32)
 
         # concat job information
-        arr = np.concatenate((arr, job_info_arr))
+        arr = np.concatenate((arr, job_info_arr), dtype=np.float32)
 
         return arr
 
@@ -276,12 +298,12 @@ class AllocationAgent(Agent):
             if op_rew is None:
                 # catch empty OPs
                 raise ValueError(
-                    ('Tried to calculate reward based ' 'on a non-existent operation')
+                    ('Tried to calculate reward based on a non-existent operation')
                 )
             elif op_rew.target_station_group is None:
                 # catch empty OPs
                 raise ValueError(
-                    ('Tried to calculate reward, but no ' 'target station group is defined')
+                    ('Tried to calculate reward, but no target station group is defined')
                 )
             # obtain relevant ProcessingStations contained in
             # the corresponding StationGroup
@@ -289,7 +311,6 @@ class AllocationAgent(Agent):
             loggers.agents.debug(f'++++++ {stations=}')
             # calculate mean utilisation of all processing stations associated
             # with the corresponding operation and agent's action
-            # !! inheritance scheme not sufficient, couple of type mismatches arising
             util_vals: list[float] = [ps.stat_monitor.utilisation for ps in stations]
             loggers.agents.debug(f'++++++ {util_vals=}')
             util_mean = statistics.mean(util_vals)
@@ -305,7 +326,7 @@ class AllocationAgent(Agent):
 class SequencingAgent(Agent):
     def __init__(
         self,
-        assoc_system: 'System',
+        assoc_system: System,
     ) -> None:
         raise NotImplementedError('SequencingAgent not implemented yet.')
         # super().__init__(assoc_system=assoc_system, agent_task='SEQ')

@@ -60,11 +60,18 @@ tests = [
     "pytest>=8.2.1",
     "coverage>=7.5.3",
 ]
+rl = [
+    "stable-baselines3>=2.3.2",
+    "tensorboard>=2.16.2",
+    "tqdm>=4.66.4",
+    "rich>=13.7.1",
+]
 
 [tool.ruff]
 line-length = 94
 indent-width = 4
 target-version = "py311"
+src = ["src"]
 
 [tool.ruff.format]
 quote-style = "single"

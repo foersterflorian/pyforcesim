@@ -167,6 +167,8 @@ class SimulationEnvironment(salabim.Environment):
             self.ws_server_process = mp.Process(target=start_websocket_server)
             self.dashboard_server_process = mp.Process(target=start_dashboard)
 
+        loggers.pyf_env.warning('New Environment >>%s<< initialised.', self.name())
+
     def t_as_dt(self) -> Datetime:
         """return current simulation time as Datetime object
 
@@ -394,6 +396,31 @@ class InfrastructureManager:
     @property
     def station_group_db(self) -> DataFrame:
         return self._station_group_db
+
+    def get_total_per_system_type(
+        self,
+        system_type: SimSystemTypes,
+    ) -> SystemID:
+        """returns the maximum assigned SystemID for a given system type
+        (total number = max ID + 1)
+
+        Parameters
+        ----------
+        system_type : SimSystemTypes
+            system type for which the last assigned SystemID is requested
+
+        Returns
+        -------
+        SystemID
+            SystemID of the last assigned system
+        """
+        match system_type:
+            case SimSystemTypes.PRODUCTION_AREA:
+                return self._prod_area_counter
+            case SimSystemTypes.STATION_GROUP:
+                return self._station_group_counter
+            case SimSystemTypes.RESOURCE:
+                return self._res_counter
 
     def verify_system_association(self) -> bool:
         """checks if there are any registered, but non-associated
@@ -1856,49 +1883,6 @@ class Dispatcher:
 
             target_station = policy.apply(items=avail_stations)
 
-            # TODO add policy-based rule sets
-            # apply different strategies to select a station out of the station group
-            # match self._curr_alloc_rule:
-            #     case 'RANDOM':
-            #         # [RANDOM CHOICE]
-            #         target_station: ProcessingStation = random.choice(avail_stations)
-            #     case 'UTILISATION':
-            #         # [UTILISATION]
-            #         # choose the station with the lowest utilisation to time
-            #         target_station: ProcessingStation = min(
-            #             avail_stations, key=attrgetter('stat_monitor.utilisation')
-            #         )
-            #         loggers.dispatcher.debug(
-            #             (
-            #                 f'[DISPATCHER: {self}] Utilisation of '
-            #                 f'{target_station=} is '
-            #                 f'{target_station.stat_monitor.utilisation:.4f}'
-            #             )
-            #         )
-            #     case 'WIP_LOAD_TIME':
-            #         # WIP as load/processing time, choose station with lowest WIP
-            #         target_station: ProcessingStation = min(
-            #             avail_stations, key=attrgetter('stat_monitor.WIP_load_time')
-            #         )
-            #         loggers.dispatcher.debug(
-            #             (
-            #                 f'[DISPATCHER: {self}] WIP LOAD TIME of '
-            #                 f'{target_station=} is '
-            #                 f'{target_station.stat_monitor.WIP_load_time}'
-            #             )
-            #         )
-            #     case 'WIP_LOAD_JOBS':
-            #         # WIP as number of associated jobs, choose station with lowest WIP
-            #         target_station: ProcessingStation = min(
-            #             avail_stations, key=attrgetter('stat_monitor.WIP_load_num_jobs')
-            #         )
-            #         loggers.dispatcher.debug(
-            #             (
-            #                 f'[DISPATCHER: {self}] WIP LOAD NUM JOBS of '
-            #                 f'{target_station=} is '
-            #                 f'{target_station.stat_monitor.WIP_load_time:.2f}'
-            #             )
-            #         )
             # [KPIs] reset all associated processing stations of that group
             # to their original state
             infstruct_mgr.res_objs_temp_state(res_objs=stations, reset_temp=True)
@@ -2327,7 +2311,7 @@ class System:
         return hash(self.__key())
 
     @property
-    def system_type(self) -> str:
+    def system_type(self) -> SimSystemTypes:
         return self._system_type
 
     @property
@@ -2426,6 +2410,8 @@ class System:
 
         if subsystem.system_id not in self.subsystems:
             self.subsystems[subsystem.system_id] = subsystem
+            self.subsystems_ids.add(subsystem.system_id)
+            self.subsystems_custom_ids.add(subsystem.custom_identifier)
         else:
             raise UserWarning(f'Subsystem {subsystem} was already in supersystem {self}!')
 
@@ -2518,6 +2504,26 @@ class System:
         )
 
         return tuple(low_lev_subsystems_lst)
+
+    def get_min_subsystem_id(self) -> SystemID:
+        """return the minimum SystemID of the associated subsystems
+
+        Returns
+        -------
+        SystemID
+            minimum SystemID of the associated subsystems
+        """
+        return min(self.subsystems_ids)
+
+    def get_max_subsystem_id(self) -> SystemID:
+        """return the maximum SystemID of the associated subsystems
+
+        Returns
+        -------
+        SystemID
+            maximum SystemID of the associated subsystems
+        """
+        return max(self.subsystems_ids)
 
     def initialise(self) -> None:
         # assign associated ProcessingStations and corresponding info
