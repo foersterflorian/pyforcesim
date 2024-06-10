@@ -3,7 +3,7 @@ from pyforcesim.datetime import DTManager
 from pyforcesim.rl import agents
 from pyforcesim.simulation import conditions, loads
 from pyforcesim.simulation import environment as sim
-from pyforcesim.types import CustomID
+from pyforcesim.types import SystemID
 
 
 def build_sim_env() -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]:
@@ -15,26 +15,26 @@ def build_sim_env() -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]:
     env.dispatcher.seq_rule = 'FIFO'
     env.dispatcher.alloc_rule = 'LOAD_TIME'
     # sink
-    area_sink = sim.ProductionArea(env=env, custom_identifier=CustomID('2000'))
-    group_sink = sim.StationGroup(env=env, custom_identifier=CustomID('2000'))
+    area_sink = sim.ProductionArea(env=env, custom_identifier=SystemID('2000'))
+    group_sink = sim.StationGroup(env=env, custom_identifier=SystemID('2000'))
     area_sink.add_subsystem(group_sink)
-    sink = sim.Sink(env=env, custom_identifier=CustomID('sink'))
+    sink = sim.Sink(env=env, custom_identifier=SystemID('sink'))
     group_sink.add_subsystem(sink)
 
     # processing stations
     # prod area 1
-    area_prod = sim.ProductionArea(env=env, custom_identifier=CustomID('1'))
-    group_prod = sim.StationGroup(env=env, custom_identifier=CustomID('1'))
+    area_prod = sim.ProductionArea(env=env, custom_identifier=SystemID('1'))
+    group_prod = sim.StationGroup(env=env, custom_identifier=SystemID('1'))
     area_prod.add_subsystem(group_prod)
-    group_prod2 = sim.StationGroup(env=env, custom_identifier=CustomID('2'))
+    group_prod2 = sim.StationGroup(env=env, custom_identifier=SystemID('2'))
     area_prod.add_subsystem(group_prod2)
     # machines
     for machine in range(3):
         buffer = sim.Buffer(
-            capacity=20, env=env, custom_identifier=CustomID(str(10 + machine))
+            capacity=20, env=env, custom_identifier=SystemID(str(10 + machine))
         )
         MachInst = sim.Machine(
-            env=env, custom_identifier=CustomID(str(machine)), buffers=[buffer]
+            env=env, custom_identifier=SystemID(str(machine)), buffers=[buffer]
         )
 
         if machine < 2:
@@ -47,20 +47,20 @@ def build_sim_env() -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]:
     alloc_agent = agents.AllocationAgent(assoc_system=area_prod)
 
     # source
-    area_source = sim.ProductionArea(env=env, custom_identifier=CustomID('1000'))
-    group_source = sim.StationGroup(env=env, custom_identifier=CustomID('1000'))
+    area_source = sim.ProductionArea(env=env, custom_identifier=SystemID('1000'))
+    group_source = sim.StationGroup(env=env, custom_identifier=SystemID('1000'))
     area_source.add_subsystem(group_source)
     proc_time = dt_manager.timedelta_from_val(val=2.0, time_unit=TimeUnitsTimedelta.HOURS)
-    sequence_generator = loads.ProductionSequenceSinglePA(
+    sequence_generator = loads.ConstantSequenceSinglePA(
         env=env, seed=100, prod_area_id=area_prod.system_id
     )
     prod_sequence_PA = sequence_generator.constant_sequence(order_time_source=proc_time)
     source = sim.Source(
         env=env,
-        custom_identifier=CustomID('source'),
+        custom_identifier=SystemID('source'),
         proc_time=proc_time,
         job_sequence=prod_sequence_PA,
-        num_gen_jobs=None,
+        job_generation_limit=None,
     )
     group_source.add_subsystem(source)
 

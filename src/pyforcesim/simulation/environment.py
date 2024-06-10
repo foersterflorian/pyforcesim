@@ -33,6 +33,7 @@ from pyforcesim.constants import (
     INF,
     POLICIES_ALLOC,
     POLICIES_SEQ,
+    SimResourceTypes,
     SimStatesCommon,
     SimStatesStorage,
     SimSystemTypes,
@@ -55,10 +56,6 @@ from pyforcesim.simulation.base_components import (
     SimulationComponent,
     StorageComponent,
 )
-from pyforcesim.simulation.loads import (
-    OrderTime,
-    RandomJobGenerator,
-)
 from pyforcesim.simulation.policies import (
     AllocationPolicy,
     GeneralPolicy,
@@ -68,7 +65,10 @@ from pyforcesim.types import (
     AgentTasks,
     CustomID,
     Infinite,
+    JobGenerationInfo,
     LoadID,
+    OrderDates,
+    OrderTimes,
     PlotlyFigure,
     SystemID,
 )
@@ -362,7 +362,7 @@ class InfrastructureManager:
             'custom_id': str,
             'resource': object,
             'name': str,
-            'res_type': str,
+            'resource_type': str,
             'state': str,
             'station_group_id': pd.Int64Dtype(),
         }
@@ -605,7 +605,7 @@ class InfrastructureManager:
                         'custom_id': [custom_identifier],
                         'resource': [obj],
                         'name': [name],
-                        'res_type': [obj.res_type],  # type: ignore
+                        'resource_type': [obj.resource_type],  # type: ignore
                         'state': [state],
                         'station_group_id': [None],
                     }
@@ -2639,6 +2639,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         self,
         env: SimulationEnvironment,
         custom_identifier: CustomID,
+        resource_type: SimResourceTypes,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
@@ -2652,6 +2653,8 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         capacity: capacity of the infrastructure object, if multiple processing \
             slots available at the same time > 1, default=1
         """
+        self.capacity = capacity
+        self._resource_type = resource_type
         # [HIERARCHICAL SYSTEM INFORMATION]
         # contrary to other system types no bucket because a processing station
         # is the smallest unit in the system view/analysis
@@ -2665,8 +2668,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             name=name,
             state=current_state,
         )
-        self.capacity = capacity
-        self.res_type: str
         # [STATS] Monitoring
         if current_state is not None and states is not None:
             self._stat_monitor = monitors.InfStructMonitor(
@@ -2705,6 +2706,10 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             self._use_const_setup_time = True
         else:
             self._use_const_setup_time = False
+
+    @property
+    def resource_type(self) -> SimResourceTypes:
+        return self._resource_type
 
     # override for corresponding classes
     @property
@@ -3039,6 +3044,7 @@ class StorageLike(InfrastructureObject):
         self,
         env: SimulationEnvironment,
         custom_identifier: CustomID,
+        resource_type: SimResourceTypes,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: int | Infinite = INF,
@@ -3049,6 +3055,7 @@ class StorageLike(InfrastructureObject):
         super().__init__(
             env=env,
             custom_identifier=custom_identifier,
+            resource_type=resource_type,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
@@ -3091,6 +3098,7 @@ class ProcessingStation(InfrastructureObject):
         self,
         env: SimulationEnvironment,
         custom_identifier: CustomID,
+        resource_type: SimResourceTypes,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
@@ -3107,6 +3115,7 @@ class ProcessingStation(InfrastructureObject):
         super().__init__(
             env=env,
             custom_identifier=custom_identifier,
+            resource_type=resource_type,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
@@ -3290,12 +3299,13 @@ class Machine(ProcessingStation):
         ADD LATER
         """
         # assign object information
-        self.res_type = 'Machine'
+        resource_type = SimResourceTypes.MACHINE
 
         # initialise base class
         super().__init__(
             env=env,
             custom_identifier=custom_identifier,
+            resource_type=resource_type,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
@@ -3320,10 +3330,11 @@ class Buffer(StorageLike):
         """
         capacity: capacity of the buffer, can be infinite
         """
-        self.res_type = 'Buffer'
+        resource_type = SimResourceTypes.BUFFER
         super().__init__(
             env=env,
             custom_identifier=custom_identifier,
+            resource_type=resource_type,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
@@ -3461,72 +3472,75 @@ class Source(InfrastructureObject):
         self,
         env: SimulationEnvironment,
         custom_identifier: CustomID,
+        proc_time: Timedelta,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
         current_state: SimStatesCommon = SimStatesCommon.INIT,
         states: type[SimStatesCommon] = SimStatesCommon,
-        proc_time: Timedelta = Timedelta(hours=2),
-        job_generator: RandomJobGenerator | None = None,
-        job_sequence: Iterator[tuple[SystemID, SystemID, OrderTime]] | None = None,
-        num_gen_jobs: int | None = None,
+        job_generation_limit: int | None = None,
+        seed: int = 42,
     ) -> None:
-        """
-        num_gen_jobs: total number of jobs to be generated
-        """
         # assign object information and register object in the environment
-        self.res_type = 'Source'
+        resource_type = SimResourceTypes.SOURCE
 
         super().__init__(
             env=env,
             custom_identifier=custom_identifier,
+            resource_type=resource_type,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
             current_state=current_state,
             states=states,
         )
-
-        # generation method
-        if job_generator is None and job_sequence is None:
-            raise ValueError(
-                'Random job generator or job sequence necessary for job generation'
-            )
-        elif job_generator is not None and job_sequence is not None:
-            raise ValueError('Only one job generation method allowed')
-
-        self.job_generator = job_generator
-        self.job_sequence = job_sequence
-
         # TODO REWORK
         # initialise component with necessary process function
-        random.seed(42)
+        self._rng = random.Random(seed)
 
         # parameters
         self.proc_time = proc_time
+        if setup_time is not None:
+            self.order_time = self.proc_time + setup_time
+        else:
+            self.order_time = self.proc_time
         # indicator if an time equivalent should be used
         self.use_stop_time: bool = False
-        self.num_gen_jobs: int | None = None
-        if num_gen_jobs is not None:
-            self.num_gen_jobs = num_gen_jobs
-        else:
+        self.job_generation_limit = job_generation_limit
+        if self.job_generation_limit is None:
             self.use_stop_time = True
 
         # triggers and flags
         self.stop_job_gen_cond_reg: bool = False
         self.stop_job_gen_state = salabim.State('stop_job_gen', env=self.env, monitor=False)
 
-    def _obtain_proc_time(self) -> float:
-        """
-        function to generate a constant or random processing time
-        """
-        proc_time = self.env.td_to_simtime(timedelta=self.proc_time)
-        return proc_time
+        # job generator
+        self._job_sequence: Iterator[JobGenerationInfo] | None = None
 
-    def pre_process(self) -> None:
-        infstruct_mgr = self.env.infstruct_mgr
-        infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
+    @property
+    def rng(self) -> random.Random:
+        return self._rng
 
+    @property
+    def job_sequence(self) -> Iterator[JobGenerationInfo] | None:
+        return self._job_sequence
+
+    def _obtain_order_time(self) -> float:
+        order_time = self.env.td_to_simtime(timedelta=self.order_time)
+        return order_time
+
+    def register_job_sequence(
+        self,
+        job_sequence: Iterator[JobGenerationInfo],
+    ) -> None:
+        if not isinstance(job_sequence, Iterator):
+            raise TypeError('Job sequence must be an iterator')
+        self._job_sequence = job_sequence
+
+    def verify_starting_conditions(self) -> None:
+        # check if job sequence is set
+        if self._job_sequence is None:
+            raise ValueError('Job sequence is not set.')
         # check if ConditionSetter is registered if needed
         if self.use_stop_time and not self.stop_job_gen_cond_reg:
             raise ValueError(
@@ -3536,18 +3550,15 @@ class Source(InfrastructureObject):
                 )
             )
 
+    def pre_process(self) -> None:
+        infstruct_mgr = self.env.infstruct_mgr
+        infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
+
+        self.verify_starting_conditions()
+
     def sim_logic(self) -> Generator[None, None, None]:
-        # counter for debugging, else endless generation
-        count = 0
         infstruct_mgr = self.env.infstruct_mgr
         dispatcher = self.env.dispatcher
-
-        # use machine custom identifiers for generation
-        # machines = infstruct_mgr.res_db.loc[infstruct_mgr.res_db['res_type']=='Machine']
-        # machines_custom_ids = machines['custom_id'].to_list()
-
-        # use station group custom identifiers for generation
-        # station_groups_custom_ids = infstruct_mgr.station_group_db['custom_id'].to_list()
 
         # ?? only for random generation?
         """
@@ -3577,51 +3588,43 @@ class Source(InfrastructureObject):
         # ** new: job generation by sequence
         # !! currently only one production area
         if self.job_sequence is None:
-            raise ValueError('Job sequence is not set')
-        for prod_area_id, station_group_id, order_times in self.job_sequence:
-            if not self.use_stop_time:
-                # use number of generated jobs as stopping criterion
-                if count == self.num_gen_jobs:
-                    break
-            else:
+            raise RuntimeError('Job sequence not available')
+
+        for count, job_gen_info in enumerate(self.job_sequence):
+            if self.use_stop_time:
                 # stop if stopping time is reached
                 # flag set by corresponding ConditionSetter
                 if self.stop_job_gen_state.get():
                     break
+            else:
+                # use number of generated jobs as stopping criterion
+                if self.job_generation_limit is None:
+                    raise ValueError('Number of generated jobs not set')
+                if count == self.job_generation_limit:
+                    break
 
-            # start at t=0 with generation
-            # generate object
-            ## random job properties
-            ## currently: each job passes each machine, only one machine of
-            # each operation type
-            # mat_ProcTimes, mat_JobMachID =
-            # self.job_generator.gen_rnd_job(n_machines=self.env.num_proc_stations)
-            # job = Job(dispatcher=dispatcher, proc_times=mat_ProcTimes.tolist(),
-            #          machine_order=mat_JobMachID.tolist())
-            # mat_ProcTimes, mat_JobMachID =
-            # self.job_generator.gen_rnd_job_by_ids(ids=machines_custom_ids)
-            # mat_ProcTimes, mat_JobExOrder =
-            # self.job_generator.gen_rnd_job_by_ids(
-            # ids=station_groups_custom_ids, min_proc_time=5)
-            """
-            (job_ex_order, job_target_station_groups, 
-             proc_times, setup_times) = self.job_generator.gen_rnd_job_by_ids(
-                exec_system_ids=prod_area_custom_ids,
-                target_station_group_ids=stat_group_ids,
-                min_proc_time=5,
-                gen_setup_times=True,
-            )
-            loggers.sources.debug(f"[SOURCE: {self}] 
-            ProcTimes {proc_times} at {self.env.now()}")
-            """
-
-            # assign random priority
-            # prio = self.job_generator.gen_prio() + count
-            prio = count
-            # prio = [2,8]
-            # assign starting and ending dates
+            # ** prio
+            job_gen_info.prio = count
+            # ** dates
             start_date_init = Datetime(2023, 11, 20, hour=6, tzinfo=TIMEZONE_UTC)
             end_date_init = Datetime(2023, 12, 1, hour=10, tzinfo=TIMEZONE_UTC)
+            order_dates = OrderDates(
+                starting_planned=start_date_init, ending_planned=end_date_init
+            )
+            job_gen_info.dates = order_dates
+
+            job = Job(
+                dispatcher=dispatcher,
+                custom_identifier=job_gen_info.custom_id,
+                execution_systems=job_gen_info.execution_systems,
+                station_groups=job_gen_info.station_groups,
+                proc_times=job_gen_info.order_time.proc,
+                setup_times=job_gen_info.order_time.setup,
+                prio=job_gen_info.prio,
+                planned_starting_date=job_gen_info.dates.starting_planned,
+                planned_ending_date=job_gen_info.dates.ending_planned,
+                current_state=job_gen_info.current_state,
+            )
 
             # loggers.sources.debug('[SOURCE: %s] Exec Order: %s', self, job_ex_order)
             # loggers.sources.debug('[SOURCE: %s] %s', self, job_target_station_groups)
@@ -3636,17 +3639,18 @@ class Source(InfrastructureObject):
                       prio=prio,
                       planned_starting_date=start_date_init,
                       planned_ending_date=end_date_init)
-            """
+            
             job = Job(
                 dispatcher=dispatcher,
-                exec_systems_order=[prod_area_id],
-                target_stations_order=[station_group_id],
+                execution_systems=[prod_area_id],
+                station_groups=[station_group_id],
                 proc_times=[order_times.proc],
                 setup_times=[order_times.setup],
                 prio=prio,
                 planned_starting_date=start_date_init,
                 planned_ending_date=end_date_init,
             )
+            """
             loggers.sources.debug(
                 '[SOURCE: %s] Job target station group: %s',
                 self,
@@ -3675,12 +3679,12 @@ class Source(InfrastructureObject):
 
             # hold for defined generation time (constant or statistically distributed)
             # if hold time elapsed start new generation
-            proc_time = self._obtain_proc_time()
+            order_time = self._obtain_order_time()
             loggers.sources.debug(
-                '[SOURCE: %s] Hold for >>%s<< at %s', self, proc_time, self.env.now()
+                '[SOURCE: %s] Hold for >>%s<< at %s', self, order_time, self.env.now()
             )
 
-            yield self.sim_control.hold(proc_time)
+            yield self.sim_control.hold(order_time)
             # set counter up
             count += 1
 
@@ -3705,10 +3709,11 @@ class Sink(InfrastructureObject):
         """
         num_gen_jobs: total number of jobs to be generated
         """
-        self.res_type = 'Sink'
+        resource_type = SimResourceTypes.SINK
         super().__init__(
             env=env,
             custom_identifier=custom_identifier,
+            resource_type=resource_type,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
@@ -3910,9 +3915,9 @@ class Job(salabim.Component):
     def __init__(
         self,
         dispatcher: Dispatcher,
-        exec_systems_order: Sequence[SystemID],
+        execution_systems: Sequence[SystemID],
         proc_times: Sequence[Timedelta],
-        target_stations_order: Sequence[SystemID | None] | None = None,
+        station_groups: Sequence[SystemID | None] | None = None,
         setup_times: Sequence[Timedelta | None] | None = None,
         prio: int | Sequence[int | None] | None = None,
         planned_starting_date: Datetime | Sequence[Datetime | None] | None = None,
@@ -3930,10 +3935,10 @@ class Job(salabim.Component):
         # target station identifiers
         # if target_stations_order is None:
         op_target_stations: Sequence[SystemID | None]
-        if isinstance(target_stations_order, Sequence):
-            op_target_stations = target_stations_order
+        if isinstance(station_groups, Sequence):
+            op_target_stations = station_groups
         else:
-            op_target_stations = [None] * len(exec_systems_order)
+            op_target_stations = [None] * len(execution_systems)
         # setup times
         if setup_times is None:
             setup_times = [None] * len(proc_times)
@@ -3995,15 +4000,15 @@ class Job(salabim.Component):
 
         ### VALIDITY CHECK ###
         # length of provided identifiers and lists must match
-        if target_stations_order is not None:
-            if len(target_stations_order) != len(exec_systems_order):
+        if station_groups is not None:
+            if len(station_groups) != len(execution_systems):
                 raise ValueError(
                     (
                         'The number of target stations must match '
                         'the number of execution systems.'
                     )
                 )
-        if len(proc_times) != len(exec_systems_order):
+        if len(proc_times) != len(execution_systems):
             raise ValueError(
                 (
                     'The number of processing times must match '
@@ -4094,7 +4099,7 @@ class Job(salabim.Component):
                 job=self,
                 proc_time=op_proc_time,
                 setup_time=setup_times[idx],
-                exec_system_identifier=exec_systems_order[idx],
+                exec_system_identifier=execution_systems[idx],
                 target_station_group_identifier=op_target_stations[idx],
                 prio=op_prios[idx],
                 planned_starting_date=op_starting_dates[idx],

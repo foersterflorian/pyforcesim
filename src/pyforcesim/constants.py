@@ -94,6 +94,16 @@ DB_INJECTION_PATTERN: Final[str] = (
 
 
 # ** simulation
+class SimResourceTypes(enum.StrEnum):
+    MACHINE = enum.auto()
+    STORAGE = enum.auto()
+    BUFFER = enum.auto()
+    SOURCE = enum.auto()
+    SINK = enum.auto()
+    ASSEMBLY = enum.auto()
+    PROCESSING_STATION = enum.auto()
+
+
 class SimStatesCommon(enum.StrEnum):
     INIT = enum.auto()
     FINISH = enum.auto()
@@ -137,6 +147,11 @@ class SimSystemTypes(enum.StrEnum):
     PRODUCTION_AREA = enum.auto()
     STATION_GROUP = enum.auto()
     RESOURCE = enum.auto()
+
+
+class JobGeneration(enum.StrEnum):
+    RANDOM = enum.auto()
+    SEQUENTIAL = enum.auto()
 
 
 # ** policies

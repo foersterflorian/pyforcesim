@@ -13,6 +13,18 @@ def test_base_env(env, starting_dt):
 
 
 def build_sim_env(dt_manager, env):
+    # source
+    area_source = sim.ProductionArea(env=env, custom_identifier=CustomID('1000'))
+    group_source = sim.StationGroup(env=env, custom_identifier=CustomID('1000'))
+    area_source.add_subsystem(group_source)
+    order_time_source = dt_manager.timedelta_from_val(val=2.0, time_unit='hours')
+    source = sim.Source(
+        env=env,
+        custom_identifier=CustomID('source'),
+        proc_time=order_time_source,
+        job_generation_limit=6,
+    )
+    group_source.add_subsystem(source)
     # sink
     area_sink = sim.ProductionArea(env=env, custom_identifier=CustomID('2000'))
     group_sink = sim.StationGroup(env=env, custom_identifier=CustomID('2000'))
@@ -45,23 +57,12 @@ def build_sim_env(dt_manager, env):
 
     alloc_agent = agents.AllocationAgent(assoc_system=area_prod)
 
-    # source
-    area_source = sim.ProductionArea(env=env, custom_identifier=CustomID('1000'))
-    group_source = sim.StationGroup(env=env, custom_identifier=CustomID('1000'))
-    area_source.add_subsystem(group_source)
-    proc_time = dt_manager.timedelta_from_val(val=2.0, time_unit='hours')
-    sequence_generator = loads.ProductionSequenceSinglePA(
+    # job generation
+    sequence_generator = loads.ConstantSequenceSinglePA(
         env=env, seed=100, prod_area_id=area_prod.system_id
     )
-    prod_sequence_PA = sequence_generator.constant_sequence(order_time_source=proc_time)
-    source = sim.Source(
-        env=env,
-        custom_identifier=CustomID('source'),
-        proc_time=proc_time,
-        job_sequence=prod_sequence_PA,
-        num_gen_jobs=6,
-    )
-    group_source.add_subsystem(source)
+    prod_sequence_PA = sequence_generator.retrieve(target_obj=source)
+    source.register_job_sequence(prod_sequence_PA)
 
     # conditions
     duration_transient = dt_manager.timedelta_from_val(val=2, time_unit='hours')
