@@ -35,7 +35,7 @@ LOGGING_LEVEL_JOBS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_BUFFERS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.ERROR
-LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.ERROR
+LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_DB: Final[loglevel] = loglevel.ERROR
@@ -131,15 +131,19 @@ class SimStatesStorage(enum.StrEnum):
     INTERMEDIATE = enum.auto()
 
 
-UTIL_PROPERTIES: Final[tuple[SimStatesCommon, ...]] = (
-    SimStatesCommon.PROCESSING,
-    SimStatesCommon.SETUP,
-    SimStatesCommon.PAUSED,
+UTIL_PROPERTIES: Final[frozenset[SimStatesCommon]] = frozenset(
+    [
+        SimStatesCommon.PROCESSING,
+        SimStatesCommon.SETUP,
+        SimStatesCommon.PAUSED,
+    ]
 )
-HELPER_STATES: Final[tuple[SimStatesCommon, ...]] = (
-    SimStatesCommon.INIT,
-    SimStatesCommon.FINISH,
-    SimStatesCommon.TEMP,
+HELPER_STATES: Final[frozenset[SimStatesCommon]] = frozenset(
+    [
+        SimStatesCommon.INIT,
+        SimStatesCommon.FINISH,
+        SimStatesCommon.TEMP,
+    ]
 )
 
 

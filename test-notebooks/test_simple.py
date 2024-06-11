@@ -1,9 +1,10 @@
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 from pyforcesim.rl.gym_env import JSSEnv
@@ -15,23 +16,24 @@ tensorboard_path = (Path.cwd() / './test-notebooks/tensorboard/').resolve()
 # tensorboard_path.mkdir(parents=True, exist_ok=True)
 
 env = JSSEnv()
-print(env.observation_space.sample())
-print(env.action_space.sample())
+env_wrapper = Monitor(env, filename=str(tensorboard_path), allow_early_resets=True)
+# print(env.observation_space.sample())
+# print(env.action_space.sample())
 check_env(env)
 
-env = DummyVecEnv([lambda: JSSEnv()])
+env = DummyVecEnv([lambda: env_wrapper])
 # # env = make_vec_env(lambda: JSSEnv, n_envs=1)
-# model = PPO('MlpPolicy', env, verbose=2, tensorboard_log=str(tensorboard_path))
-# model.learn(total_timesteps=2000, progress_bar=True)
-# model.save(save_path)
+model = PPO('MlpPolicy', env, verbose=2, tensorboard_log=str(tensorboard_path))
+model.learn(total_timesteps=5_000, progress_bar=True, tb_log_name='test')
+model.save(save_path)
 
 
-model = PPO.load(save_path)
-obs = env.reset()
-while True:
-    action, _states = model.predict(obs)
-    obs, rewards, dones, info = env.step(action)
-    print(rewards)
+# model = PPO.load(save_path)
+# obs = env.reset()
+# while True:
+#     action, _states = model.predict(obs)
+#     obs, rewards, dones, info = env.step(action)
+#     print(rewards)
 
 # obs, info = env.reset()
 # n_steps = 10

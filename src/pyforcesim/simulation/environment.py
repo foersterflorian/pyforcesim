@@ -11,6 +11,7 @@ from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
 from functools import lru_cache
 from operator import attrgetter
+from pathlib import Path
 from typing import (
     Any,
     Final,
@@ -77,7 +78,7 @@ from pyforcesim.types import (
 # definition of routing system level
 EXEC_SYSTEM_TYPE: Final = SimSystemTypes.PRODUCTION_AREA
 # time after a store request is failed
-FAIL_DELAY: Final[float] = 20.0
+FAIL_DELAY: Final[Timedelta] = Timedelta(hours=7)
 
 # ** utilities
 # UTILITIES: Datetime Manager
@@ -166,6 +167,9 @@ class SimulationEnvironment(salabim.Environment):
         if self.debug_dashboard:
             self.ws_server_process = mp.Process(target=start_websocket_server)
             self.dashboard_server_process = mp.Process(target=start_dashboard)
+
+        # ** simulation run
+        self.FAIL_DELAY: Final[float] = self.td_to_simtime(timedelta=FAIL_DELAY)
 
         loggers.pyf_env.warning('New Environment >>%s<< initialised.', self.name())
 
@@ -1962,52 +1966,6 @@ class Dispatcher:
         job = policy.apply(items=job_collection)
         queue.remove(job)
 
-        # match self._curr_prio_rule:
-        #     # first in, first out
-        #     case 'FIFO':
-        #         # salabim queue pops first entry if no index is specified,
-        #         # not last like in Python
-        #         job = cast(Job, queue.pop())
-        #     # last in, last out
-        #     case 'LIFO':
-        #         # salabim queue pops first entry if no index is specified,
-        #         # not last like in Python
-        #         job = cast(Job, queue.pop(-1))
-        #     # shortest processing time
-        #     case 'SPT':
-        #         # choose job with shortest processing time
-        #         temp = cast(list[Job], queue.as_list())
-        #         job = min(temp, key=attrgetter('current_proc_time'))
-        #         # remove job from original queue
-        #         queue.remove(job)
-        #     # longest processing time
-        #     case 'LPT':
-        #         # choose job with longest processing time
-        #         temp = cast(list[Job], queue.as_list())
-        #         job = max(temp, key=attrgetter('current_proc_time'))
-        #         # remove job from original queue
-        #         queue.remove(job)
-        #     # shortest setup time
-        #     case 'SST':
-        #         # choose job with shortest setup time
-        #         temp = cast(list[Job], queue.as_list())
-        #         job = min(temp, key=attrgetter('current_setup_time'))
-        #         # remove job from original queue
-        #         queue.remove(job)
-        #     # longest setup time
-        #     case 'LST':
-        #         # choose job with longest setup time
-        #         temp = cast(list[Job], queue.as_list())
-        #         job = max(temp, key=attrgetter('current_setup_time'))
-        #         # remove job from original queue
-        #         queue.remove(job)
-        #     case 'PRIO':
-        #         # choose job with highest priority
-        #         temp = cast(list[Job], queue.as_list())
-        #         job = max(temp, key=attrgetter('prio'))
-        #         # remove job from original queue
-        #         queue.remove(job)
-
         return job
 
     ### ANALYSE ###
@@ -2134,12 +2092,14 @@ class Dispatcher:
         else:
             fig.show()
         if save_html:
-            file = f'{file_name}.html'
-            fig.write_html(file)
+            file = Path(f'{file_name}.html')
+            save_path = Path.cwd() / 'results' / file
+            fig.write_html(save_path, auto_open=True)
 
         if save_img:
-            file = f'{file_name}'
-            fig.write_image(file)
+            file = Path(f'{file_name}')
+            save_path = Path.cwd() / 'results' / file
+            fig.write_image(save_path.with_suffix('.svg'))
 
         return fig
 
@@ -2343,6 +2303,36 @@ class System:
             raise TypeError(f'Type of {val} must be boolean, but is {type(val)}')
 
         self._containing_proc_stations = val
+
+    def supersystems_as_list(self) -> list[System]:
+        """output the associated supersystems as list
+
+        Returns
+        -------
+        list[System]
+            list of associated supersystems
+        """
+        return list(self.supersystems.values())
+
+    def supersystems_as_tuple(self) -> tuple[System, ...]:
+        """output the associated supersystems as tuple
+
+        Returns
+        -------
+        tuple[System, ...]
+            tuple of associated supersystems
+        """
+        return tuple(self.supersystems.values())
+
+    def supersystems_as_set(self) -> set[System]:
+        """output the associated supersystems as set
+
+        Returns
+        -------
+        set[System]
+            set of associated supersystems
+        """
+        return set(self.supersystems.values())
 
     def subsystems_as_list(self) -> list[System]:
         """output the associated subsystems as list
@@ -2866,13 +2856,13 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 yield self.sim_control.to_store(
                     store=target_station.stores,
                     item=job,
-                    fail_delay=FAIL_DELAY,
+                    fail_delay=self.env.FAIL_DELAY,
                     fail_priority=1,
                 )
                 if self.sim_control.failed():
                     raise UserWarning(
                         (
-                            f'Store placement failed after {FAIL_DELAY} time steps. '
+                            f'Store placement failed after {self.env.FAIL_DELAY} time steps. '
                             f'There seems to be deadlock.'
                         )
                     )
@@ -3778,6 +3768,7 @@ class Operation:
         self._job_id = job.job_id
         self._exec_system_identifier = exec_system_identifier
         self._target_station_group_identifier = target_station_group_identifier
+        self.custom_identifier = custom_identifier
 
         # [STATS] Monitoring
         self._stat_monitor = monitors.Monitor(

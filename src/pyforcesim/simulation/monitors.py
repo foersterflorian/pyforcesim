@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pandas as pd
@@ -11,13 +12,13 @@ from pandas import DataFrame, Series
 from pyforcesim import loggers
 from pyforcesim.common import enum_str_values_as_frzset
 from pyforcesim.constants import (
+    HELPER_STATES,
     INF,
+    UTIL_PROPERTIES,
     SimStatesAvailability,
     SimStatesCommon,
     SimStatesStorage,
     TimeUnitsTimedelta,
-    UTIL_PROPERTIES,
-    HELPER_STATES,
 )
 from pyforcesim.datetime import DTManager
 from pyforcesim.types import PlotlyFigure
@@ -45,9 +46,6 @@ class Monitor:
         """
         Class to monitor associated objects (load and resource)
         """
-        # initialise parent class if available
-        # super().__init__(**kwargs)
-
         # [REGISTRATION]
         self._env = env
         self._target_object = obj
@@ -68,10 +66,7 @@ class Monitor:
         self.state_starting_time = self._env.t_as_dt()
 
         for state in self.states_possible:
-            # init state time dictionary
-            # self.state_times[state] = 0.
             self.state_times[state] = Timedelta()
-            # init state is set to True
             if state == self.state_current:
                 self.state_status[state] = True
             else:
@@ -79,7 +74,6 @@ class Monitor:
 
         # DataFrame to further analyse state durations
         self.state_durations: DataFrame | None = None
-
         # availability indicator
         self._availability_states = enum_str_values_as_frzset(SimStatesAvailability)
         if self.state_current in self._availability_states:
@@ -93,14 +87,12 @@ class Monitor:
         # state before 'TEMP' was set
         self._state_before_temp = self.state_current
         # time components
-        self.time_active: float = 0.0
-        # self.time_active: Timedelta = Timedelta()
+        self.time_total: Timedelta = Timedelta()
+        self.time_non_helpers: Timedelta = Timedelta()
 
         # time handling
-        # self._dt_parser: DTParser = DTParser()
-        # if isinstance(self.target_object, Operation):
-        loggers.monitors.debug('Monitor states: %s', self.states_possible)
-        loggers.monitors.debug('Monitor state times: %s', self.state_times)
+        # loggers.monitors.debug('Monitor states: %s', self.states_possible)
+        # loggers.monitors.debug('Monitor state times: %s', self.state_times)
 
     def __repr__(self) -> str:
         return f'Monitor instance of {self.target_object}'
@@ -204,20 +196,43 @@ class Monitor:
             self._is_temp = False
             self.set_state(target_state=self._state_before_temp)
 
-    def calc_KPI(
+    def calc_time_proportions(
         self,
-        is_finalise: bool = False,
     ) -> None:
+        calc_utilisation: bool = False
+        if hasattr(self, 'utilisation'):
+            calc_utilisation = True
+
+        time_total = Timedelta()
+        time_non_helpers = Timedelta()
+        time_utilisation = Timedelta()
+
+        for state, duration in self.state_times.items():
+            time_total += duration
+            if state not in HELPER_STATES:
+                time_non_helpers += duration
+            if calc_utilisation and state in UTIL_PROPERTIES:
+                time_utilisation += duration
+
+        self.time_total = time_total
+        self.time_non_helpers = time_non_helpers
+        if calc_utilisation:
+            self.time_utilisation = time_utilisation
+
+    def calc_KPI(self) -> None:
         """calculates different KPIs at any point in time"""
-
         # state durations for analysis
-        if not is_finalise:
-            self.state_durations = self.state_durations_as_df()
+        self.calc_time_proportions()
 
-        # [TOTAL ACTIVE TIME]
-        if self.state_durations is None:
-            raise RuntimeError('State durations are not available. Can not calculate KPIs.')
-        self.time_active = self.state_durations.loc[:, 'abs [seconds]'].sum()
+        # Utilisation
+        if hasattr(self, 'utilisation') and self.time_total.total_seconds() > 0:
+            self.utilisation = self.time_utilisation / self.time_total
+            loggers.monitors.debug(
+                'Utilisation of %s: %.3f at %s',
+                self.target_object,
+                self.utilisation,
+                self.env.t_as_dt(),
+            )
 
     def state_durations_as_df(self) -> DataFrame:
         """Calculates absolute and relative state durations at the current time
@@ -249,21 +264,19 @@ class Monitor:
 
     def finalise_stats(self) -> None:
         """finalisation of stats gathering"""
-
         # assign state duration table
-        # !! REWORK with calc_KPI
         self.state_durations = self.state_durations_as_df()
-
         # calculate KPIs
-        self.calc_KPI(is_finalise=True)
+        self.calc_KPI()
 
     ### ANALYSE AND CHARTS ###
-    def draw_state_bar_chart(
+    def draw_state_chart(
         self,
         save_img: bool = False,
         save_html: bool = False,
-        file_name: str = 'state_distribution_bar',
+        file_name: str = 'state_distribution',
         time_unit: TimeUnitsTimedelta = TimeUnitsTimedelta.HOURS,
+        pie_chart: bool = False,
     ) -> PlotlyFigure:
         """draws the collected state times of the object as bar chart"""
         data = pd.DataFrame.from_dict(
@@ -277,62 +290,77 @@ class Monitor:
         data[calc_col] = data['total time'] / calc_td  # type: ignore
         data = data.sort_index(axis=0, kind='stable')
 
-        fig: PlotlyFigure = px.bar(data, y=calc_col, text_auto='.2f')  # type: ignore wrong type hint in Plotly
+        show_legend: bool
+        chart_type: str
+        if pie_chart:
+            data = data.loc[data[calc_col] > 0.0, :]
+            fig = px.pie(data, values=calc_col, names=data.index)
+            show_legend = True
+            chart_type = 'Pie'
+        else:
+            fig = px.bar(data, y=calc_col, text_auto='.2f')  # type: ignore wrong type hint in Plotly
+            show_legend = False
+            chart_type = 'Bar'
+
         fig.update_layout(
-            title=f'State Time Distribution of {self._target_object}', showlegend=False
+            title=f'State Time Distribution of {self._target_object}', showlegend=show_legend
         )
         fig.update_yaxes(title=dict({'text': calc_col}))
 
         fig.show()
 
-        file_name = file_name + f'_{self}'
-
-        if save_html:
-            file = f'{file_name}.html'
-            fig.write_html(file)
-
-        if save_img:
-            file = f'{file_name}.svg'
-            fig.write_image(file)
-
-        return fig
-
-    def draw_state_pie_chart(
-        self,
-        save_img: bool = False,
-        save_html: bool = False,
-        file_name: str = 'state_distribution_pie',
-        time_unit: TimeUnitsTimedelta = TimeUnitsTimedelta.HOURS,
-    ) -> PlotlyFigure:
-        """draws the collected state times of the object as bar chart"""
-        data = pd.DataFrame.from_dict(
-            data=self.state_times, orient='index', columns=['total time']
+        file_name = (
+            file_name
+            + f'_{chart_type}_{self.target_object.__class__.__name__}'
+            + f'_CustomID_{self.target_object.custom_identifier}'
         )
-        data.index = data.index.rename('state')
-        # change time from Timedelta to any time unit possible --> float
-        # Plotly can not handle Timedelta objects properly, only Datetimes
-        calc_td = _dt_mgr.timedelta_from_val(val=1.0, time_unit=time_unit)
-        calc_col: str = f'total time [{time_unit}]'
-        data[calc_col] = data['total time'] / calc_td  # type: ignore
-        data = data.sort_index(axis=0, kind='stable')
-        data = data.loc[data[calc_col] > 0.0, :]
-
-        fig: PlotlyFigure = px.pie(data, values=calc_col, names=data.index)
-        fig.update_layout(title=f'State Time Distribution of {self._target_object}')
-
-        fig.show()
-
-        file_name = file_name + f'_{self}'
+        save_path = Path.cwd() / 'results' / file_name
 
         if save_html:
-            file = f'{file_name}.html'
-            fig.write_html(file)
+            save_path_html = save_path.with_suffix('.html')
+            fig.write_html(save_path_html)
 
         if save_img:
-            file = f'{file_name}.svg'
-            fig.write_image(file)
+            save_path_img = save_path.with_suffix('.svg')
+            fig.write_image(save_path_img)
 
         return fig
+
+    # def draw_state_pie_chart(
+    #     self,
+    #     save_img: bool = False,
+    #     save_html: bool = False,
+    #     file_name: str = 'state_distribution_pie',
+    #     time_unit: TimeUnitsTimedelta = TimeUnitsTimedelta.HOURS,
+    # ) -> PlotlyFigure:
+    #     data = pd.DataFrame.from_dict(
+    #         data=self.state_times, orient='index', columns=['total time']
+    #     )
+    #     data.index = data.index.rename('state')
+    #     # change time from Timedelta to any time unit possible --> float
+    #     # Plotly can not handle Timedelta objects properly, only Datetimes
+    #     calc_td = _dt_mgr.timedelta_from_val(val=1.0, time_unit=time_unit)
+    #     calc_col: str = f'total time [{time_unit}]'
+    #     data[calc_col] = data['total time'] / calc_td  # type: ignore
+    #     data = data.sort_index(axis=0, kind='stable')
+    #     data = data.loc[data[calc_col] > 0.0, :]
+
+    #     fig: PlotlyFigure = px.pie(data, values=calc_col, names=data.index)
+    #     fig.update_layout(title=f'State Time Distribution of {self._target_object}')
+
+    #     fig.show()
+
+    #     file_name = file_name + f'_{self}'
+
+    #     if save_html:
+    #         file = f'{file_name}.html'
+    #         fig.write_html(file)
+
+    #     if save_img:
+    #         file = f'{file_name}.svg'
+    #         fig.write_image(file)
+
+    #     return fig
 
 
 class StorageMonitor(Monitor):
@@ -392,7 +420,7 @@ class StorageMonitor(Monitor):
 
         is_finalise: bool = False
         if self.state_current == SimStatesCommon.FINISH:
-            is_finalise: bool = True
+            is_finalise = True
         self._track_fill_level(is_finalise=is_finalise)
 
     # storage fill level tracking
@@ -544,8 +572,6 @@ class InfStructMonitor(Monitor):
         self.utilisation: float = 0.0
 
         # logistic objective values
-        # self.WIP_load_time: float = 0.
-        # self._WIP_load_time_last: float = 0.
         self.WIP_load_time: Timedelta = Timedelta()
         self._WIP_load_time_last: Timedelta = Timedelta()
         self.WIP_load_num_jobs: int = 0
@@ -610,41 +636,19 @@ class InfStructMonitor(Monitor):
                 self._WIP_load_num_jobs_last = self.WIP_load_num_jobs
                 self._WIP_num_starting_time = current_time
 
-    def calc_KPI(
-        self,
-        is_finalise: bool = False,
-    ) -> None:
-        super().calc_KPI(is_finalise=is_finalise)
-
-        # [OCCUPATION]
-        # properties which count as occupied
-        # paused counts in because pausing the processing station is an external factor
-        if self.state_durations is None:
-            raise RuntimeError('State durations are not available. Can not calculate KPIs.')
-        self.time_occupied = cast(
-            float,
-            self.state_durations.loc[list(UTIL_PROPERTIES), 'abs [seconds]'].sum(),  # type: ignore
-        )
-        # [UTILISATION]
-        # avoid division by 0
-        if self.time_active > 0.0:
-            self.utilisation: float = self.time_occupied / self.time_active
-
     def change_WIP(
         self,
-        job: 'Job',
+        job: Job,
         remove: bool,
     ) -> None:
         # removing WIP
         if remove:
             # next operation of the job already assigned
-            # self.WIP_load_time -= job.last_proc_time
             if job.last_order_time is None:
                 raise ValueError(f'Last order time of job {job} is not set.')
             self.WIP_load_time -= job.last_order_time
             self.WIP_load_num_jobs -= 1
         else:
-            # self.WIP_load_time += job.current_proc_time
             if job.current_order_time is None:
                 raise ValueError(f'Current order time of job {job} is not set.')
             self.WIP_load_time += job.current_order_time
@@ -661,7 +665,6 @@ class InfStructMonitor(Monitor):
         self._track_WIP_level(is_finalise=True)
 
         # post-process WIP time level databases
-        # print(f'I AM {self}')
         self._WIP_time_db['level'] = self._WIP_time_db['level'].shift(
             periods=1, fill_value=Timedelta()
         )

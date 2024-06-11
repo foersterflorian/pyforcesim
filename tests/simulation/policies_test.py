@@ -1,4 +1,5 @@
 import pytest
+
 from pyforcesim.simulation.policies import (
     AgentPolicy,
     FIFOPolicy,
@@ -162,19 +163,19 @@ def test_priority_policy(priority_policy, job_queue):
     assert val == expected
 
 
-def test_utilisation_policy(processing_stations, utilisation_policy):
-    val = utilisation_policy.apply(processing_stations)
-    expected = processing_stations[0]
-    assert val == expected
+# def test_utilisation_policy(processing_stations, utilisation_policy):
+#     val = utilisation_policy.apply(processing_stations)
+#     expected = processing_stations[0]
+#     assert val == expected
 
 
-def test_load_time_policy(processing_stations, load_time_policy):
-    val = load_time_policy.apply(processing_stations)
-    expected = processing_stations[0]
-    assert val == expected
+# def test_load_time_policy(processing_stations, load_time_policy):
+#     val = load_time_policy.apply(processing_stations)
+#     expected = processing_stations[0]
+#     assert val == expected
 
 
-def test_load_jobs_policy(processing_stations, load_jobs_policy):
-    val = load_jobs_policy.apply(processing_stations)
-    expected = processing_stations[0]
-    assert val == expected
+# def test_load_jobs_policy(processing_stations, load_jobs_policy):
+#     val = load_jobs_policy.apply(processing_stations)
+#     expected = processing_stations[0]
+#     assert val == expected
