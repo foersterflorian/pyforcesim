@@ -5,8 +5,8 @@ import numpy as np
 import numpy.typing as npt
 
 from pyforcesim.env_builder import build_sim_env
-from pyforcesim.simulation import environment as sim
 from pyforcesim.loggers import gym_env as logger
+from pyforcesim.simulation import environment as sim
 
 MAX_WIP_TIME: Final[int] = 100
 MAX_NON_FEASIBLE: Final[int] = 20

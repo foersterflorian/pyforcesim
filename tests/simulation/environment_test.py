@@ -1,5 +1,3 @@
-import datetime
-
 from pyforcesim.constants import TimeUnitsTimedelta
 from pyforcesim.rl import agents
 from pyforcesim.simulation import conditions, loads
@@ -15,7 +13,12 @@ def test_base_env(env, starting_dt):
 
 def build_sim_env(dt_manager, env):
     # source
-    area_source = sim.ProductionArea(env=env, custom_identifier=CustomID('1000'))
+    area_source = sim.ProductionArea(
+        env=env,
+        custom_identifier=CustomID('1000'),
+        sim_get_prio=-20,
+        sim_put_prio=-30,
+    )
     group_source = sim.StationGroup(env=env, custom_identifier=CustomID('1000'))
     area_source.add_subsystem(group_source)
     order_time_source = dt_manager.timedelta_from_val(val=2.0, time_unit='hours')
@@ -27,7 +30,12 @@ def build_sim_env(dt_manager, env):
     )
     group_source.add_subsystem(source)
     # sink
-    area_sink = sim.ProductionArea(env=env, custom_identifier=CustomID('2000'))
+    area_sink = sim.ProductionArea(
+        env=env,
+        custom_identifier=CustomID('2000'),
+        sim_get_prio=-22,
+        sim_put_prio=-32,
+    )
     group_sink = sim.StationGroup(env=env, custom_identifier=CustomID('2000'))
     area_sink.add_subsystem(group_sink)
     sink = sim.Sink(env=env, custom_identifier=CustomID('sink'))
@@ -35,7 +43,12 @@ def build_sim_env(dt_manager, env):
 
     # processing stations
     # prod area 1
-    area_prod = sim.ProductionArea(env=env, custom_identifier=CustomID('1'))
+    area_prod = sim.ProductionArea(
+        env=env,
+        custom_identifier=CustomID('1'),
+        sim_get_prio=-21,
+        sim_put_prio=-31,
+    )
     group_prod = sim.StationGroup(env=env, custom_identifier=CustomID('1'))
     area_prod.add_subsystem(group_prod)
     group_prod2 = sim.StationGroup(env=env, custom_identifier=CustomID('2'))

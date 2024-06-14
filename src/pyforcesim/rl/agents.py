@@ -4,7 +4,7 @@ import random
 import statistics
 from abc import ABC, abstractmethod
 from datetime import timedelta as Timedelta
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
@@ -22,7 +22,6 @@ if TYPE_CHECKING:
         SimulationEnvironment,
         System,
     )
-    from pyforcesim.simulation.monitors import InfStructMonitor
 
 
 class Agent(ABC):
@@ -206,7 +205,10 @@ class AllocationAgent(Agent):
         # build feature vector
         self.feat_vec = self.build_feat_vec(job=job)
 
-        loggers.agents.debug(f'[REQUEST Agent {self}]: built FeatVec.')
+        loggers.agents.debug(
+            '[REQUEST Agent %s]: built FeatVec at %s', self, self.env.t_as_dt()
+        )
+        loggers.agents.debug('[Agent %s]: Feature Vector: %s', self, self.feat_vec)
 
     def set_decision(
         self,
@@ -230,8 +232,7 @@ class AllocationAgent(Agent):
         # station group, availability, WIP_time
         for i, res in enumerate(self._assoc_proc_stations):
             # T1 build feature vector for one machine
-            # !! type of stats monitor not clear
-            monitor = cast('InfStructMonitor', res.stat_monitor)
+            monitor = res.stat_monitor
             # station group identifier should be the system's one
             # because custom IDs can be non-numeric which is bad for an agent
             # use only first identifier although multiple values are possible

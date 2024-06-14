@@ -79,6 +79,7 @@ class TransientCondition(BaseCondition):
         super().__init__(env=env, name=name)
         # duration after which the condition is set
         self.duration_transient = duration_transient
+        self.env.duration_transient = duration_transient
 
     def pre_process(self) -> None:
         # validate that starting condition is met
@@ -90,10 +91,13 @@ class TransientCondition(BaseCondition):
 
     def sim_logic(self) -> Generator[None, None, None]:
         sim_time = self.env.td_to_simtime(timedelta=self.duration_transient)
-        yield self.sim_control.hold(sim_time, priority=-10)
+        yield self.sim_control.hold(sim_time, priority=-100)
         # set environment flag and state
+        loggers.conditions.debug(
+            '[CONDITION %s]: Event list of env: %s', self, self.env._event_list
+        )
         self.env.is_transient_cond = False
-        self.env.transient_cond_state.set()
+        # self.env.transient_cond_state.set()
         loggers.conditions.info(
             (
                 '[CONDITION %s]: Transient Condition over. Set >>is_transient_cond<< '
@@ -101,6 +105,9 @@ class TransientCondition(BaseCondition):
             ),
             self,
             self.env.is_transient_cond,
+        )
+        loggers.conditions.debug(
+            '[CONDITION %s]: Event list of env: %s', self, self.env._event_list
         )
 
     def post_process(self) -> None:
@@ -155,7 +162,7 @@ class JobGenDurationCondition(BaseCondition):
 
     def sim_logic(self) -> Generator[None, None, None]:
         sim_time = self.env.td_to_simtime(timedelta=self.sim_run_duration)
-        yield self.sim_control.hold(sim_time, priority=-10)
+        yield self.sim_control.hold(sim_time, priority=-100)
         self.target_obj.stop_job_gen_state.set()
         loggers.conditions.info(
             '[CONDITION %s]: Job Generation Condition met at %s', self, self.env.t_as_dt()
@@ -175,17 +182,30 @@ class TriggerAgentCondition(BaseCondition):
         super().__init__(env=env, name=name)
 
     def pre_process(self) -> None:
-        if self.env.transient_cond_state.get():
+        # if self.env.transient_cond_state.get():
+        if not self.env.is_transient_cond:
             raise ViolationStartingConditionError(
-                (f'Environment {self.env.name()} ' 'transient state: State already set!')
+                (f'Environment {self.env.name()} transient state: State already set!')
             )
 
     def sim_logic(self) -> Generator[None, None, None]:
         # wait till transient state is over
-        yield self.sim_control.wait(self.env.transient_cond_state, priority=-9)
+        # yield self.sim_control.wait(
+        #     (self.env.transient_cond_state, True, -90),
+        #     priority=-90,
+        # )
+        if self.env.duration_transient is None:
+            raise ValueError('Duration for transient state not set!')
+        sim_time = self.env.td_to_simtime(timedelta=self.env.duration_transient)
+        yield self.sim_control.hold(sim_time, priority=-90)
         # change allocation rule of dispatcher
         self.env.dispatcher.alloc_rule = 'AGENT'
-        loggers.conditions.info('[CONDITION %s]: Set allocation rule to >>AGENT<<', self)
+        loggers.conditions.info(
+            '[CONDITION %s]: Set allocation rule to >>AGENT<< at %s', self, self.env.t_as_dt()
+        )
+        loggers.conditions.debug(
+            '[CONDITION %s]: Event list of env: %s', self, self.env._event_list
+        )
 
     def post_process(self) -> None:
         pass

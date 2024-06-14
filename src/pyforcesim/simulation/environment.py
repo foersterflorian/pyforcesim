@@ -159,7 +159,8 @@ class SimulationEnvironment(salabim.Environment):
         # transient condition
         # state allows direct waiting for flag changes
         self.is_transient_cond: bool = True
-        self.transient_cond_state = salabim.State('trans_cond', env=self, monitor=False)
+        self.duration_transient: Timedelta | None = None
+        # self.transient_cond_state = salabim.State('trans_cond', env=self, monitor=False)
 
         # ** debug dashboard
         self.debug_dashboard = debug_dashboard
@@ -2136,11 +2137,15 @@ class System:
         abstraction_level: int,
         name: str | None = None,
         state: SimStatesCommon | SimStatesStorage | None = None,
+        sim_get_prio: int = 0,
+        sim_put_prio: int = 0,
     ) -> None:
         # [BASIC INFO]
         # environment
         self._env = env
         self._system_type = system_type
+        self._sim_get_prio = sim_get_prio
+        self._sim_put_prio = sim_put_prio
         # subsystem information
         self.subsystems: dict[SystemID, System] = {}
         self.subsystems_ids: set[SystemID] = set()
@@ -2187,6 +2192,32 @@ class System:
     @property
     def num_assoc_proc_station(self) -> int:
         return self._num_assoc_proc_stations
+
+    @property
+    def sim_get_prio(self) -> int:
+        return self._sim_get_prio
+
+    @sim_get_prio.setter
+    def sim_get_prio(
+        self,
+        val: int,
+    ) -> None:
+        self._sim_get_prio = val
+        for subsystem in self.subsystems.values():
+            subsystem.sim_get_prio = val
+
+    @property
+    def sim_put_prio(self) -> int:
+        return self._sim_put_prio
+
+    @sim_put_prio.setter
+    def sim_put_prio(
+        self,
+        val: int,
+    ) -> None:
+        self._sim_put_prio = val
+        for subsystem in self.subsystems.values():
+            subsystem.sim_put_prio = val
 
     ### REWORK
     def register_agent(
@@ -2304,7 +2335,17 @@ class System:
 
         self._containing_proc_stations = val
 
-    def supersystems_as_list(self) -> list[System]:
+    @staticmethod
+    def order_systems(
+        systems: Iterable[System],
+    ) -> list[System]:
+        sys_sorted = sorted(list(systems), key=attrgetter('system_id'), reverse=False)
+        return sys_sorted
+
+    def supersystems_as_list(
+        self,
+        ordered_sys_id: bool = True,
+    ) -> list[System]:
         """output the associated supersystems as list
 
         Returns
@@ -2312,9 +2353,15 @@ class System:
         list[System]
             list of associated supersystems
         """
-        return list(self.supersystems.values())
+        if ordered_sys_id:
+            return self.order_systems(self.supersystems.values())
+        else:
+            return list(self.supersystems.values())
 
-    def supersystems_as_tuple(self) -> tuple[System, ...]:
+    def supersystems_as_tuple(
+        self,
+        ordered_sys_id: bool = True,
+    ) -> tuple[System, ...]:
         """output the associated supersystems as tuple
 
         Returns
@@ -2322,7 +2369,7 @@ class System:
         tuple[System, ...]
             tuple of associated supersystems
         """
-        return tuple(self.supersystems.values())
+        return tuple(self.supersystems_as_list(ordered_sys_id=ordered_sys_id))
 
     def supersystems_as_set(self) -> set[System]:
         """output the associated supersystems as set
@@ -2334,7 +2381,10 @@ class System:
         """
         return set(self.supersystems.values())
 
-    def subsystems_as_list(self) -> list[System]:
+    def subsystems_as_list(
+        self,
+        ordered_sys_id: bool = True,
+    ) -> list[System]:
         """output the associated subsystems as list
 
         Returns
@@ -2342,9 +2392,15 @@ class System:
         list[System]
             list of associated subsystems
         """
-        return list(self.subsystems.values())
+        if ordered_sys_id:
+            return self.order_systems(self.subsystems.values())
+        else:
+            return list(self.subsystems.values())
 
-    def subsystems_as_tuple(self) -> tuple[System, ...]:
+    def subsystems_as_tuple(
+        self,
+        ordered_sys_id: bool = True,
+    ) -> tuple[System, ...]:
         """output the associated subsystems as tuple
 
         Returns
@@ -2352,7 +2408,7 @@ class System:
         tuple[System, ...]
             tuple of associated subsystems
         """
-        return tuple(self.subsystems.values())
+        return tuple(self.subsystems_as_list(ordered_sys_id=ordered_sys_id))
 
     def subsystems_as_set(self) -> set[System]:
         """output the associated subsystems as set
@@ -2403,9 +2459,11 @@ class System:
             self.subsystems_ids.add(subsystem.system_id)
             self.subsystems_custom_ids.add(subsystem.custom_identifier)
         else:
-            raise UserWarning(f'Subsystem {subsystem} was already in supersystem {self}!')
+            raise RuntimeError(f'Subsystem {subsystem} was already in supersystem {self}!')
 
         subsystem.add_supersystem(supersystem=self)
+        subsystem.sim_get_prio = self.sim_get_prio
+        subsystem.sim_put_prio = self.sim_put_prio
 
         # register association in corresponding database
         infstruct_mgr = self.env.infstruct_mgr
@@ -2477,7 +2535,6 @@ class System:
             subsystems = temp
             remaining_abstraction_level -= 1
 
-        # flatten list and remove duplicates by making a set
         low_lev_subsystems_set = cast(set[InfrastructureObject], set(flatten(subsystems)))
         # filter only processing stations if option chosen
         low_lev_subsystems_lst: list[InfrastructureObject] | list[ProcessingStation]
@@ -2528,6 +2585,8 @@ class ProductionArea(System):
         self,
         env: SimulationEnvironment,
         custom_identifier: CustomID,
+        sim_get_prio: int,
+        sim_put_prio: int,
         name: str | None = None,
         state: SimStatesCommon | SimStatesStorage | None = None,
     ) -> None:
@@ -2541,6 +2600,8 @@ class ProductionArea(System):
             abstraction_level=2,
             name=name,
             state=state,
+            sim_get_prio=sim_get_prio,
+            sim_put_prio=sim_put_prio,
         )
 
     def add_subsystem(
@@ -2794,7 +2855,8 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         infstruct_mgr = self.env.infstruct_mgr
         # call dispatcher to check for allocation rule
         # resets current feasibility status
-        yield self.sim_control.hold(0)
+        yield self.sim_control.hold(0, priority=self.sim_put_prio)
+        loggers.agents.debug('[%s] Checking agent allocation at %s', self, self.env.t_as_dt())
         is_agent, alloc_agent = dispatcher.check_alloc_dispatch(job=job)
         target_station: InfrastructureObject
         if is_agent and alloc_agent is None:
@@ -2808,16 +2870,16 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 # ** Break external loop
                 # ** [only step] Calc reward in Gym-Env
                 loggers.agents.debug(
-                    (
-                        '--------------- DEBUG: call before hold(0) at %s, %s',
-                        self.env.t(),
-                        self.env.t_as_dt(),
-                    )
+                    '--------------- DEBUG: call before hold(0) at %s, %s',
+                    self.env.t(),
+                    self.env.t_as_dt(),
                 )
-                yield self.sim_control.hold(0)
+                yield self.sim_control.hold(0, priority=self.sim_put_prio)
                 # ** make and set decision in Gym-Env --> RESET external Gym flag
                 loggers.agents.debug(
-                    ('--------------- DEBUG: call after hold(0) at %s', self.env.t())
+                    '--------------- DEBUG: call after hold(0) at %s, %s',
+                    self.env.t(),
+                    self.env.t_as_dt(),
                 )
                 loggers.agents.debug(
                     'Action feasibility: current %s, past %s',
@@ -2842,6 +2904,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         logic_queue = target_station.logic_queue
         # check if the target is a sink
         if isinstance(target_station, Sink):
+            loggers.agents.debug('Placing in sink at %s', self.env.t_as_dt())
             pass
         elif isinstance(target_station, ProcessingStation):
             # check if associated buffers exist
@@ -2858,9 +2921,10 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                     item=job,
                     fail_delay=self.env.FAIL_DELAY,
                     fail_priority=1,
+                    priority=self.sim_put_prio,
                 )
                 if self.sim_control.failed():
-                    raise UserWarning(
+                    raise RuntimeError(
                         (
                             f'Store placement failed after {self.env.FAIL_DELAY} time steps. '
                             f'There seems to be deadlock.'
@@ -2883,11 +2947,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                     type(buffer),
                     self.env.now(),
                 )
-            else:
-                # adding request to machine
-                # currently not possible because machines are components,
-                # but resources which could be requested are not
-                pass
 
         # [Job] enter logic queue after physical placement
         job.enter(logic_queue)
@@ -2913,6 +2972,12 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # [STATS:InfrStructObj] count number of outputs
         self.num_outputs += 1
 
+        loggers.agents.debug(
+            'From [%s] Updated states and placed job at %s',
+            self,
+            self.env.t_as_dt(),
+        )
+
         return target_station
 
     def get_job(self) -> Generator[Any, Any, Job]:
@@ -2931,6 +2996,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         dispatcher = self.env.dispatcher
         infstruct_mgr = self.env.infstruct_mgr
         # request job and its time characteristics from associated queue
+        yield self.sim_control.hold(0, priority=self.sim_get_prio)
         # TODO retrieve times from job object directly
         job, job_proc_time, job_setup_time = dispatcher.request_job_sequencing(req_obj=self)
 
@@ -2956,7 +3022,8 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # request and get job from associated buffer if it exists
         if isinstance(self, ProcessingStation) and self._buffers:
             yield self.sim_control.from_store(
-                store=self.stores, filter=lambda item: item.job_id == job.job_id
+                store=self.stores,
+                filter=lambda item: item.job_id == job.job_id,
             )
             salabim_store = self.sim_control.from_store_store()
             if salabim_store is None:
@@ -2990,7 +3057,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 self.setup_time,
             )
             sim_time = self.env.td_to_simtime(timedelta=self.setup_time)
-            yield self.sim_control.hold(sim_time)
+            yield self.sim_control.hold(sim_time, priority=self.sim_get_prio)
 
         # [STATE:InfrStructObj] PROCESSING
         infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
@@ -3152,7 +3219,7 @@ class ProcessingStation(InfrastructureObject):
         self,
         store_name: str,
     ) -> Buffer:
-        buffer = self._stores_map.get(store_name, None)
+        buffer = self.stores_map.get(store_name, None)
         if buffer is None:
             raise KeyError(f'No buffer with name {store_name} found.')
         return buffer
@@ -3247,7 +3314,7 @@ class ProcessingStation(InfrastructureObject):
             )
             # PROCESSING
             sim_time = self.env.td_to_simtime(timedelta=self.proc_time)
-            yield self.sim_control.hold(sim_time)
+            yield self.sim_control.hold(sim_time, priority=self.sim_put_prio)
             dispatcher.update_job_process_info(job=job, preprocess=False)
             loggers.prod_stations.debug(
                 '[END] job ID %s at %s on machine ID %s',
@@ -3255,7 +3322,7 @@ class ProcessingStation(InfrastructureObject):
                 self.env.now(),
                 self.custom_identifier,
             )
-
+            loggers.agents.debug('Placing by machine %s at %s', self, self.env.t_as_dt())
             _ = yield from self.put_job(job=job)
             # [CONTENT:ProdStation] remove content
             self.remove_content(job=job)
@@ -3616,31 +3683,6 @@ class Source(InfrastructureObject):
                 current_state=job_gen_info.current_state,
             )
 
-            # loggers.sources.debug('[SOURCE: %s] Exec Order: %s', self, job_ex_order)
-            # loggers.sources.debug('[SOURCE: %s] %s', self, job_target_station_groups)
-            # !! job init with CustomID, but SystemID used
-            # TODO: change initialisation to SystemID
-            """
-            job = Job(dispatcher=dispatcher,
-                      exec_systems_order=job_ex_order,
-                      target_stations_order=job_target_station_groups,
-                      proc_times=proc_times,
-                      setup_times=setup_times,
-                      prio=prio,
-                      planned_starting_date=start_date_init,
-                      planned_ending_date=end_date_init)
-            
-            job = Job(
-                dispatcher=dispatcher,
-                execution_systems=[prod_area_id],
-                station_groups=[station_group_id],
-                proc_times=[order_times.proc],
-                setup_times=[order_times.setup],
-                prio=prio,
-                planned_starting_date=start_date_init,
-                planned_ending_date=end_date_init,
-            )
-            """
             loggers.sources.debug(
                 '[SOURCE: %s] Job target station group: %s',
                 self,
@@ -3659,10 +3701,9 @@ class Source(InfrastructureObject):
             loggers.sources.debug('[SOURCE: %s] Request allocation...', self)
             # put job via 'put_job' function,
             # implemented in parent class 'InfrastructureObject'
+            loggers.agents.debug('Placing by source at %s', self.env.t_as_dt())
             target_proc_station = yield from self.put_job(job=job)
-            loggers.sources.debug(
-                '[SOURCE: %s] PUT JOB with ret = %s', self, target_proc_station
-            )
+            loggers.sources.debug('[SOURCE] PUT JOB with ret = %s', target_proc_station)
             # [STATE:Source] put in 'WAITING' by 'put_job' method but still processing
             # only 'WAITING' if all jobs are generated
             infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
@@ -3674,7 +3715,7 @@ class Source(InfrastructureObject):
                 '[SOURCE: %s] Hold for >>%s<< at %s', self, order_time, self.env.now()
             )
 
-            yield self.sim_control.hold(order_time)
+            yield self.sim_control.hold(order_time, priority=self.sim_put_prio)
             # set counter up
             count += 1
 
@@ -3725,9 +3766,6 @@ class Sink(InfrastructureObject):
             job = cast(Job, self.logic_queue.pop())
             # [Call:DISPATCHER] data collection: finalise job
             dispatcher.finish_job(job=job)
-            # ?? destroy job object?
-            # if job object destroyed, unsaved information is lost
-            # if not destroyed memory usage could increase
             # TODO write finalised job information to database (disk)
 
     def post_process(self) -> None:

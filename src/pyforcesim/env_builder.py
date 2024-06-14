@@ -15,7 +15,12 @@ def build_sim_env() -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]:
     env.dispatcher.seq_rule = 'FIFO'
     env.dispatcher.alloc_rule = 'LOAD_TIME'
     # source
-    area_source = sim.ProductionArea(env=env, custom_identifier=CustomID('1000'))
+    area_source = sim.ProductionArea(
+        env=env,
+        custom_identifier=CustomID('1000'),
+        sim_get_prio=-20,
+        sim_put_prio=-30,
+    )
     group_source = sim.StationGroup(env=env, custom_identifier=CustomID('1000'))
     area_source.add_subsystem(group_source)
     order_time_source = dt_manager.timedelta_from_val(
@@ -29,7 +34,12 @@ def build_sim_env() -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]:
     )
     group_source.add_subsystem(source)
     # sink
-    area_sink = sim.ProductionArea(env=env, custom_identifier=CustomID('2000'))
+    area_sink = sim.ProductionArea(
+        env=env,
+        custom_identifier=CustomID('2000'),
+        sim_get_prio=-22,
+        sim_put_prio=-32,
+    )
     group_sink = sim.StationGroup(env=env, custom_identifier=CustomID('2000'))
     area_sink.add_subsystem(group_sink)
     sink = sim.Sink(env=env, custom_identifier=CustomID('sink'))
@@ -37,7 +47,12 @@ def build_sim_env() -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]:
 
     # processing stations
     # prod area 1
-    area_prod = sim.ProductionArea(env=env, custom_identifier=CustomID('1'))
+    area_prod = sim.ProductionArea(
+        env=env,
+        custom_identifier=CustomID('1'),
+        sim_get_prio=-21,
+        sim_put_prio=-31,
+    )
     group_prod = sim.StationGroup(env=env, custom_identifier=CustomID('1'))
     area_prod.add_subsystem(group_prod)
     group_prod2 = sim.StationGroup(env=env, custom_identifier=CustomID('2'))
@@ -70,7 +85,7 @@ def build_sim_env() -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]:
 
     # conditions
     duration_transient = dt_manager.timedelta_from_val(
-        val=2, time_unit=TimeUnitsTimedelta.HOURS
+        val=6, time_unit=TimeUnitsTimedelta.HOURS
     )
     conditions.TransientCondition(env=env, duration_transient=duration_transient)
     conditions.TriggerAgentCondition(env=env)
