@@ -160,7 +160,6 @@ class SimulationEnvironment(salabim.Environment):
         # state allows direct waiting for flag changes
         self.is_transient_cond: bool = True
         self.duration_transient: Timedelta | None = None
-        # self.transient_cond_state = salabim.State('trans_cond', env=self, monitor=False)
 
         # ** debug dashboard
         self.debug_dashboard = debug_dashboard
@@ -3148,6 +3147,13 @@ class StorageLike(InfrastructureObject):
     @property
     def fill_level(self) -> int:
         return len(self.sim_control.store)
+
+    @property
+    def fill_percentage(self) -> float:
+        if self.capacity == INF:
+            return 0.0
+        else:
+            return round(self.fill_level / self.capacity, 4)
 
 
 class ProcessingStation(InfrastructureObject):

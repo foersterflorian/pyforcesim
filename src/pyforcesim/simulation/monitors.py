@@ -185,16 +185,16 @@ class Monitor:
     def reset_temp_state(self) -> None:
         """Reset from 'TEMP' state"""
         # check if object was in TEMP state, raise error if not
-        if not self._is_temp:
+        if self._is_temp:
+            self._is_temp = False
+            self.set_state(target_state=self._state_before_temp)
+        else:
             raise RuntimeError(
                 (
                     f'Tried to reset {self._target_object} from >>TEMP<< state but '
                     f'the current state is >>{self.state_current}<<'
                 )
             )
-        else:
-            self._is_temp = False
-            self.set_state(target_state=self._state_before_temp)
 
     def calc_time_proportions(
         self,
@@ -325,42 +325,6 @@ class Monitor:
             fig.write_image(save_path_img)
 
         return fig
-
-    # def draw_state_pie_chart(
-    #     self,
-    #     save_img: bool = False,
-    #     save_html: bool = False,
-    #     file_name: str = 'state_distribution_pie',
-    #     time_unit: TimeUnitsTimedelta = TimeUnitsTimedelta.HOURS,
-    # ) -> PlotlyFigure:
-    #     data = pd.DataFrame.from_dict(
-    #         data=self.state_times, orient='index', columns=['total time']
-    #     )
-    #     data.index = data.index.rename('state')
-    #     # change time from Timedelta to any time unit possible --> float
-    #     # Plotly can not handle Timedelta objects properly, only Datetimes
-    #     calc_td = _dt_mgr.timedelta_from_val(val=1.0, time_unit=time_unit)
-    #     calc_col: str = f'total time [{time_unit}]'
-    #     data[calc_col] = data['total time'] / calc_td  # type: ignore
-    #     data = data.sort_index(axis=0, kind='stable')
-    #     data = data.loc[data[calc_col] > 0.0, :]
-
-    #     fig: PlotlyFigure = px.pie(data, values=calc_col, names=data.index)
-    #     fig.update_layout(title=f'State Time Distribution of {self._target_object}')
-
-    #     fig.show()
-
-    #     file_name = file_name + f'_{self}'
-
-    #     if save_html:
-    #         file = f'{file_name}.html'
-    #         fig.write_html(file)
-
-    #     if save_img:
-    #         file = f'{file_name}.svg'
-    #         fig.write_image(file)
-
-    #     return fig
 
 
 class StorageMonitor(Monitor):

@@ -1,6 +1,10 @@
 import shutil
 from pathlib import Path
 
+import numpy as np
+import numpy.typing as npt
+from sb3_contrib.common.wrappers import ActionMasker
+from sb3_contrib.ppo_mask import MaskablePPO
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.env_util import make_vec_env
@@ -15,16 +19,25 @@ tensorboard_path = (Path.cwd() / './test-notebooks/tensorboard/').resolve()
 #     shutil.rmtree(tensorboard_path)
 # tensorboard_path.mkdir(parents=True, exist_ok=True)
 
+
+def mask_fn(env: JSSEnv) -> npt.NDArray[np.bool_]:
+    return env.feasible_action_mask()
+
+
 env = JSSEnv()
-env_wrapper = Monitor(env, filename=str(tensorboard_path), allow_early_resets=True)
+env = Monitor(env, filename=str(tensorboard_path), allow_early_resets=True)
+env = ActionMasker(env, action_mask_fn=mask_fn)
+
 # print(env.observation_space.sample())
 # print(env.action_space.sample())
 check_env(env)
 
-env = DummyVecEnv([lambda: env_wrapper])
+vec_env = DummyVecEnv([lambda: env])
 # # env = make_vec_env(lambda: JSSEnv, n_envs=1)
-model = PPO('MlpPolicy', env, verbose=2, tensorboard_log=str(tensorboard_path))
+# model = PPO('MlpPolicy', vec_env, verbose=2, tensorboard_log=str(tensorboard_path))
+model = MaskablePPO('MlpPolicy', vec_env, verbose=2, tensorboard_log=str(tensorboard_path))
 model.learn(total_timesteps=5_000, progress_bar=True, tb_log_name='test')
+print(f'Non-feasible counter: {env.agent.non_feasible_counter}')
 model.save(save_path)
 
 

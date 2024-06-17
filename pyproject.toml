@@ -65,6 +65,7 @@ rl = [
     "tensorboard>=2.16.2",
     "tqdm>=4.66.4",
     "rich>=13.7.1",
+    "sb3-contrib>=2.3.0",
 ]
 
 [tool.ruff]

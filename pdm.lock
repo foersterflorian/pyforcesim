@@ -5,7 +5,7 @@
 groups = ["default", "notebooks", "linting", "tests", "rl"]
 strategy = ["cross_platform", "inherit_metadata"]
 lock_version = "4.4.1"
-content_hash = "sha256:53288d6eb9f51c537ec5cfa0eac0db67da931e0f83c7308195bbeaa66a9fad7a"
+content_hash = "sha256:a408c2df4521250cd78f6a25db4a10f59c927e877e4d267b7f0930da193449ea"
 
 [[package]]
 name = "absl-py"
@@ -2415,6 +2415,20 @@ summary = "discrete event simulation in Python"
 groups = ["default"]
 files = [
     {file = "salabim-24.0.2.tar.gz", hash = "sha256:68c8a5666ff8fa0b3d326ec8198a61252b1b73dde078c7155e72387c8920b300"},
+]
+
+[[package]]
+name = "sb3-contrib"
+version = "2.3.0"
+requires_python = ">=3.8"
+summary = "Contrib package of Stable Baselines3, experimental code."
+groups = ["rl"]
+dependencies = [
+    "stable-baselines3<3.0,>=2.3.0",
+]
+files = [
+    {file = "sb3_contrib-2.3.0-py3-none-any.whl", hash = "sha256:79dadda884f2242bbab11fdb06ccf00eeead2937f7ed09ba577f803f2e52c8e1"},
+    {file = "sb3_contrib-2.3.0.tar.gz", hash = "sha256:9755ef9efa08e43afb9c4e79564ed594eb8bc497256920403a7e269a72216221"},
 ]
 
 [[package]]

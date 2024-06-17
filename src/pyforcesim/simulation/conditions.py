@@ -97,7 +97,6 @@ class TransientCondition(BaseCondition):
             '[CONDITION %s]: Event list of env: %s', self, self.env._event_list
         )
         self.env.is_transient_cond = False
-        # self.env.transient_cond_state.set()
         loggers.conditions.info(
             (
                 '[CONDITION %s]: Transient Condition over. Set >>is_transient_cond<< '
@@ -190,10 +189,6 @@ class TriggerAgentCondition(BaseCondition):
 
     def sim_logic(self) -> Generator[None, None, None]:
         # wait till transient state is over
-        # yield self.sim_control.wait(
-        #     (self.env.transient_cond_state, True, -90),
-        #     priority=-90,
-        # )
         if self.env.duration_transient is None:
             raise ValueError('Duration for transient state not set!')
         sim_time = self.env.td_to_simtime(timedelta=self.env.duration_transient)

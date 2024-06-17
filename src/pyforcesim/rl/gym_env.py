@@ -31,7 +31,6 @@ class JSSEnv(gym.Env):
         n_machines = len(self.agent.assoc_proc_stations)
         self.action_space = gym.spaces.Discrete(n=n_machines, seed=seed)
         # Example for using image as input (channel-first; channel-last also works):
-        # TODO change observation space
         target_system = cast(sim.ProductionArea, self.agent.assoc_system)
         min_SGI = target_system.get_min_subsystem_id()
         max_SGI = target_system.get_max_subsystem_id()
@@ -66,7 +65,6 @@ class JSSEnv(gym.Env):
         # calculate reward based on new observation
         logger.debug('Taking step in environment')
         ## ** action is provided as parameter, set action
-        # ?? should still be checked? necessary?
         # should not be needed any more, empty event list is checked below
         self.agent.set_decision(action=action)
 
@@ -146,3 +144,6 @@ class JSSEnv(gym.Env):
         logger.info('Environment reset finished')
 
         return observation, info
+
+    def feasible_action_mask(self) -> npt.NDArray[np.bool_]:
+        return self.agent.action_mask

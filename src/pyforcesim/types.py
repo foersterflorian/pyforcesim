@@ -37,6 +37,7 @@ CustomID = NewType('CustomID', str)
 LoadID = NewType('LoadID', int)
 OrderPriority: TypeAlias = int
 Infinite: TypeAlias = float
+StateTimes: TypeAlias = dict[str, Timedelta]
 
 
 @dataclass(kw_only=True, slots=True, eq=False, match_args=False)
