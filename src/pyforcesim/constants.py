@@ -36,7 +36,7 @@ LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_BUFFERS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.DEBUG
+LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_DB: Final[loglevel] = loglevel.ERROR
 

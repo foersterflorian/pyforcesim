@@ -17,6 +17,7 @@ dependencies = [
     "dash-extensions>=1.0.15",
     "websocket-client>=1.8.0",
     "gymnasium>=0.29.1",
+    "typing-extensions>=4.12.2",
 ]
 requires-python = ">=3.11"
 readme = "README.md"
@@ -80,6 +81,9 @@ skip-magic-trailing-comma = false
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+
+[tool.ruff.lint.isort]
+extra-standard-library = ["typing_extensions"]
 
 [tool.pytest.ini_options]
 addopts = [

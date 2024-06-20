@@ -5,6 +5,7 @@ from collections.abc import Iterable, Sequence
 from operator import attrgetter
 from random import Random
 from typing import TYPE_CHECKING, Never, TypeVar, cast
+from typing_extensions import override
 
 from pyforcesim.types import SystemID
 
@@ -108,6 +109,7 @@ class RandomPolicy(GeneralPolicy):
     def rng(self) -> Random:
         return self._rng
 
+    @override
     def apply(
         self,
         items: Sequence[T],
@@ -116,6 +118,7 @@ class RandomPolicy(GeneralPolicy):
 
 
 class FIFOPolicy(GeneralPolicy):
+    @override
     def apply(
         self,
         items: Sequence[T],
@@ -124,6 +127,7 @@ class FIFOPolicy(GeneralPolicy):
 
 
 class LIFOPolicy(GeneralPolicy):
+    @override
     def apply(
         self,
         items: Sequence[T],
@@ -132,6 +136,7 @@ class LIFOPolicy(GeneralPolicy):
 
 
 class AgentPolicy(GeneralPolicy):
+    @override
     def apply(
         self,
         _: Sequence[T],
@@ -143,6 +148,7 @@ class AgentPolicy(GeneralPolicy):
 
 
 class SPTPolicy(SequencingPolicy):
+    @override
     def apply(
         self,
         items: Sequence[Job],
@@ -151,6 +157,7 @@ class SPTPolicy(SequencingPolicy):
 
 
 class LPTPolicy(SequencingPolicy):
+    @override
     def apply(
         self,
         items: Sequence[Job],
@@ -159,6 +166,7 @@ class LPTPolicy(SequencingPolicy):
 
 
 class SSTPolicy(SequencingPolicy):
+    @override
     def apply(
         self,
         items: Sequence[Job],
@@ -167,6 +175,7 @@ class SSTPolicy(SequencingPolicy):
 
 
 class LSTPolicy(SequencingPolicy):
+    @override
     def apply(
         self,
         items: Sequence[Job],
@@ -175,6 +184,7 @@ class LSTPolicy(SequencingPolicy):
 
 
 class PriorityPolicy(SequencingPolicy):
+    @override
     def apply(
         self,
         items: Sequence[Job],
@@ -186,6 +196,7 @@ class PriorityPolicy(SequencingPolicy):
 
 
 class UtilisationPolicy(AllocationPolicy):
+    @override
     def apply(
         self,
         items: Iterable[ProcessingStation],
@@ -203,6 +214,7 @@ class UtilisationPolicy(AllocationPolicy):
 
 
 class LoadTimePolicy(AllocationPolicy):
+    @override
     def apply(
         self,
         items: Iterable[ProcessingStation],
@@ -220,6 +232,7 @@ class LoadTimePolicy(AllocationPolicy):
 
 
 class LoadJobsPolicy(AllocationPolicy):
+    @override
     def apply(
         self,
         items: Iterable[ProcessingStation],
@@ -247,6 +260,7 @@ class RoundRobinPolicy(AllocationPolicy):
 
         self.last_by_stat_group: dict[SystemID, ProcessingStation] = {}
 
+    @override
     def apply(
         self,
         items: Sequence[ProcessingStation],

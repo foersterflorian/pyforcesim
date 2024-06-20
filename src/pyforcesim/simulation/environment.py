@@ -20,6 +20,7 @@ from typing import (
     cast,
     overload,
 )
+from typing_extensions import override
 
 import pandas as pd
 import plotly.express as px
@@ -38,6 +39,7 @@ from pyforcesim.constants import (
     SimStatesCommon,
     SimStatesStorage,
     SimSystemTypes,
+    TimeUnitsTimedelta,
 )
 from pyforcesim.dashboard.dashboard import (
     WS_URL,
@@ -74,15 +76,17 @@ from pyforcesim.types import (
     SystemID,
 )
 
+# ** utilities
+# UTILITIES: Datetime Manager
+_dt_mgr = DTManager()
+
 # ** constants
 # definition of routing system level
 EXEC_SYSTEM_TYPE: Final = SimSystemTypes.PRODUCTION_AREA
 # time after a store request is failed
-FAIL_DELAY: Final[Timedelta] = Timedelta(hours=7)
-
-# ** utilities
-# UTILITIES: Datetime Manager
-_dt_mgr = DTManager()
+FAIL_DELAY: Final[Timedelta] = _dt_mgr.timedelta_from_val(
+    7, time_unit=TimeUnitsTimedelta.HOURS
+)
 
 
 def filter_processing_stations(
@@ -2603,6 +2607,7 @@ class ProductionArea(System):
             sim_put_prio=sim_put_prio,
         )
 
+    @override
     def add_subsystem(
         self,
         subsystem: System,
@@ -2653,6 +2658,7 @@ class StationGroup(System):
 
         return None
 
+    @override
     def add_subsystem(
         self,
         subsystem: System,
@@ -2903,7 +2909,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         logic_queue = target_station.logic_queue
         # check if the target is a sink
         if isinstance(target_station, Sink):
-            loggers.agents.debug('Placing in sink at %s', self.env.t_as_dt())
+            loggers.prod_stations.debug('Placing in sink at %s', self.env.t_as_dt())
             pass
         elif isinstance(target_station, ProcessingStation):
             # check if associated buffers exist
@@ -2971,7 +2977,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # [STATS:InfrStructObj] count number of outputs
         self.num_outputs += 1
 
-        loggers.agents.debug(
+        loggers.prod_stations.debug(
             'From [%s] Updated states and placed job at %s',
             self,
             self.env.t_as_dt(),
@@ -2983,24 +2989,21 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         """
         getting jobs from associated predecessor resources
         """
-        # entering target machine (logic_buffer)
-        ## logic queue: job queue regardless of physical buffers
-        ### entity physically on machine, but no true holding resource object
-        ### (violates load-resource model)
-        ### no capacity restrictions between resources, e.g.,
-        ### source can endlessly produce entities
-        ## --- logic ---
-        ## job enters logic queue of machine with unrestricted capacity
-        ## each machine can have an associated physical buffer
+        # entering target machine (some form of logical buffer)
+        # logic queue: job queue regardless of physical buffers
+        # entity physically on machine, but no true holding resource object
+        # (violates load-resource model)
+        # no capacity restrictions between resources, e.g.,
+        # source can endlessly produce entities
+        # --- logic ---
+        # job enters logic queue of machine with unrestricted capacity
+        # each machine can have an associated physical buffer
         dispatcher = self.env.dispatcher
         infstruct_mgr = self.env.infstruct_mgr
         # request job and its time characteristics from associated queue
         yield self.sim_control.hold(0, priority=self.sim_get_prio)
         # TODO retrieve times from job object directly
         job, job_proc_time, job_setup_time = dispatcher.request_job_sequencing(req_obj=self)
-
-        ### UPDATE JOB PROCESS INFO IN REQUEST FUNCTION???
-
         # update time characteristics of the infrastructure object
         # contains additional checks if the target values are allowed
         self.proc_time = job_proc_time
@@ -3092,7 +3095,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # set finish state for each infrastructure object no matter of which child class
         infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.FINISH)
         # finalise stat gathering
-        self._stat_monitor.finalise_stats()
+        self.stat_monitor.finalise_stats()
 
 
 class StorageLike(InfrastructureObject):
@@ -3137,10 +3140,12 @@ class StorageLike(InfrastructureObject):
         )
 
     @property
+    @override
     def stat_monitor(self) -> monitors.StorageMonitor:
         return self._stat_monitor
 
     @property
+    @override
     def sim_control(self) -> StorageComponent:
         return self._sim_control
 
@@ -3295,10 +3300,14 @@ class ProcessingStation(InfrastructureObject):
                 )
             )
 
+    @override
     def pre_process(self) -> None:
-        infstruct_mgr = self.env.infstruct_mgr
-        infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
+        # infstruct_mgr = self.env.infstruct_mgr
+        # infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
+        # stay in INIT state until first job is received
+        pass
 
+    @override
     def sim_logic(self) -> Generator[Any, None, None]:
         dispatcher = self.env.dispatcher
         while True:
@@ -3323,27 +3332,30 @@ class ProcessingStation(InfrastructureObject):
             yield self.sim_control.hold(sim_time, priority=self.sim_put_prio)
             dispatcher.update_job_process_info(job=job, preprocess=False)
             loggers.prod_stations.debug(
-                '[END] job ID %s at %s on machine ID %s',
+                '[END] job ID %d at %s on machine ID %s',
                 job.job_id,
-                self.env.now(),
+                self.env.t_as_dt(),
                 self.custom_identifier,
             )
-            loggers.agents.debug('Placing by machine %s at %s', self, self.env.t_as_dt())
+            loggers.prod_stations.debug(
+                'Placing by machine %s at %s', self, self.env.t_as_dt()
+            )
             _ = yield from self.put_job(job=job)
             # [CONTENT:ProdStation] remove content
             self.remove_content(job=job)
 
+    @override
     def post_process(self) -> None:
         pass
 
-    def finalise(self) -> None:
-        """
-        method to be called at the end of the simulation run by
-        the environment's "finalise_sim" method
-        """
-        # each resource object class has dedicated finalise methods which
-        # must be called by children
-        super().finalise()
+    # def finalise(self) -> None:
+    #     """
+    #     method to be called at the end of the simulation run by
+    #     the environment's "finalise_sim" method
+    #     """
+    #     # each resource object class has dedicated finalise methods which
+    #     # must be called by children
+    #     super().finalise()
 
 
 class Machine(ProcessingStation):
@@ -3411,11 +3423,11 @@ class Buffer(StorageLike):
 
     @property
     def level_db(self) -> DataFrame:
-        return self._stat_monitor.level_db
+        return self.stat_monitor.level_db
 
     @property
     def wei_avg_fill_level(self) -> float | None:
-        return self._stat_monitor.wei_avg_fill_level
+        return self.stat_monitor.wei_avg_fill_level
 
     def add_prod_station(
         self,
@@ -3477,10 +3489,12 @@ class Buffer(StorageLike):
                 )
             )
 
+    @override
     def pre_process(self) -> None:
         infstruct_mgr = self.env.infstruct_mgr
         infstruct_mgr.update_res_state(obj=self, state=SimStatesStorage.EMPTY)
 
+    @override
     def sim_logic(self) -> Generator[None, None, None]:
         infstruct_mgr = self.env.infstruct_mgr
         while True:
@@ -3517,17 +3531,18 @@ class Buffer(StorageLike):
 
             yield self.sim_control.passivate()
 
+    @override
     def post_process(self) -> None:
         pass
 
-    def finalise(self) -> None:
-        """
-        method to be called at the end of the simulation run by
-        the environment's "finalise_sim" method
-        """
-        # each resource object class has dedicated finalise methods which
-        # must be called by children
-        super().finalise()
+    # def finalise(self) -> None:
+    #     """
+    #     method to be called at the end of the simulation run by
+    #     the environment's "finalise_sim" method
+    #     """
+    #     # each resource object class has dedicated finalise methods which
+    #     # must be called by children
+    #     super().finalise()
 
 
 class Source(InfrastructureObject):
@@ -3613,12 +3628,14 @@ class Source(InfrastructureObject):
                 )
             )
 
+    @override
     def pre_process(self) -> None:
         infstruct_mgr = self.env.infstruct_mgr
         infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
 
         self.verify_starting_conditions()
 
+    @override
     def sim_logic(self) -> Generator[None, None, None]:
         infstruct_mgr = self.env.infstruct_mgr
         dispatcher = self.env.dispatcher
@@ -3707,7 +3724,7 @@ class Source(InfrastructureObject):
             loggers.sources.debug('[SOURCE: %s] Request allocation...', self)
             # put job via 'put_job' function,
             # implemented in parent class 'InfrastructureObject'
-            loggers.agents.debug('Placing by source at %s', self.env.t_as_dt())
+            loggers.sources.debug('Placing by source at %s', self.env.t_as_dt())
             target_proc_station = yield from self.put_job(job=job)
             loggers.sources.debug('[SOURCE] PUT JOB with ret = %s', target_proc_station)
             # [STATE:Source] put in 'WAITING' by 'put_job' method but still processing
@@ -3728,6 +3745,7 @@ class Source(InfrastructureObject):
         # [STATE:Source] WAITING
         infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
 
+    @override
     def post_process(self) -> None:
         pass
 
@@ -3758,11 +3776,13 @@ class Sink(InfrastructureObject):
             states=states,
         )
 
+    @override
     def pre_process(self) -> None:
         # currently sinks are 'PROCESSING' the whole time
         infstruct_mgr = self.env.infstruct_mgr
         infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
 
+    @override
     def sim_logic(self) -> Generator[None, None, None]:
         dispatcher = self.env.dispatcher
         while True:
@@ -3774,6 +3794,7 @@ class Sink(InfrastructureObject):
             dispatcher.finish_job(job=job)
             # TODO write finalised job information to database (disk)
 
+    @override
     def post_process(self) -> None:
         pass
 

@@ -22,7 +22,7 @@ class SimulationComponent(salabim.Component):
         self,
         env: SimulationEnvironment,
         name: str,
-        pre_process: Callable[..., Any],
+        pre_process: Callable[[], Any],
         sim_logic: Callable[..., Generator[Any, Any, Any]],
         post_process: Callable[..., Any],
     ):

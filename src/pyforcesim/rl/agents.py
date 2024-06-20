@@ -1,18 +1,19 @@
 from __future__ import annotations
 
+import copy
 import random
 import statistics
 from abc import ABC, abstractmethod
 from datetime import timedelta as Timedelta
 from pprint import pprint
 from typing import TYPE_CHECKING, cast
-import copy
+from typing_extensions import override
 
 import numpy as np
 import numpy.typing as npt
 
 from pyforcesim import loggers
-from pyforcesim.constants import UTIL_PROPERTIES, TimeUnitsTimedelta
+from pyforcesim.constants import HELPER_STATES, UTIL_PROPERTIES, TimeUnitsTimedelta
 from pyforcesim.datetime import DTManager
 from pyforcesim.types import AgentTasks, StateTimes, SystemID
 
@@ -218,6 +219,7 @@ class AllocationAgent(Agent):
     ) -> float:
         state_times_diff: StateTimes = {}
         time_total = Timedelta()
+        time_non_helpers = Timedelta()
         time_utilisation = Timedelta()
         utilisation: float = 0.0
 
@@ -225,14 +227,19 @@ class AllocationAgent(Agent):
             time_diff = time_current - state_times_last[state]
             state_times_diff[state] = time_diff
             time_total += time_diff
+            if state not in HELPER_STATES:
+                time_non_helpers += time_diff
             if state in UTIL_PROPERTIES:
                 time_utilisation += time_diff
 
-        if time_total.total_seconds() > 0:
-            utilisation = round(time_utilisation / time_total, 4)
+        # if time_total.total_seconds() > 0:
+        if time_non_helpers.total_seconds() > 0:
+            # utilisation = round(time_utilisation / time_total, 4)
+            utilisation = round(time_utilisation / time_non_helpers, 4)
 
         return utilisation
 
+    @override
     def request_decision(
         self,
         job: Job,
@@ -270,6 +277,7 @@ class AllocationAgent(Agent):
         )
         loggers.agents.debug('[Agent %s]: Feature Vector: %s', self, self.feat_vec)
 
+    @override
     def set_decision(
         self,
         action: int,
@@ -282,6 +290,7 @@ class AllocationAgent(Agent):
 
         loggers.agents.debug('[DECISION SET Agent %s]: Set %d', self, self._action)
 
+    @override
     def build_feat_vec(
         self,
         job: Job,
@@ -351,6 +360,7 @@ class AllocationAgent(Agent):
         """
         return self.rng.randint(0, len(self._assoc_proc_stations) - 1)
 
+    @override
     def calc_reward(self) -> float:
         # punishment for non-feasible-action ``past_action_feasible``
         reward: float = 0.0

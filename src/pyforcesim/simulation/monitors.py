@@ -4,6 +4,7 @@ from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
+from typing_extensions import override
 
 import pandas as pd
 import plotly.express as px
@@ -225,8 +226,10 @@ class Monitor:
         self.calc_time_proportions()
 
         # Utilisation
-        if hasattr(self, 'utilisation') and self.time_total.total_seconds() > 0:
-            self.utilisation = self.time_utilisation / self.time_total
+        # if hasattr(self, 'utilisation') and self.time_total.total_seconds() > 0:
+        if hasattr(self, 'utilisation') and self.time_non_helpers.total_seconds() > 0:
+            # self.utilisation = self.time_utilisation / self.time_total
+            self.utilisation = self.time_utilisation / self.time_non_helpers
             loggers.monitors.debug(
                 'Utilisation of %s: %.3f at %s',
                 self.target_object,
@@ -364,6 +367,7 @@ class StorageMonitor(Monitor):
         self._target_object = obj
 
     @property
+    @override
     def target_object(self) -> StorageLike:
         return self._target_object
 
@@ -375,6 +379,7 @@ class StorageMonitor(Monitor):
     def level_db(self) -> DataFrame:
         return self._level_db
 
+    @override
     def set_state(
         self,
         target_state: SimStatesStorage,
@@ -415,6 +420,7 @@ class StorageMonitor(Monitor):
             self._current_fill_level = self._target_object.fill_level
             self._fill_level_starting_time = current_time
 
+    @override
     def finalise_stats(self) -> None:
         """finalisation of stats gathering"""
         # execute parent class function
@@ -620,6 +626,7 @@ class InfStructMonitor(Monitor):
 
         self._track_WIP_level()
 
+    @override
     def finalise_stats(self) -> None:
         """finalisation of stats gathering"""
         # execute parent class function
