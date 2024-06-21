@@ -6,8 +6,8 @@ from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
 from typing import TYPE_CHECKING, Any
 
+from pyforcesim import datetime as pyf_dt
 from pyforcesim import loggers
-from pyforcesim.datetime import DTManager
 from pyforcesim.errors import ViolationStartingConditionError
 from pyforcesim.simulation.base_components import SimulationComponent
 
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
         Source,
     )
 
-_dt_mgr = DTManager()
+# _dt_mgr = DTManager()
 
 
 class BaseCondition(ABC):
@@ -134,7 +134,7 @@ class JobGenDurationCondition(BaseCondition):
         starting_dt = self.env.starting_datetime
         self.sim_run_duration: Timedelta
         if sim_run_until is not None:
-            _dt_mgr.validate_dt_UTC(dt=sim_run_until)
+            pyf_dt.validate_dt_UTC(dt=sim_run_until)
             if sim_run_until <= starting_dt:
                 raise ValueError(
                     (

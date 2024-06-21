@@ -1,5 +1,6 @@
 import pytest
 
+from pyforcesim import datetime as pyf_dt
 from pyforcesim.simulation import environment as sim
 
 
@@ -14,6 +15,6 @@ def env(starting_dt):
 
 
 @pytest.fixture(scope='session')
-def starting_dt(dt_manager):
-    starting_dt = dt_manager.dt_with_tz_UTC(2024, 3, 28, 0)
+def starting_dt():
+    starting_dt = pyf_dt.dt_with_tz_UTC(2024, 3, 28, 0)
     return starting_dt

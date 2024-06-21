@@ -11,7 +11,6 @@ from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
 from functools import lru_cache
 from operator import attrgetter
-from pathlib import Path
 from typing import (
     Any,
     Final,
@@ -29,12 +28,14 @@ import salabim
 from pandas import DataFrame
 from websocket import create_connection
 
-from pyforcesim import loggers
-from pyforcesim.common import enum_str_values_as_frzset, flatten
+from pyforcesim import common, loggers
+from pyforcesim import datetime as pyf_dt
 from pyforcesim.constants import (
+    DEFAULT_DATETIME,
     INF,
     POLICIES_ALLOC,
     POLICIES_SEQ,
+    TIMEZONE_UTC,
     SimResourceTypes,
     SimStatesCommon,
     SimStatesStorage,
@@ -46,12 +47,6 @@ from pyforcesim.dashboard.dashboard import (
     start_dashboard,
 )
 from pyforcesim.dashboard.websocket_server import start_websocket_server
-from pyforcesim.datetime import (
-    DEFAULT_DATETIME,
-    TIMEZONE_UTC,
-    DTManager,
-    adjust_db_dates_local_tz,
-)
 from pyforcesim.errors import AssociationError
 from pyforcesim.rl.agents import Agent, AllocationAgent
 from pyforcesim.simulation import monitors
@@ -76,15 +71,11 @@ from pyforcesim.types import (
     SystemID,
 )
 
-# ** utilities
-# UTILITIES: Datetime Manager
-_dt_mgr = DTManager()
-
 # ** constants
 # definition of routing system level
 EXEC_SYSTEM_TYPE: Final = SimSystemTypes.PRODUCTION_AREA
 # time after a store request is failed
-FAIL_DELAY: Final[Timedelta] = _dt_mgr.timedelta_from_val(
+FAIL_DELAY: Final[Timedelta] = pyf_dt.timedelta_from_val(
     7, time_unit=TimeUnitsTimedelta.HOURS
 )
 
@@ -137,11 +128,11 @@ class SimulationEnvironment(salabim.Environment):
         self.time_unit = time_unit
         # if starting datetime not provided use current time
         if starting_datetime is None:
-            starting_datetime = _dt_mgr.current_time_tz(cut_microseconds=True)
+            starting_datetime = pyf_dt.current_time_tz(cut_microseconds=True)
         else:
-            _dt_mgr.validate_dt_UTC(starting_datetime)
+            pyf_dt.validate_dt_UTC(starting_datetime)
             # remove microseconds, such accuracy not needed
-            starting_datetime = _dt_mgr.cut_dt_microseconds(dt=starting_datetime)
+            starting_datetime = pyf_dt.cut_dt_microseconds(dt=starting_datetime)
         self.starting_datetime = starting_datetime
 
         super().__init__(
@@ -323,7 +314,7 @@ class InfrastructureManager:
     ) -> None:
         # COMMON
         self._env = env
-        self._system_types = enum_str_values_as_frzset(SimSystemTypes)
+        self._system_types = common.enum_str_values_as_frzset(SimSystemTypes)
 
         # PRODUCTION AREAS database as simple Pandas DataFrame
         self._prod_area_prop: dict[str, type] = {
@@ -1982,7 +1973,8 @@ class Dispatcher:
         dates_to_local_tz: bool = True,
         save_img: bool = False,
         save_html: bool = False,
-        file_name: str = 'gantt_chart',
+        filename: str = 'gantt_chart',
+        num_last_entries: int | None = None,
     ) -> PlotlyFigure:
         """
         draw a Gantt chart based on the dispatcher's operation database
@@ -2037,14 +2029,16 @@ class Dispatcher:
         # hover_template: str = 'proc_time: %{customdata[-3]|%d:%H:%M:%S}'
         # TODO: use dedicated method to transform dates of job and op databases
         if dates_to_local_tz:
-            self._job_db_date_adjusted = adjust_db_dates_local_tz(db=self._job_db)
-            self._op_db_date_adjusted = adjust_db_dates_local_tz(db=self._op_db)
+            # self._job_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._job_db)
+            self._op_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._op_db)
             target_db = self._op_db_date_adjusted
         else:
             target_db = self._op_db
 
         # filter only finished operations (for debug display)
         target_db = target_db.loc[(target_db['state'] == SimStatesCommon.FINISH)]
+        if num_last_entries is not None:
+            target_db = target_db.iloc[-num_last_entries:, :]
 
         df = target_db.filter(items=filter_items)
         # calculate delta time between start and end
@@ -2096,14 +2090,20 @@ class Dispatcher:
         else:
             fig.show()
         if save_html:
-            file = Path(f'{file_name}.html')
-            save_path = Path.cwd() / 'results' / file
-            fig.write_html(save_path, auto_open=True)
+            save_pth = common.prepare_save_paths(
+                target_folder='results',
+                filename=filename,
+                suffix='html',
+            )
+            fig.write_html(save_pth, auto_open=False)
 
         if save_img:
-            file = Path(f'{file_name}')
-            save_path = Path.cwd() / 'results' / file
-            fig.write_image(save_path.with_suffix('.svg'))
+            save_pth = common.prepare_save_paths(
+                target_folder='results',
+                filename=filename,
+                suffix='svg',
+            )
+            fig.write_image(save_pth)
 
         return fig
 
@@ -2117,8 +2117,8 @@ class Dispatcher:
         the environment's "finalise_sim" method
         """
         self._calc_cycle_time()
-        self._job_db_date_adjusted = adjust_db_dates_local_tz(db=self._job_db)
-        self._op_db_date_adjusted = adjust_db_dates_local_tz(db=self._op_db)
+        self._job_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._job_db)
+        self._op_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._op_db)
 
     def dashboard_update(self) -> None:
         """
@@ -2538,7 +2538,9 @@ class System:
             subsystems = temp
             remaining_abstraction_level -= 1
 
-        low_lev_subsystems_set = cast(set[InfrastructureObject], set(flatten(subsystems)))
+        low_lev_subsystems_set = cast(
+            set[InfrastructureObject], set(common.flatten(subsystems))
+        )
         # filter only processing stations if option chosen
         low_lev_subsystems_lst: list[InfrastructureObject] | list[ProcessingStation]
         if only_processing_stations:
@@ -3867,10 +3869,10 @@ class Operation:
         # starting and end dates
         # validate time zone information for given datetime objects
         if planned_starting_date is not None:
-            _dt_mgr.validate_dt_UTC(planned_starting_date)
+            pyf_dt.validate_dt_UTC(planned_starting_date)
         self.time_planned_starting = planned_starting_date
         if planned_ending_date is not None:
-            _dt_mgr.validate_dt_UTC(planned_ending_date)
+            pyf_dt.validate_dt_UTC(planned_ending_date)
         self.time_planned_ending = planned_ending_date
         # in future setting starting points in advance possible
         self.is_finished: bool = False
@@ -4035,7 +4037,7 @@ class Job(salabim.Component):
             op_starting_dates = [None] * len(proc_times)
             # validate time zone information for given datetime object
             if planned_starting_date is not None:
-                _dt_mgr.validate_dt_UTC(planned_starting_date)
+                pyf_dt.validate_dt_UTC(planned_starting_date)
             self.time_planned_starting = planned_starting_date
             self.op_wise_starting_date = False
         if isinstance(planned_ending_date, Sequence):
@@ -4050,7 +4052,7 @@ class Job(salabim.Component):
             op_ending_dates = [None] * len(proc_times)
             # validate time zone information for given datetime object
             if planned_ending_date is not None:
-                _dt_mgr.validate_dt_UTC(planned_ending_date)
+                pyf_dt.validate_dt_UTC(planned_ending_date)
             self.time_planned_ending = planned_ending_date
             self.op_wise_ending_date = False
 

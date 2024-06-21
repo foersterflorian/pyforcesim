@@ -4,7 +4,7 @@ import gymnasium as gym
 import numpy as np
 import numpy.typing as npt
 
-from pyforcesim.env_builder import build_sim_env
+from pyforcesim.env_builder import test_agent_env
 from pyforcesim.loggers import gym_env as logger
 from pyforcesim.simulation import environment as sim
 
@@ -25,7 +25,7 @@ class JSSEnv(gym.Env):
         super().reset(seed=seed)
         self.seed = seed
         # build env
-        self.sim_env, self.agent = build_sim_env()
+        self.sim_env, self.agent = test_agent_env()
         # action space for allocation agent is length of all associated
         # infrastructure objects
         n_machines = len(self.agent.assoc_proc_stations)
@@ -115,7 +115,7 @@ class JSSEnv(gym.Env):
         self.terminated = False
         self.truncated = False
         # re-init simulation environment
-        self.sim_env, self.agent = build_sim_env()
+        self.sim_env, self.agent = test_agent_env()
         logger.debug('Environment re-initialised')
         # evaluate if all needed components are registered
         self.sim_env.check_integrity()
@@ -145,5 +145,12 @@ class JSSEnv(gym.Env):
 
         return observation, info
 
-    def feasible_action_mask(self) -> npt.NDArray[np.bool_]:
+    def action_masks(self) -> npt.NDArray[np.bool_]:
         return self.agent.action_mask
+
+    def render(self) -> None:
+        _ = self.sim_env.dispatcher.draw_gantt_chart(
+            use_custom_proc_station_id=True,
+            dates_to_local_tz=False,
+            save_html=True,
+        )

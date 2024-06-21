@@ -1,3 +1,4 @@
+from pyforcesim import datetime as pyf_dt
 from pyforcesim.constants import TimeUnitsTimedelta
 from pyforcesim.rl import agents
 from pyforcesim.simulation import conditions, loads
@@ -11,7 +12,7 @@ def test_base_env(env, starting_dt):
     assert env.starting_datetime == starting_dt
 
 
-def build_sim_env(dt_manager, env):
+def build_sim_env(env):
     # source
     area_source = sim.ProductionArea(
         env=env,
@@ -21,7 +22,7 @@ def build_sim_env(dt_manager, env):
     )
     group_source = sim.StationGroup(env=env, custom_identifier=CustomID('1000'))
     area_source.add_subsystem(group_source)
-    order_time_source = dt_manager.timedelta_from_val(val=2.0, time_unit='hours')
+    order_time_source = pyf_dt.timedelta_from_val(val=2.0, time_unit=TimeUnitsTimedelta.HOURS)
     source = sim.Source(
         env=env,
         custom_identifier=CustomID('source'),
@@ -79,13 +80,11 @@ def build_sim_env(dt_manager, env):
     source.register_job_sequence(prod_sequence_PA)
 
     # conditions
-    duration_transient = dt_manager.timedelta_from_val(
-        val=2, time_unit=TimeUnitsTimedelta.HOURS
-    )
+    duration_transient = pyf_dt.timedelta_from_val(val=2, time_unit=TimeUnitsTimedelta.HOURS)
     conditions.TransientCondition(env=env, duration_transient=duration_transient)
     # agent_decision_cond = conditions.TriggerAgentCondition(env=env)
-    # sim_dur = dt_manager.timedelta_from_val(val=1, time_unit=TimeUnitsTimedelta.WEEKS)
-    # sim_end_date = dt_manager.dt_with_tz_UTC(2024, 3, 23, 12)
+    # sim_dur = pyf_dt.timedelta_from_val(val=1, time_unit=TimeUnitsTimedelta.WEEKS)
+    # sim_end_date = pyf_dt.dt_with_tz_UTC(2024, 3, 23, 12)
     # conditions.JobGenDurationCondition(env=env, target_obj=source, sim_run_duration=sim_dur)
 
     return env, alloc_agent, MachInst
@@ -97,8 +96,8 @@ def export_results(env: sim.SimulationEnvironment, machine: sim.Machine):
     _ = machine.stat_monitor.draw_state_chart(save_html=True, pie_chart=True)
 
 
-def test_build_env(dt_manager, env):
-    env, agent, machine = build_sim_env(dt_manager, env)
+def test_build_env(env):
+    env, agent, machine = build_sim_env(env)
     assert isinstance(agent, agents.AllocationAgent)
     assert env.check_integrity() is None
     assert env.dispatcher.seq_rule == 'FIFO'

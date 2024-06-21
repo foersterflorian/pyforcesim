@@ -1,20 +1,18 @@
 from __future__ import annotations
 
-import copy
 import random
 import statistics
 from abc import ABC, abstractmethod
 from datetime import timedelta as Timedelta
-from pprint import pprint
 from typing import TYPE_CHECKING, cast
 from typing_extensions import override
 
 import numpy as np
 import numpy.typing as npt
 
+from pyforcesim import datetime as pyf_dt
 from pyforcesim import loggers
 from pyforcesim.constants import HELPER_STATES, UTIL_PROPERTIES, TimeUnitsTimedelta
-from pyforcesim.datetime import DTManager
 from pyforcesim.types import AgentTasks, StateTimes, SystemID
 
 if TYPE_CHECKING:
@@ -45,7 +43,6 @@ class Agent(ABC):
         self._dispatching_signal: bool = False
 
         self._rng = random.Random(seed)
-        self.dt_manager = DTManager()
 
     def __str__(self) -> str:
         return f'Agent(type={self._agent_task}, Assoc_Syst_ID={self._assoc_system.system_id})'
@@ -90,7 +87,7 @@ class Agent(ABC):
                 raise RuntimeError(f'Dispatching signal for >>{self}<< was already reset.')
 
         loggers.agents.debug(
-            f'Dispatching signal for >>{self}<< was set to >>{self._dispatching_signal}<<.'
+            'Dispatching signal for >>%s<< was set to >>%s<<.', self, self.dispatching_signal
         )
 
     @abstractmethod
@@ -269,6 +266,8 @@ class AllocationAgent(Agent):
             self.utilisations[sys_id] = utilisation
             loggers.agents.debug('Utilisation for SystemID %d is %.4f', sys_id, utilisation)
 
+        loggers.agents.debug('Utilisation dict for agent >>%s<<: %s', self, self.utilisations)
+
         # build feature vector
         self.feat_vec = self.build_feat_vec(job=job)
 
@@ -301,7 +300,7 @@ class AllocationAgent(Agent):
         # needed properties
         # target station group ID, order time
         assert job.current_order_time is not None
-        norm_td = self.dt_manager.timedelta_from_val(1.0, TimeUnitsTimedelta.HOURS)
+        norm_td = pyf_dt.timedelta_from_val(1.0, TimeUnitsTimedelta.HOURS)
         order_time = job.current_order_time / norm_td
         # current op: obtain StationGroupID
         current_op = job.current_op
@@ -375,36 +374,41 @@ class AllocationAgent(Agent):
             op_rew = self._last_op
 
             if op_rew is None:
-                # catch empty OPs
                 raise ValueError(
                     ('Tried to calculate reward based on a non-existent operation')
                 )
             elif op_rew.target_station_group is None:
-                # catch empty OPs
                 raise ValueError(
                     ('Tried to calculate reward, but no target station group is defined')
                 )
             # obtain relevant ProcessingStations contained in
             # the corresponding StationGroup
             stations = op_rew.target_station_group.assoc_proc_stations
-            loggers.agents.debug(f'++++++ {stations=}')
+            loggers.agents.debug('relevant stations: %s', stations)
 
-            relevant_state_times: list[dict[str, Timedelta]] = []
-            for station in stations:
-                self.state_times_current[station.system_id] = station.stat_monitor.state_times
-                # last state times
-                # current state times
+            # relevant_state_times: list[dict[str, Timedelta]] = []
+            # util_vals: list[float] = []
+            # for station in stations:
+            #     # self.state_times_current[station.system_id] = (
+            #     #     station.stat_monitor.state_times.copy()
+            #     # )
+            #     util_vals.append(self.utilisations[station.system_id])
+            #     # last state times
+            #     # current state times
 
             # calculate mean utilisation of all processing stations associated
             # with the corresponding operation and agent's action
-            util_vals: list[float] = [ps.stat_monitor.utilisation for ps in stations]
-            loggers.agents.debug(f'++++++ {util_vals=}')
+            # util_vals: list[float] = [ps.stat_monitor.utilisation for ps in stations]
+            util_vals: list[float] = [
+                self.utilisations[station.system_id] for station in stations
+            ]
+            loggers.agents.debug('util_vals: %s', util_vals)
             util_mean = statistics.mean(util_vals)
-            loggers.agents.debug(f'++++++ {util_mean=}')
+            loggers.agents.debug('util_mean: %.4f', util_mean)
 
             reward = util_mean - 1.0
 
-        loggers.agents.debug(f'+#+#+#+#+# {reward=}')
+        loggers.agents.debug('reward: %.4f', reward)
 
         return reward
 

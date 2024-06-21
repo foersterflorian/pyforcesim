@@ -10,6 +10,7 @@ import pandas as pd
 import plotly.express as px
 from pandas import DataFrame, Series
 
+from pyforcesim import datetime as pyf_dt
 from pyforcesim import loggers
 from pyforcesim.common import enum_str_values_as_frzset
 from pyforcesim.constants import (
@@ -21,7 +22,6 @@ from pyforcesim.constants import (
     SimStatesStorage,
     TimeUnitsTimedelta,
 )
-from pyforcesim.datetime import DTManager
 from pyforcesim.types import PlotlyFigure
 
 if TYPE_CHECKING:
@@ -32,8 +32,6 @@ if TYPE_CHECKING:
         SimulationEnvironment,
         StorageLike,
     )
-
-_dt_mgr = DTManager()
 
 
 class Monitor:
@@ -288,7 +286,7 @@ class Monitor:
         data.index = data.index.rename('state')
         # change time from Timedelta to any time unit possible --> float
         # Plotly can not handle Timedelta objects properly, only Datetimes
-        calc_td = _dt_mgr.timedelta_from_val(val=1.0, time_unit=time_unit)
+        calc_td = pyf_dt.timedelta_from_val(val=1.0, time_unit=time_unit)
         calc_col: str = f'total time [{time_unit}]'
         data[calc_col] = data['total time'] / calc_td  # type: ignore
         data = data.sort_index(axis=0, kind='stable')
@@ -700,7 +698,7 @@ class InfStructMonitor(Monitor):
             data = self._WIP_time_db.copy()
             # change WIP load time from Timedelta to any time unit possible --> float
             # Plotly can not handle Timedelta objects properly, only Datetimes
-            calc_td = _dt_mgr.timedelta_from_val(val=1.0, time_unit=time_unit_load_time)
+            calc_td = pyf_dt.timedelta_from_val(val=1.0, time_unit=time_unit_load_time)
             data['level'] = data['level'] / calc_td  # type: ignore
             title = f'WIP Level Time of {self._target_object}'
             yaxis = 'WIP Level Time [time units]'

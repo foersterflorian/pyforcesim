@@ -11,9 +11,9 @@ import numpy as np
 import numpy.typing as npt
 from numpy.random._generator import Generator as NPRandomGenerator
 
+from pyforcesim import datetime as pyf_dt
 from pyforcesim import loggers
 from pyforcesim.constants import SimStatesCommon, SimSystemTypes, TimeUnitsTimedelta
-from pyforcesim.datetime import DTManager
 from pyforcesim.types import (
     JobGenerationInfo,
     OrderDates,
@@ -25,9 +25,9 @@ if TYPE_CHECKING:
     from pyforcesim.simulation.environment import (
         ProductionArea,
         SimulationEnvironment,
+        Source,
         StationGroup,
         SystemID,
-        Source,
     )
 
 
@@ -46,8 +46,6 @@ class BaseJobGenerator(ABC):
         # components for random number generation
         self._rnd_gen: NPRandomGenerator = np.random.default_rng(seed=seed)
         self._seed = seed
-        # advanced date handling
-        self._dt_mgr: DTManager = DTManager()
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__} | Env: {self._env.name()} | Seed: {self._seed}'
@@ -155,7 +153,7 @@ class RandomJobGenerator(BaseJobGenerator):
                 ).tolist(),
             )
             for time in proc_times_time_unit:
-                td = self._dt_mgr.timedelta_from_val(val=time, time_unit=time_unit)
+                td = pyf_dt.timedelta_from_val(val=time, time_unit=time_unit)
                 proc_times.append(td)
 
             # setup times
@@ -173,7 +171,7 @@ class RandomJobGenerator(BaseJobGenerator):
                     ).tolist(),
                 )
                 for time in setup_times_time_unit:
-                    td = self._dt_mgr.timedelta_from_val(val=time, time_unit=time_unit)
+                    td = pyf_dt.timedelta_from_val(val=time, time_unit=time_unit)
                     setup_times.append(td)
 
             prio: OrderPriority | None = None
@@ -294,7 +292,7 @@ class ConstantSequenceSinglePA(ProductionSequence):
                     setup_time_percentage = self.rnd_gen.uniform(low=0.1, high=0.8)
                     setup_time = setup_time_percentage * overall_time
                     # round to next full minute
-                    setup_time = self._dt_mgr.round_td_by_seconds(
+                    setup_time = pyf_dt.round_td_by_seconds(
                         td=setup_time, round_to_next_seconds=60
                     )
                     proc_time = overall_time - setup_time

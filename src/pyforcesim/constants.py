@@ -1,5 +1,9 @@
+import datetime
 import enum
+from datetime import datetime as Datetime
+from datetime import timezone as Timezone
 from typing import Final
+from zoneinfo import ZoneInfo
 
 from pyforcesim.simulation.policies import (
     AgentPolicy,
@@ -46,7 +50,7 @@ LOGGING_LEVEL_DB: Final[loglevel] = loglevel.ERROR
 INF: Final[Infinite] = float('inf')
 
 
-# ** dates
+# ** dates and times
 class TimeUnitsDatetime(enum.StrEnum):
     YEAR = enum.auto()
     MONTH = enum.auto()
@@ -65,6 +69,11 @@ class TimeUnitsTimedelta(enum.StrEnum):
     SECONDS = enum.auto()
     MILLISECONDS = enum.auto()
     MICROSECONDS = enum.auto()
+
+
+TIMEZONE_CEST: Final[ZoneInfo] = ZoneInfo('Europe/Berlin')
+TIMEZONE_UTC: Final[Timezone] = Timezone.utc
+DEFAULT_DATETIME: Final[Datetime] = Datetime(datetime.MINYEAR, 1, 1, tzinfo=TIMEZONE_UTC)
 
 
 # ** database

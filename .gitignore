@@ -16,6 +16,7 @@ output/
 results/
 *.zip
 tensorboard/
+models/
 
 # temp files
 file_system_backend/
