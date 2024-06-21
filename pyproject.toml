@@ -17,6 +17,7 @@ dependencies = [
     "dash-extensions>=1.0.15",
     "websocket-client>=1.8.0",
     "gymnasium>=0.29.1",
+    "typing-extensions>=4.12.2",
 ]
 requires-python = ">=3.11"
 readme = "README.md"
@@ -56,11 +57,23 @@ notebooks = [
 general = [
     "ruff>=0.4.5",
 ]
+tests = [
+    "pytest>=8.2.1",
+    "coverage>=7.5.3",
+]
+rl = [
+    "stable-baselines3>=2.3.2",
+    "tensorboard>=2.16.2",
+    "tqdm>=4.66.4",
+    "rich>=13.7.1",
+    "sb3-contrib>=2.3.0",
+]
 
 [tool.ruff]
 line-length = 94
 indent-width = 4
 target-version = "py311"
+src = ["src"]
 
 [tool.ruff.format]
 quote-style = "single"
@@ -68,3 +81,32 @@ skip-magic-trailing-comma = false
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+
+[tool.ruff.lint.isort]
+extra-standard-library = ["typing_extensions"]
+
+[tool.pytest.ini_options]
+addopts = [
+    "-vvl",
+    "--import-mode=importlib",
+]
+testpaths = [
+    "tests",
+]
+log_cli = true
+
+[tool.coverage.run]
+relative_files = true
+source = [
+    "pyforcesim",
+    "tests/",
+]
+
+[tool.coverage.report]
+exclude_also = [
+    "def __repr__",
+    "def __str__",
+]
+
+[tool.coverage.html]
+directory = "reports/coverage"

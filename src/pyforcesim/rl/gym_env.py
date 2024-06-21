@@ -1,158 +1,72 @@
+from typing import Any, Final, cast
+
 import gymnasium as gym
 import numpy as np
-import pyforcesim.simulation.environment as sim
-from gymnasium import spaces
-from pyforcesim.datetime import DTManager
-from pyforcesim.rl import agents
-from pyforcesim.simulation import loads
+import numpy.typing as npt
 
+from pyforcesim.env_builder import test_agent_env
+from pyforcesim.loggers import gym_env as logger
+from pyforcesim.simulation import environment as sim
 
-def build_sim_env() -> (
-    tuple[
-        sim.SimulationEnvironment,
-        sim.InfrastructureManager,
-        sim.Dispatcher,
-        agents.AllocationAgent,
-    ]
-):
-    # !! REWORK, CURRENTLY ONLY FOR TESTING PURPOSES
-    """Constructor to build simulation environment (layout)
-
-    Returns
-    -------
-    tuple[ sim.SimulationEnvironment, sim.InfrastructureManager, sim.Dispatcher, agents.AllocationAgent, ]
-        tuple out of Environment, InfrastructureManager, Dispatcher, Agent
-    """
-    # datetime manager
-    dt_mgr = DTManager()
-    starting_dt = dt_mgr.current_time_tz(cut_microseconds=True)
-    # environment
-    env = sim.SimulationEnvironment(
-        name='base', time_unit='seconds', starting_datetime=starting_dt
-    )
-    job_generator = loads.RandomJobGenerator(env=env, seed=2)
-    infstruct_mgr = sim.InfrastructureManager(env=env)
-    dispatcher = sim.Dispatcher(env=env, sequencing_rule='FIFO')
-
-    # source
-    area_source = sim.ProductionArea(env=env, custom_identifier=1000)
-    group_source = sim.StationGroup(env=env, custom_identifier=1000)
-    area_source.add_subsystem(group_source)
-    proc_time = dt_mgr.timedelta_from_val(val=2.0, time_unit='hours')
-    source = sim.Source(
-        env=env,
-        custom_identifier='source',
-        proc_time=proc_time,
-        random_generation=True,
-        job_generator=job_generator,
-        num_gen_jobs=4,
-    )
-    group_source.add_subsystem(source)
-
-    # sink
-    area_sink = sim.ProductionArea(env=env, custom_identifier=2000)
-    group_sink = sim.StationGroup(env=env, custom_identifier=2000)
-    area_sink.add_subsystem(group_sink)
-    sink = sim.Sink(env=env, custom_identifier='sink')
-    group_sink.add_subsystem(sink)
-
-    # processing stations
-    # prod area 1
-    area_prod = sim.ProductionArea(env=env, custom_identifier=1)
-    group_prod = sim.StationGroup(env=env, custom_identifier=1)
-    area_prod.add_subsystem(group_prod)
-    group_prod2 = sim.StationGroup(env=env, custom_identifier=2)
-    area_prod.add_subsystem(group_prod2)
-    # prod area 2
-    # area_prod2 = ProductionArea(env=env, custom_identifier=2)
-    # group_prod3 = StationGroup(env=env, custom_identifier=3)
-    # area_prod2.add_subsystem(group_prod3)
-    # area_prod.add_subsystem(group_prod3)
-    ## machines
-    for machine in range(3):
-        buffer = sim.Buffer(capacity=20, env=env, custom_identifier=(10 + machine))
-        if machine == 5:
-            MachInst = sim.Machine(
-                env=env, custom_identifier=machine, buffers=[buffer], setup_time=5.0
-            )
-        else:
-            MachInst = sim.Machine(env=env, custom_identifier=machine, buffers=[buffer])
-
-        if machine == 0:
-            testMachInst = MachInst
-
-        if machine < 2:
-            group_prod.add_subsystem(buffer)
-            group_prod.add_subsystem(MachInst)
-        elif machine >= 2:
-            group_prod2.add_subsystem(buffer)
-            group_prod2.add_subsystem(MachInst)
-        else:
-            pass
-            # group_prod3.add_subsystem(buffer)
-            # group_prod3.add_subsystem(MachInst)
-
-    add_machine_to_bottleneck: bool = False
-    if add_machine_to_bottleneck:
-        buffer = sim.Buffer(capacity=20, env=env, custom_identifier=(10 + machine + 1))
-        MachInst = sim.Machine(env=env, custom_identifier=machine + 1, buffers=[buffer])
-        # .add_subsystem(buffer)
-        # group_prod3.add_subsystem(MachInst)
-
-    alloc_agent = agents.AllocationAgent(assoc_system=area_prod)
-
-    # conditions
-    duration_transient = dt_mgr.timedelta_from_val(val=2, time_unit='hours')
-    trans_cond = sim.TransientCondition(env=env, duration_transient=duration_transient)
-    agent_decision_cond = sim.TriggerAgentCondition(env=env)
-    sim_dur = dt_mgr.timedelta_from_val(val=2.0, time_unit='days')
-    sim_end_date = dt_mgr.dt_with_tz_UTC(2024, 3, 23, 12)
-    job_gen_dur_cond = sim.JobGenDurationCondition(
-        env=env, target_obj=source, sim_run_duration=sim_dur
-    )
-
-    return env, infstruct_mgr, dispatcher, alloc_agent
+MAX_WIP_TIME: Final[int] = 100
+MAX_NON_FEASIBLE: Final[int] = 20
 
 
 class JSSEnv(gym.Env):
     """Custom Environment that follows gym interface."""
 
-    metadata = {'render_modes': ['human'], 'render_fps': 30}
+    metadata = {'render_modes': [None]}
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        seed: int = 42,
+    ) -> None:
         super().__init__()
-
+        super().reset(seed=seed)
+        self.seed = seed
         # build env
-        (self.sim_env, self.infstruct_mgr, self.dispatcher, self.agent) = build_sim_env()
+        self.sim_env, self.agent = test_agent_env()
         # action space for allocation agent is length of all associated
         # infrastructure objects
-        n_actions = len(self.agent.assoc_infstrct_objs)
-        # Define action and observation space
-        # They must be gym.spaces objects
-        # Example when using discrete actions:
-        # number of discrete actions depends on layout and infrastructure
-        self.action_space = spaces.Discrete(n=n_actions)
+        n_machines = len(self.agent.assoc_proc_stations)
+        self.action_space = gym.spaces.Discrete(n=n_machines, seed=seed)
         # Example for using image as input (channel-first; channel-last also works):
-        # TODO change observation space
-        self.observation_space = spaces.Box(
-            low=0, high=255, shape=(N_CHANNELS, HEIGHT, WIDTH), dtype=np.uint8
+        target_system = cast(sim.ProductionArea, self.agent.assoc_system)
+        min_SGI = target_system.get_min_subsystem_id()
+        max_SGI = target_system.get_max_subsystem_id()
+        # observation: N_machines * (res_sys_SGI, avail, WIP_time)
+        machine_low = np.array([min_SGI, 0, 0])
+        machine_high = np.array([max_SGI, 1, MAX_WIP_TIME])
+        # observation jobs: (job_SGI, order_time)
+        job_low = np.array([0, 0])
+        job_high = np.array([max_SGI, 1000])
+
+        low = np.tile(machine_low, n_machines)
+        high = np.tile(machine_high, n_machines)
+        low = np.append(low, job_low)
+        high = np.append(high, job_high)
+
+        self.observation_space = gym.spaces.Box(
+            low=low,
+            high=high,
+            dtype=np.float32,
+            seed=seed,
         )
 
         self.terminated: bool = False
+        self.truncated: bool = False
 
-    def step(self, action):
+    def step(
+        self,
+        action: int,
+    ) -> tuple[npt.NDArray[np.float32], float, bool, bool, dict]:
         # process given action
         # step through sim_env till new decision should be made
         # calculate reward based on new observation
-
+        logger.debug('Taking step in environment')
         ## ** action is provided as parameter, set action
-        # ?? should still be checked? necessary?
-        # should not be needed anymore, empty event list is checked below
-        if self.sim_env._event_list:
-            print('Dispatching Signal', self.agent.dispatching_signal)
-            self.agent.set_decision(action=action)
-        else:
-            print('Run ended!')
+        # should not be needed any more, empty event list is checked below
+        self.agent.set_decision(action=action)
 
         # ** Run till next action is needed
         # execute with provided action till next decision should be made
@@ -161,26 +75,48 @@ class JSSEnv(gym.Env):
             if not self.sim_env._event_list:
                 self.terminated = True
                 break
+            if self.agent.non_feasible_counter > MAX_NON_FEASIBLE:
+                self.truncated = True
+                break
 
             self.sim_env.step()
 
         # ** Calculate Reward
         # in agent class, not implemented yet
         # call from here
+        reward = self.agent.calc_reward()
+        observation = self.agent.feat_vec
+        if observation is None:
+            raise ValueError('No Observation in step!')
 
         # additional info
-        truncated = {}
         info = {}
 
         # finalise simulation environment
         if self.terminated:
             self.sim_env.finalise()
 
-        return observation, reward, self.terminated, truncated, info
+        logger.debug(
+            'Step in environment finished. Return: %s, %s, %s, %s',
+            observation,
+            reward,
+            self.terminated,
+            self.truncated,
+        )
 
-    def reset(self, seed=None, options=None):
+        return observation, reward, self.terminated, self.truncated, info
+
+    def reset(
+        self,
+        seed: int = 42,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[npt.NDArray[np.float32], dict]:
+        logger.debug('Resetting environment')
+        self.terminated = False
+        self.truncated = False
         # re-init simulation environment
-        (self.sim_env, self.infstruct_mgr, self.dispatcher, self.agent) = build_sim_env()
+        self.sim_env, self.agent = test_agent_env()
+        logger.debug('Environment re-initialised')
         # evaluate if all needed components are registered
         self.sim_env.check_integrity()
         # initialise simulation environment
@@ -201,11 +137,20 @@ class JSSEnv(gym.Env):
             self.sim_env.step()
         # feature vector already built internally when dispatching signal is set
         observation = self.agent.feat_vec
-        # ?? leave additional info empty?
+        if observation is None:
+            raise ValueError('No Observation in reset!')
         info = {}
+
+        logger.info('Environment reset finished')
 
         return observation, info
 
-    def render(self): ...
+    def action_masks(self) -> npt.NDArray[np.bool_]:
+        return self.agent.action_mask
 
-    def close(self): ...
+    def render(self) -> None:
+        _ = self.sim_env.dispatcher.draw_gantt_chart(
+            use_custom_proc_station_id=True,
+            dates_to_local_tz=False,
+            save_html=True,
+        )
