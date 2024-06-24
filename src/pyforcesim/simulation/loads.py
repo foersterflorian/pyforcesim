@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from datetime import timedelta as Timedelta
 from typing import TYPE_CHECKING, cast
+from typing_extensions import override
 
 import numpy as np
 import numpy.typing as npt
@@ -243,6 +244,7 @@ class ConstantSequenceSinglePA(ProductionSequence):
     def __repr__(self) -> str:
         return super().__repr__() + f' | ProductionAreaID: {self._prod_area_id}'
 
+    @override
     def retrieve(
         self,
         target_obj: Source,

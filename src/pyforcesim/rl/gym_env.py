@@ -1,15 +1,28 @@
-from typing import Any, Final, cast
+from collections.abc import Callable
+from typing import Any, Final, TypeAlias, cast
 
 import gymnasium as gym
 import numpy as np
 import numpy.typing as npt
 
-from pyforcesim.env_builder import test_agent_env
+from pyforcesim.env_builder import (
+    standard_env_1_2_3_ConstIdeal,
+    standard_env_1_3_7_ConstIdeal,
+)
 from pyforcesim.loggers import gym_env as logger
+from pyforcesim.rl import agents
 from pyforcesim.simulation import environment as sim
 
 MAX_WIP_TIME: Final[int] = 100
 MAX_NON_FEASIBLE: Final[int] = 20
+BuilderFunc: TypeAlias = Callable[
+    [bool],
+    tuple[sim.SimulationEnvironment, agents.AllocationAgent],
+]
+BUILDER_FUNCS: Final[dict[str, BuilderFunc]] = {
+    '1-2-3_ConstIdeal': standard_env_1_2_3_ConstIdeal,
+    '1-3-7_ConstIdeal': standard_env_1_3_7_ConstIdeal,
+}
 
 
 class JSSEnv(gym.Env):
@@ -19,13 +32,22 @@ class JSSEnv(gym.Env):
 
     def __init__(
         self,
+        experiment_type: str,
         seed: int = 42,
     ) -> None:
         super().__init__()
         super().reset(seed=seed)
         self.seed = seed
         # build env
-        self.sim_env, self.agent = test_agent_env()
+        if experiment_type not in BUILDER_FUNCS:
+            raise KeyError(
+                (
+                    f'Experiment type >>{experiment_type}<< unknown. '
+                    f'Known types are: {list(BUILDER_FUNCS.keys())}'
+                )
+            )
+        self.builder_func = BUILDER_FUNCS[experiment_type]
+        self.sim_env, self.agent = self.builder_func(True)
         # action space for allocation agent is length of all associated
         # infrastructure objects
         n_machines = len(self.agent.assoc_proc_stations)
@@ -115,7 +137,7 @@ class JSSEnv(gym.Env):
         self.terminated = False
         self.truncated = False
         # re-init simulation environment
-        self.sim_env, self.agent = test_agent_env()
+        self.sim_env, self.agent = self.builder_func(True)
         logger.debug('Environment re-initialised')
         # evaluate if all needed components are registered
         self.sim_env.check_integrity()
@@ -154,3 +176,11 @@ class JSSEnv(gym.Env):
             dates_to_local_tz=False,
             save_html=True,
         )
+
+    def run_without_agent(self) -> sim.SimulationEnvironment:
+        env, _ = self.builder_func(False)
+        env.initialise()
+        env.run()
+        env.finalise()
+
+        return env

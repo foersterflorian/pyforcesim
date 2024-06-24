@@ -981,6 +981,10 @@ class Dispatcher:
             'execution_system_custom_id': object,
             'execution_system_name': str,
             'execution_system_type': str,
+            'station_group': object,
+            'station_group_custom_id': object,
+            'station_group_name': str,
+            'station_group_type': str,
             'target_station_custom_id': object,
             'target_station_name': object,
             'proc_time': object,
@@ -1434,7 +1438,8 @@ class Dispatcher:
                 raise ValueError(f'{target_station_group} is not part of {exec_system}. \
                     Mismatch between execution system and associated station groups.')
         else:
-            target_station_group = None
+            # target_station_group = None
+            raise ValueError('Station Group is None')
 
         # new entry for operation data base
         new_entry: DataFrame = pd.DataFrame(
@@ -1448,6 +1453,10 @@ class Dispatcher:
                 'execution_system_custom_id': [exec_system.custom_identifier],
                 'execution_system_name': [exec_system.name],
                 'execution_system_type': [exec_system.system_type],
+                'station_group': [target_station_group],
+                'station_group_custom_id': [target_station_group.custom_identifier],
+                'station_group_name': [target_station_group.name],
+                'station_group_type': [target_station_group.system_type],
                 'target_station_custom_id': [None],
                 'target_station_name': [None],
                 'proc_time': [op.proc_time],
@@ -1970,10 +1979,12 @@ class Dispatcher:
         sort_by_proc_station: bool = False,
         sort_ascending: bool = True,
         group_by_exec_system: bool = False,
-        dates_to_local_tz: bool = True,
+        dates_to_local_tz: bool = False,
         save_img: bool = False,
         save_html: bool = False,
         filename: str = 'gantt_chart',
+        base_folder: str | None = None,
+        target_folder: str | None = None,
         num_last_entries: int | None = None,
     ) -> PlotlyFigure:
         """
@@ -1999,8 +2010,8 @@ class Dispatcher:
             'job_id',
             'target_station_custom_id',
             'target_station_name',
-            'execution_system',
             'execution_system_custom_id',
+            'station_group_custom_id',
             'prio',
             'planned_starting_date',
             'actual_starting_date',
@@ -2015,6 +2026,7 @@ class Dispatcher:
             'job_id': False,
             'target_station_custom_id': True,
             'execution_system_custom_id': True,
+            'station_group_custom_id': True,
             'prio': True,
             'planned_starting_date': '|%d.%m.%Y %H:%M:%S',
             'actual_starting_date': '|%d.%m.%Y %H:%M:%S',
@@ -2081,17 +2093,18 @@ class Dispatcher:
         )
         fig.update_yaxes(type='category', autorange='reversed')
 
-        if self._env.debug_dashboard:
+        if self.env.debug_dashboard:
             # send by websocket
             fig_json = cast(str | None, plotly.io.to_json(fig=fig))
             if fig_json is None:
                 raise ValueError('Could not convert figure to JSON. Returned >>None<<.')
-            self._env.ws_con.send(fig_json)
+            self.env.ws_con.send(fig_json)
         else:
             fig.show()
         if save_html:
             save_pth = common.prepare_save_paths(
-                target_folder='results',
+                base_folder=base_folder,
+                target_folder=target_folder,
                 filename=filename,
                 suffix='html',
             )
@@ -2099,7 +2112,8 @@ class Dispatcher:
 
         if save_img:
             save_pth = common.prepare_save_paths(
-                target_folder='results',
+                base_folder=base_folder,
+                target_folder=target_folder,
                 filename=filename,
                 suffix='svg',
             )
@@ -3720,7 +3734,7 @@ class Source(InfrastructureObject):
             # implemented in 'get_job' method which is not executed by source objects
             self.num_inputs += 1
             loggers.sources.debug(
-                '[SOURCE: %s] Generated %s at %s', self, job, self.env.now()
+                '[SOURCE: %s] Generated %s at %s', self, job, self.env.t_as_dt()
             )
 
             loggers.sources.debug('[SOURCE: %s] Request allocation...', self)
@@ -3737,7 +3751,7 @@ class Source(InfrastructureObject):
             # if hold time elapsed start new generation
             order_time = self._obtain_order_time()
             loggers.sources.debug(
-                '[SOURCE: %s] Hold for >>%s<< at %s', self, order_time, self.env.now()
+                '[SOURCE: %s] Hold for >>%s<< at %s', self, order_time, self.env.t_as_dt()
             )
 
             yield self.sim_control.hold(order_time, priority=self.sim_put_prio)

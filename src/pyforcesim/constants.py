@@ -27,6 +27,7 @@ from pyforcesim.types import Infinite
 from pyforcesim.types import LoggingLevels as loglevel
 
 # ** logging
+LOGGING_TO_FILE: Final[bool] = True
 LOGGING_LEVEL_BASE: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_ENV: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_GYM_ENV: Final[loglevel] = loglevel.INFO
@@ -34,7 +35,7 @@ LOGGING_LEVEL_DISPATCHER: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_INFSTRCT: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_SINKS: Final[loglevel] = loglevel.ERROR
-LOGGING_LEVEL_PRODSTATIONS: Final[loglevel] = loglevel.ERROR
+LOGGING_LEVEL_PRODSTATIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_JOBS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_BUFFERS: Final[loglevel] = loglevel.ERROR
