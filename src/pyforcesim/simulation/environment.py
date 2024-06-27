@@ -1982,6 +1982,7 @@ class Dispatcher:
         dates_to_local_tz: bool = False,
         save_img: bool = False,
         save_html: bool = False,
+        title: str | None = None,
         filename: str = 'gantt_chart',
         base_folder: str | None = None,
         target_folder: str | None = None,
@@ -2092,6 +2093,8 @@ class Dispatcher:
             hover_data=hover_data,
         )
         fig.update_yaxes(type='category', autorange='reversed')
+        if title is not None:
+            fig.update_layout(title=title, margin=dict(t=150))
 
         if self.env.debug_dashboard:
             # send by websocket

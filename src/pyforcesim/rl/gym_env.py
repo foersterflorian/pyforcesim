@@ -13,7 +13,7 @@ from pyforcesim.loggers import gym_env as logger
 from pyforcesim.rl import agents
 from pyforcesim.simulation import environment as sim
 
-MAX_WIP_TIME: Final[int] = 100
+MAX_WIP_TIME: Final[int] = 300
 MAX_NON_FEASIBLE: Final[int] = 20
 BuilderFunc: TypeAlias = Callable[
     [bool],
@@ -61,7 +61,7 @@ class JSSEnv(gym.Env):
         machine_high = np.array([max_SGI, 1, MAX_WIP_TIME])
         # observation jobs: (job_SGI, order_time)
         job_low = np.array([0, 0])
-        job_high = np.array([max_SGI, 1000])
+        job_high = np.array([max_SGI, 100])
 
         low = np.tile(machine_low, n_machines)
         high = np.tile(machine_high, n_machines)

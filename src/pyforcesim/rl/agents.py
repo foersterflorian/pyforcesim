@@ -299,7 +299,8 @@ class AllocationAgent(Agent):
         # job
         # needed properties
         # target station group ID, order time
-        assert job.current_order_time is not None
+        if job.current_order_time is None:
+            raise ValueError(f'Current order time of job {job} >>None<<')
         norm_td = pyf_dt.timedelta_from_val(1.0, TimeUnitsTimedelta.HOURS)
         order_time = job.current_order_time / norm_td
         # current op: obtain StationGroupID

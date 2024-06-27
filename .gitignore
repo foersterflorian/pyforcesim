@@ -18,8 +18,9 @@ results/
 tensorboard/
 models/
 
-# temp files
+# temp files and logs
 file_system_backend/
+#logs*
 
 # PDM files
 *.pdm-python
