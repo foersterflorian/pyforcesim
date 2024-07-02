@@ -1918,7 +1918,7 @@ class Dispatcher:
     def request_job_sequencing(
         self,
         req_obj: InfrastructureObject,
-    ) -> tuple[Job, Timedelta, Timedelta | None]:
+    ) -> Job:
         """
         request a sequencing decision for a given queue of the requesting resource
         requester: input side processing stations
@@ -1946,7 +1946,7 @@ class Dispatcher:
         if job.current_proc_time is None:
             raise ValueError(f'No processing time defined for job {job}.')
 
-        return job, job.current_proc_time, job.current_setup_time
+        return job
 
     # TODO policy-based decision making
     def _seq_priority_rule(
@@ -3021,12 +3021,13 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         infstruct_mgr = self.env.infstruct_mgr
         # request job and its time characteristics from associated queue
         yield self.sim_control.hold(0, priority=self.sim_get_prio)
-        # TODO retrieve times from job object directly
-        job, job_proc_time, job_setup_time = dispatcher.request_job_sequencing(req_obj=self)
+        job = dispatcher.request_job_sequencing(req_obj=self)
         # update time characteristics of the infrastructure object
         # contains additional checks if the target values are allowed
-        self.proc_time = job_proc_time
-        if job_setup_time is not None:
+        if job.current_proc_time is None:
+            raise ValueError(f'Processing time of job >>{job}<< None.')
+        self.proc_time = job.current_proc_time
+        if job.current_setup_time is not None:
             loggers.prod_stations.debug(
                 (
                     '[SETUP TIME DETECTED] job ID %s at %s on machine ID %s '
@@ -3037,7 +3038,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 self.custom_identifier,
                 self.setup_time,
             )
-            self.setup_time = job_setup_time
+            self.setup_time = job.current_setup_time
 
         # Processing Station only
         # request and get job from associated buffer if it exists
