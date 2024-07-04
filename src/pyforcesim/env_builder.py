@@ -20,11 +20,14 @@ def test_agent_env() -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]
         sim_get_prio=-20,
         sim_put_prio=-30,
     )
-    group_source = sim.StationGroup(env=env, custom_identifier=CustomID('1000'))
-    area_source.add_subsystem(group_source)
+    group_source = sim.StationGroup(
+        env=env, supersystem=area_source, custom_identifier=CustomID('1000')
+    )
+    # area_source.add_subsystem(group_source)
     order_time_source = pyf_dt.timedelta_from_val(val=2.0, time_unit=TimeUnitsTimedelta.HOURS)
     source = sim.Source(
         env=env,
+        supersystem=group_source,
         custom_identifier=CustomID('source'),
         proc_time=order_time_source,
         job_generation_limit=None,

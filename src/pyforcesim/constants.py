@@ -78,6 +78,8 @@ DEFAULT_DATETIME: Final[Datetime] = Datetime(datetime.MINYEAR, 1, 1, tzinfo=TIME
 
 
 # ** database
+DB_HANDLE: Final[str] = 'sqlite:///:memory:'
+DB_ECHO: Final[bool] = True
 DB_ROOT: Final[str] = 'databases'
 DB_DATA_TYPES: Final[set[str]] = {
     'INTEGER',
