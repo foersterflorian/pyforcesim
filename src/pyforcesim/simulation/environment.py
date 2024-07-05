@@ -48,7 +48,7 @@ from pyforcesim.dashboard.dashboard import (
     start_dashboard,
 )
 from pyforcesim.dashboard.websocket_server import start_websocket_server
-from pyforcesim.errors import AssociationError
+from pyforcesim.errors import AssociationError, SQLNotFoundError, SQLTooManyValuesFoundError
 from pyforcesim.rl.agents import Agent, AllocationAgent
 from pyforcesim.simulation import databases as db
 from pyforcesim.simulation import monitors
@@ -247,8 +247,8 @@ class SimulationEnvironment(salabim.Environment):
         if not self._infstruct_mgr.sink_registered:
             raise ValueError('No Sink instance registered.')
         # check if all subsystems are associated to supersystems
-        elif not self._infstruct_mgr.verify_system_association():
-            raise AssociationError('Non-associated subsystems detected!')
+        # elif not self._infstruct_mgr.verify_system_association():
+        #     raise AssociationError('Non-associated subsystems detected!')
 
         loggers.pyf_env.info(
             'Integrity check for Environment >>%s<< successful.', self.name()
@@ -256,9 +256,9 @@ class SimulationEnvironment(salabim.Environment):
 
     def initialise(self) -> None:
         # infrastructure manager instance
-        self._infstruct_mgr.initialise()
+        self.infstruct_mgr.initialise()
         # dispatcher instance
-        self._dispatcher.initialise()
+        self.dispatcher.initialise()
 
         # establish websocket connection
         if self.debug_dashboard and not self.servers_connected:
@@ -319,64 +319,18 @@ class InfrastructureManager:
         # COMMON
         self._env = env
         self._system_types = common.enum_str_values_as_frzset(SimSystemTypes)
-
-        # PRODUCTION AREAS database as simple Pandas DataFrame
+        # PRODUCTION AREAS
         self._prod_areas: dict[SystemID, ProductionArea] = {}
-        self._prod_area_prop: dict[str, type] = {
-            'prod_area_id': int,
-            'custom_id': str,
-            'name': str,
-            'prod_area': object,
-            'containing_proc_stations': bool,
-        }
-        self._prod_area_db: DataFrame = pd.DataFrame(
-            columns=list(self._prod_area_prop.keys())
-        )
-        self._prod_area_db = self._prod_area_db.astype(self._prod_area_prop)
-        self._prod_area_db = self._prod_area_db.set_index('prod_area_id')
-        self._prod_area_lookup_props: set[str] = set(['prod_area_id', 'custom_id', 'name'])
-        # [PRODUCTION AREAS] identifiers
         self._prod_area_counter = SystemID(0)
         self._prod_area_custom_identifiers: set[CustomID] = set()
 
-        # [STATION GROUPS] database as simple Pandas DataFrame
+        # [STATION GROUPS]
         self._station_groups: dict[SystemID, StationGroup] = {}
-        self._station_group_prop: dict[str, type | pd.Int64Dtype] = {
-            'station_group_id': int,
-            'custom_id': str,
-            'name': str,
-            'station_group': object,
-            'prod_area_id': pd.Int64Dtype(),
-            'containing_proc_stations': bool,
-        }
-        self._station_group_db: DataFrame = pd.DataFrame(
-            columns=list(self._station_group_prop.keys())
-        )
-        self._station_group_db = self._station_group_db.astype(self._station_group_prop)
-        self._station_group_db = self._station_group_db.set_index('station_group_id')
-        self._station_group_lookup_props: set[str] = set(
-            ['station_group_id', 'custom_id', 'name']
-        )
-        # [STATION GROUPS] identifiers
         self._station_group_counter = SystemID(0)
         self._station_groups_custom_identifiers: set[CustomID] = set()
 
-        # [RESOURCES] database as simple Pandas DataFrame
+        # [RESOURCES]
         self._resources: dict[SystemID, InfrastructureObject] = {}
-        self._infstruct_prop: dict[str, type | pd.Int64Dtype] = {
-            'res_id': int,
-            'custom_id': str,
-            'resource': object,
-            'name': str,
-            'resource_type': str,
-            'state': str,
-            'station_group_id': pd.Int64Dtype(),
-        }
-        self._res_db: DataFrame = pd.DataFrame(columns=list(self._infstruct_prop.keys()))
-        self._res_db = self._res_db.astype(self._infstruct_prop)
-        self._res_db = self._res_db.set_index('res_id')
-        self._res_lookup_props: set[str] = set(['res_id', 'custom_id', 'name'])
-        # [RESOURCES] custom identifiers
         self._res_counter = SystemID(0)
         self._res_custom_identifiers: set[CustomID] = set()
         # [RESOURCES] sink: pool of sinks possible to allow multiple sinks in one environment
@@ -393,15 +347,17 @@ class InfrastructureManager:
     def env(self) -> SimulationEnvironment:
         return self._env
 
-    # [PRODUCTION AREAS]
     @property
-    def prod_area_db(self) -> DataFrame:
-        return self._prod_area_db
+    def prod_areas(self) -> dict[SystemID, ProductionArea]:
+        return self._prod_areas
 
-    # [STATION GROUPS]
     @property
-    def station_group_db(self) -> DataFrame:
-        return self._station_group_db
+    def station_groups(self) -> dict[SystemID, StationGroup]:
+        return self._station_groups
+
+    @property
+    def resources(self) -> dict[SystemID, InfrastructureObject]:
+        return self._resources
 
     def get_total_per_system_type(
         self,
@@ -427,44 +383,6 @@ class InfrastructureManager:
                 return self._station_group_counter
             case SimSystemTypes.RESOURCE:
                 return self._res_counter
-
-    def verify_system_association(self) -> bool:
-        """checks if there are any registered, but non-associated
-        subsystems for each subsystem type
-
-        Returns
-        -------
-        bool
-            indicator if all systems are associated (True) or not (False)
-        """
-        # check all subsystem types with reference to supersystems if there are
-        # any open references (NA values as secondary key)
-        relevant_subsystems = (SimSystemTypes.STATION_GROUP, SimSystemTypes.RESOURCE)
-
-        for system_type in relevant_subsystems:
-            match system_type:
-                case SimSystemTypes.STATION_GROUP:
-                    target_db = self._station_group_db
-                    secondary_key: str = 'prod_area_id'
-                case SimSystemTypes.RESOURCE:
-                    target_db = self._res_db
-                    secondary_key: str = 'station_group_id'
-            # check if there are any NA values as secondary key
-            check_val = target_db[secondary_key].isna().any()
-            if check_val:
-                # there are NA values
-                loggers.infstrct.error(
-                    (
-                        'There are non-associated systems for '
-                        'system type >>%s<<. '
-                        'Please check these systems and add them to a '
-                        'corresponding supersystem.'
-                    ),
-                    system_type,
-                )
-                return False
-
-        return True
 
     ####################################################################################
     ## REWORK TO WORK WITH DIFFERENT SUBSYSTEMS
@@ -558,20 +476,8 @@ class InfrastructureManager:
                     conn.execute(sql.insert(db.production_areas), entry)
                     conn.commit()
                 # add to object lookup
-                self._prod_areas[system_id] = obj
+                self.prod_areas[system_id] = obj
 
-                # new_entry: DataFrame = pd.DataFrame(
-                #     {
-                #         'prod_area_id': [system_id],
-                #         'custom_id': [custom_identifier],
-                #         'name': [name],
-                #         'prod_area': [obj],
-                #         'containing_proc_stations': [obj.containing_proc_stations],
-                #     }
-                # )
-                # new_entry = new_entry.astype(self._prod_area_prop)
-                # new_entry = new_entry.set_index('prod_area_id')
-                # self._prod_area_db = pd.concat([self._prod_area_db, new_entry])
             case SimSystemTypes.STATION_GROUP:
                 if supersystem is None:
                     raise ValueError(
@@ -579,7 +485,10 @@ class InfrastructureManager:
                     )
                 elif not isinstance(supersystem, ProductionArea):
                     raise TypeError(
-                        f'Supersystem for >>{obj.__class__.__name__}<< must be of type >>ProductionArea<<'
+                        (
+                            f'Supersystem for >>{obj.__class__.__name__}<< '
+                            f'must be of type >>ProductionArea<<'
+                        )
                     )
                 obj = cast('StationGroup', obj)
                 # add to database
@@ -595,21 +504,8 @@ class InfrastructureManager:
                     conn.execute(sql.insert(db.station_groups), entry)
                     conn.commit()
                 # add to object lookup
-                self._station_groups[system_id] = obj
+                self.station_groups[system_id] = obj
 
-                # new_entry: DataFrame = pd.DataFrame(
-                #     {
-                #         'station_group_id': [system_id],
-                #         'custom_id': [custom_identifier],
-                #         'name': [name],
-                #         'station_group': [obj],
-                #         'prod_area_id': [None],
-                #         'containing_proc_stations': [obj.containing_proc_stations],
-                #     }
-                # )
-                # new_entry = new_entry.astype(self._station_group_prop)
-                # new_entry = new_entry.set_index('station_group_id')
-                # self._station_group_db = pd.concat([self._station_group_db, new_entry])
             case SimSystemTypes.RESOURCE:
                 if supersystem is None:
                     raise ValueError(
@@ -617,7 +513,10 @@ class InfrastructureManager:
                     )
                 elif not isinstance(supersystem, StationGroup):
                     raise TypeError(
-                        f'Supersystem for >>{obj.__class__.__name__}<< must be of type >>StationGroup<<'
+                        (
+                            f'Supersystem for >>{obj.__class__.__name__}<< '
+                            f'must be of type >>StationGroup<<'
+                        )
                     )
                 if state is None:
                     raise ValueError('State can not be >>None<<.')
@@ -636,22 +535,7 @@ class InfrastructureManager:
                     conn.execute(sql.insert(db.resources), entry)
                     conn.commit()
                 # add to object lookup
-                self._resources[system_id] = obj
-
-                # new_entry: DataFrame = pd.DataFrame(
-                #     {
-                #         'res_id': [system_id],
-                #         'custom_id': [custom_identifier],
-                #         'resource': [obj],
-                #         'name': [name],
-                #         'resource_type': [obj.resource_type],  # type: ignore
-                #         'state': [state],
-                #         'station_group_id': [None],
-                #     }
-                # )
-                # new_entry = new_entry.astype(self._infstruct_prop)
-                # new_entry = new_entry.set_index('res_id')
-                # self._res_db = pd.concat([self._res_db, new_entry])
+                self.resources[system_id] = obj
 
         loggers.infstrct.info(
             'Successfully registered object with SystemID >>%s<< and name >>%s<<',
@@ -660,156 +544,6 @@ class InfrastructureManager:
         )
 
         return system_id, name
-
-    def register_subsystem_old(
-        self,
-        system_type: SimSystemTypes,
-        obj: System,
-        custom_identifier: CustomID,
-        name: str | None,
-        state: SimStatesCommon | SimStatesStorage | None = None,
-    ) -> tuple[SystemID, str]:
-        """
-        registers an infrastructure object in the environment by assigning an unique id and 
-        adding the object to the associated resources of the environment
-        
-        obj: env resource = instance of a subclass of InfrastructureObject
-        custom_identifier: user defined identifier
-        name: custom name of the object, \
-            default: None
-        returns:
-            SystemID: assigned resource ID
-            str: assigned resource's name
-        """
-        if system_type not in self._system_types:
-            raise ValueError(
-                (
-                    f'The subsystem type >>{system_type}<< is not allowed. '
-                    f'Choose from {self._system_types}'
-                )
-            )
-
-        match system_type:
-            case SimSystemTypes.PRODUCTION_AREA:
-                custom_identifiers = self._prod_area_custom_identifiers
-            case SimSystemTypes.STATION_GROUP:
-                custom_identifiers = self._station_groups_custom_identifiers
-            case SimSystemTypes.RESOURCE:
-                custom_identifiers = self._res_custom_identifiers
-            case _:
-                raise ValueError(f'Unknown subsystem type of {system_type}')
-
-        # check if value already exists
-        if custom_identifier in custom_identifiers:
-            raise ValueError(
-                (
-                    f'The custom identifier {custom_identifier} provided '
-                    f'for subsystem type {system_type} '
-                    f'already exists, but has to be unique.'
-                )
-            )
-        else:
-            custom_identifiers.add(custom_identifier)
-
-        # obtain system ID
-        system_id = self._obtain_system_id(system_type=system_type)
-
-        # [RESOURCES] resource related data
-        # register sinks
-        if isinstance(obj, Sink):
-            if not self._sink_registered:
-                self._sink_registered = True
-            self._sinks.append(obj)
-        # count number of machines
-        if isinstance(obj, ProcessingStation):
-            self.num_proc_stations += 1
-
-        # custom name
-        if name is None:
-            name = f'{type(obj).__name__}_env_{system_id}'
-
-        # new entry for corresponding database
-        match system_type:
-            case SimSystemTypes.PRODUCTION_AREA:
-                new_entry: DataFrame = pd.DataFrame(
-                    {
-                        'prod_area_id': [system_id],
-                        'custom_id': [custom_identifier],
-                        'name': [name],
-                        'prod_area': [obj],
-                        'containing_proc_stations': [obj.containing_proc_stations],
-                    }
-                )
-                new_entry = new_entry.astype(self._prod_area_prop)
-                new_entry = new_entry.set_index('prod_area_id')
-                self._prod_area_db = pd.concat([self._prod_area_db, new_entry])
-            case SimSystemTypes.STATION_GROUP:
-                new_entry: DataFrame = pd.DataFrame(
-                    {
-                        'station_group_id': [system_id],
-                        'custom_id': [custom_identifier],
-                        'name': [name],
-                        'station_group': [obj],
-                        'prod_area_id': [None],
-                        'containing_proc_stations': [obj.containing_proc_stations],
-                    }
-                )
-                new_entry = new_entry.astype(self._station_group_prop)
-                new_entry = new_entry.set_index('station_group_id')
-                self._station_group_db = pd.concat([self._station_group_db, new_entry])
-            case SimSystemTypes.RESOURCE:
-                new_entry: DataFrame = pd.DataFrame(
-                    {
-                        'res_id': [system_id],
-                        'custom_id': [custom_identifier],
-                        'resource': [obj],
-                        'name': [name],
-                        'resource_type': [obj.resource_type],  # type: ignore
-                        'state': [state],
-                        'station_group_id': [None],
-                    }
-                )
-                new_entry = new_entry.astype(self._infstruct_prop)
-                new_entry = new_entry.set_index('res_id')
-                self._res_db = pd.concat([self._res_db, new_entry])
-
-        loggers.infstrct.info(
-            'Successfully registered object with SystemID >>%s<< and name >>%s<<',
-            system_id,
-            name,
-        )
-
-        return system_id, name
-
-    def register_system_association(
-        self,
-        supersystem: System,
-        subsystem: System,
-    ) -> None:
-        """associate two system types with each other in the corresponding databases
-
-        Parameters
-        ----------
-        supersystem : System
-            system to which the subsystem is added
-        subsystem : System
-            system which is added to the supersystem and to whose database the entry is made
-        """
-        # target subsystem type -> identify appropriate database
-        system_type = subsystem.system_type
-
-        match system_type:
-            case SimSystemTypes.STATION_GROUP:
-                target_db = self._station_group_db
-                target_property: str = 'prod_area_id'
-            case SimSystemTypes.RESOURCE:
-                target_db = self._res_db
-                target_property: str = 'station_group_id'
-        # system IDs
-        supersystem_id = supersystem.system_id
-        subsystem_id = subsystem.system_id
-        # write supersystem ID to subsystem database entry
-        target_db.at[subsystem_id, target_property] = supersystem_id
 
     def set_contain_proc_station(
         self,
@@ -817,29 +551,68 @@ class InfrastructureManager:
     ) -> None:
         match system.system_type:
             case SimSystemTypes.PRODUCTION_AREA:
-                lookup_db = self._prod_area_db
+                # lookup_db = self._prod_area_db
+                target_db = db.production_areas
             case SimSystemTypes.STATION_GROUP:
-                lookup_db = self._station_group_db
+                # lookup_db = self._station_group_db
+                target_db = db.station_groups
 
-        lookup_db.at[system.system_id, 'containing_proc_stations'] = True
+        stmt = (
+            sql.update(target_db)
+            .where(target_db.c.sys_id == system.system_id)
+            .values(contains_proc_stations=True)
+        )
+        with self.env.db_engine.connect() as conn:
+            conn.execute(stmt)
+            conn.commit()
+
         system.containing_proc_stations = True
-
         # iterate over supersystems
         for supersystem in system.supersystems.values():
             if not supersystem.containing_proc_stations:
                 self.set_contain_proc_station(system=supersystem)
 
+    @overload
+    def get_system_by_id(
+        self,
+        system_type: Literal[SimSystemTypes.PRODUCTION_AREA],
+        system_id: SystemID,
+    ) -> ProductionArea: ...
+
+    @overload
+    def get_system_by_id(
+        self,
+        system_type: Literal[SimSystemTypes.STATION_GROUP],
+        system_id: SystemID,
+    ) -> StationGroup: ...
+
+    @overload
+    def get_system_by_id(
+        self,
+        system_type: Literal[SimSystemTypes.RESOURCE],
+        system_id: SystemID,
+    ) -> InfrastructureObject: ...
+
+    def get_system_by_id(
+        self,
+        system_type: SimSystemTypes,
+        system_id: SystemID,
+    ) -> ProductionArea | StationGroup | InfrastructureObject:
+        match system_type:
+            case SimSystemTypes.PRODUCTION_AREA:
+                return self.prod_areas[system_id]
+            case SimSystemTypes.STATION_GROUP:
+                return self.station_groups[system_id]
+            case SimSystemTypes.RESOURCE:
+                return self.resources[system_id]
+
     def lookup_subsystem_info(
         self,
         system_type: SimSystemTypes,
         lookup_val: SystemID | CustomID,
-        lookup_property: str | None = None,
-        target_property: str | None = None,
+        target_property: str,
+        use_sys_id: bool = True,
     ) -> Any:
-        """
-        obtain a subsystem by its property and corresponding value
-        properties: Subsystem ID, Custom ID, Name
-        """
         if system_type not in self._system_types:
             raise ValueError(
                 (
@@ -848,133 +621,50 @@ class InfrastructureManager:
                 )
             )
 
-        id_prop: str
         match system_type:
             case SimSystemTypes.PRODUCTION_AREA:
-                allowed_lookup_props = self._prod_area_lookup_props
-                lookup_db = self._prod_area_db
-                if target_property is None:
-                    target_property = 'prod_area'
-                id_prop = 'prod_area_id'
+                lookup_db = db.production_areas
             case SimSystemTypes.STATION_GROUP:
-                allowed_lookup_props = self._station_group_lookup_props
-                lookup_db = self._station_group_db
-                if target_property is None:
-                    target_property = 'station_group'
-                id_prop = 'station_group_id'
+                lookup_db = db.station_groups
             case SimSystemTypes.RESOURCE:
-                allowed_lookup_props = self._res_lookup_props
-                lookup_db = self._res_db
-                if target_property is None:
-                    target_property = 'resource'
-                id_prop = 'res_id'
+                lookup_db = db.resources
 
         # if no lookup property provided use ID
-        if lookup_property is None:
-            lookup_property = id_prop
-
-        # allowed target properties
-        allowed_target_props: set[str] = set(lookup_db.columns.to_list())
-        # lookup property can not be part of the target properties
-        if lookup_property in allowed_target_props:
-            allowed_target_props.remove(lookup_property)
-
-        # check if property is a filter criterion
-        if lookup_property not in allowed_lookup_props:
-            raise IndexError(
-                (
-                    f'Lookup Property >>{lookup_property}<< is not allowed for '
-                    f'subsystem type {system_type}. Choose from '
-                    f'{allowed_lookup_props}'
-                )
-            )
-        # check if target property is allowed
-        if target_property not in allowed_target_props:
-            raise IndexError(
-                (
-                    f'Target Property >>{target_property}<< is not allowed for '
-                    f'subsystem type {system_type}. Choose from {allowed_target_props}'
-                )
-            )
-        # None type value can not be looked for
-        if lookup_val is None:
-            raise TypeError('The lookup value can not be of type >>None<<.')
-
-        # filter resource database for prop-value pair
-        if lookup_property == id_prop:
-            # direct indexing for ID property: always unique, no need for duplicate check
-            try:
-                idx_res: Any = lookup_db.at[lookup_val, target_property]
-                return idx_res
-            except KeyError:
-                raise IndexError(
-                    (
-                        f'There were no subsystems found for the '
-                        f'lookup property >>{lookup_property}<< '
-                        f'with the value >>{lookup_val}<<'
-                    )
-                )
+        lookup_property: str
+        if use_sys_id:
+            lookup_property = 'sys_id'
         else:
-            try:
-                multi_res = lookup_db.loc[
-                    lookup_db[lookup_property] == lookup_val, target_property
-                ]
-                # check for empty search result, at least one result necessary
-                if len(multi_res) == 0:
-                    raise IndexError(
-                        (
-                            f'There were no subsystems found for the lookup '
-                            f'property >>{lookup_property}<< '
-                            f'with the value >>{lookup_val}<<'
-                        )
-                    )
-            except KeyError:
-                raise IndexError(
-                    (
-                        f'There were no subsystems found for the '
-                        f'lookup property >>{lookup_property}<< '
-                        f'with the value >>{lookup_val}<<'
-                    )
-                )
-            # check for multiple entries with same prop-value pair
-            ########### PERHAPS CHANGE NECESSARY
-            ### multiple entries but only one returned --> prone to errors
-            if len(multi_res) > 1:
-                # warn user
-                loggers.infstrct.warning(
-                    (
-                        'CAUTION: There are multiple subsystems which share the '
-                        'same value >>%s<< for the '
-                        'lookup property >>%s<<. '
-                        'Only the first entry is returned.'
-                    ),
-                    lookup_val,
-                    lookup_property,
-                )
+            lookup_property = 'custom_id'
 
-            return multi_res.iat[0]
+        stmt = sql.select(lookup_db).where(lookup_db.c[lookup_property] == lookup_val)
+        with self.env.db_engine.connect() as conn:
+            res = conn.execute(stmt)
+            conn.commit()
+
+        sql_results = tuple(res.mappings())
+        if len(sql_results) == 0:
+            raise SQLNotFoundError(f'Given query >>{stmt}<< did not return any results.')
+        elif len(sql_results) > 1:
+            raise SQLTooManyValuesFoundError(
+                f'Given query >>{stmt}<< returned too many values.'
+            )
+
+        ret_value = sql_results[0][target_property]  # type: ignore
+
+        return ret_value
 
     def lookup_custom_ID(
         self,
         system_type: SimSystemTypes,
-        system_ID: SystemID,
+        system_id: SystemID,
     ) -> CustomID:
-        id_prop: str
-        match system_type:
-            case SimSystemTypes.PRODUCTION_AREA:
-                id_prop = 'prod_area_id'
-            case SimSystemTypes.STATION_GROUP:
-                id_prop = 'station_group_id'
-            case SimSystemTypes.RESOURCE:
-                id_prop = 'res_id'
-
         custom_id = cast(
             CustomID,
             self.lookup_subsystem_info(
                 system_type=system_type,
-                lookup_val=system_ID,
-                lookup_property=id_prop,
+                lookup_val=system_id,
                 target_property='custom_id',
+                use_sys_id=True,
             ),
         )
 
@@ -983,27 +673,21 @@ class InfrastructureManager:
     def lookup_system_ID(
         self,
         system_type: SimSystemTypes,
-        custom_ID: CustomID,
+        custom_id: CustomID,
     ) -> SystemID:
-        system = cast(
-            System,
+        system_id = cast(
+            SystemID,
             self.lookup_subsystem_info(
                 system_type=system_type,
-                lookup_val=custom_ID,
-                lookup_property='custom_id',
+                lookup_val=custom_id,
+                target_property='sys_id',
+                use_sys_id=False,
             ),
         )
 
-        return system.system_id
-
-    ####################################################################
+        return system_id
 
     # [RESOURCES]
-    @property
-    def res_db(self) -> DataFrame:
-        """obtain a current overview of registered objects in the environment"""
-        return self._res_db
-
     @property
     def sinks(self) -> list[Sink]:
         """registered sinks"""
@@ -1030,7 +714,15 @@ class InfrastructureManager:
         else:
             obj.stat_monitor.set_state(target_state=state)
 
-        self._res_db.at[obj.system_id, 'state'] = state
+        stmt = (
+            sql.update(db.resources)
+            .where(db.resources.c.sys_id == obj.system_id)
+            .values(state=state)
+        )
+        with self.env.db_engine.connect() as conn:
+            conn.execute(stmt)
+            conn.commit()
+
         loggers.infstrct.debug('Executed state setting of >>%s<< to >>%s<<', obj, state)
 
     def res_objs_temp_state(
@@ -1054,15 +746,21 @@ class InfrastructureManager:
                 obj.stat_monitor.calc_KPI()
 
     def initialise(self) -> None:
-        for prod_area in self._prod_area_db['prod_area']:
+        for prod_area in self.prod_areas.values():
             prod_area.initialise()
-        for station_group in self._station_group_db['station_group']:
+        for station_group in self.station_groups.values():
             station_group.initialise()
+        for resource in self.resources.values():
+            resource.initialise()
 
     def finalise(self) -> None:
         # set end state for each resource object to calculate the right time amounts
-        for res_obj in self._res_db['resource']:
-            res_obj.finalise()
+        for prod_area in self.prod_areas.values():
+            prod_area.finalise()
+        for station_group in self.station_groups.values():
+            station_group.finalise()
+        for resource in self.resources.values():
+            resource.finalise()
         loggers.infstrct.info(
             'Successful finalisation of the state information for all resource objects.'
         )
@@ -1576,27 +1274,24 @@ class Dispatcher:
 
         # corresponding execution system in which the operation is performed
         # no pre-determined assignment of processing stations
-        exec_system = cast(
-            ProductionArea,
-            infstruct_mgr.lookup_subsystem_info(
-                system_type=EXEC_SYSTEM_TYPE, lookup_val=exec_system_identifier
-            ),
-        )
+        exec_system = infstruct_mgr.get_system_by_id(EXEC_SYSTEM_TYPE, exec_system_identifier)
         # if target station group is specified, get instance
         target_station_group: StationGroup | None
         if target_station_group_identifier is not None:
-            target_station_group = cast(
-                StationGroup,
-                infstruct_mgr.lookup_subsystem_info(
-                    system_type=SimSystemTypes.STATION_GROUP,
-                    lookup_val=target_station_group_identifier,
-                ),
+            target_station_group = infstruct_mgr.get_system_by_id(
+                SimSystemTypes.STATION_GROUP, target_station_group_identifier
             )
+
             # validity check: only target stations allowed which are
             # part of the current execution system
             if target_station_group.system_id not in exec_system.subsystems:
-                raise ValueError(f'{target_station_group} is not part of {exec_system}. \
-                    Mismatch between execution system and associated station groups.')
+                raise AssociationError(
+                    (
+                        f'Station Group >>{target_station_group}<< is not part of execution '
+                        f'system >>{exec_system}<<. Mismatch between execution '
+                        f'system and associated station groups.'
+                    )
+                )
         else:
             # target_station_group = None
             raise ValueError('Station Group is None')
@@ -2074,7 +1769,6 @@ class Dispatcher:
 
         return target_station
 
-    # TODO change return type to only job
     def request_job_sequencing(
         self,
         req_obj: InfrastructureObject,
@@ -2308,7 +2002,7 @@ class Dispatcher:
 # ** systems
 
 
-class System:
+class System(metaclass=ABCMeta):
     def __init__(
         self,
         env: SimulationEnvironment,
@@ -2759,12 +2453,11 @@ class System:
         """
         return max(self.subsystems_ids)
 
-    def initialise(self) -> None:
-        # assign associated ProcessingStations and corresponding info
-        self._assoc_proc_stations = self.lowest_level_subsystems(
-            only_processing_stations=True
-        )
-        self._num_assoc_proc_stations = len(self._assoc_proc_stations)
+    @abstractmethod
+    def initialise(self) -> None: ...
+
+    @abstractmethod
+    def finalise(self) -> None: ...
 
 
 class ProductionArea(System):
@@ -2820,6 +2513,18 @@ class ProductionArea(System):
 
         super().add_subsystem(subsystem=subsystem)
 
+    @override
+    def initialise(self) -> None:
+        # assign associated ProcessingStations and corresponding info
+        self._assoc_proc_stations = self.lowest_level_subsystems(
+            only_processing_stations=True
+        )
+        self._num_assoc_proc_stations = len(self._assoc_proc_stations)
+
+    @override
+    def finalise(self) -> None:
+        pass
+
 
 class StationGroup(System):
     def __init__(
@@ -2873,6 +2578,18 @@ class StationGroup(System):
 
         super().add_subsystem(subsystem=subsystem)
 
+    @override
+    def initialise(self) -> None:
+        # assign associated ProcessingStations and corresponding info
+        self._assoc_proc_stations = self.lowest_level_subsystems(
+            only_processing_stations=True
+        )
+        self._num_assoc_proc_stations = len(self._assoc_proc_stations)
+
+    @override
+    def finalise(self) -> None:
+        pass
+
 
 # INFRASTRUCTURE COMPONENTS
 
@@ -2887,16 +2604,9 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
-        current_state: SimStatesCommon | None = SimStatesCommon.INIT,
-        states: type[SimStatesCommon] | None = SimStatesCommon,
+        add_monitor: bool = True,
+        current_state: SimStatesCommon | SimStatesStorage = SimStatesCommon.INIT,
     ) -> None:
-        """
-        env: simulation environment in which the infrastructure object is embedded
-        custom_identifier: unique user-defined custom ID of the given object \
-            necessary for user interfaces
-        capacity: capacity of the infrastructure object, if multiple processing \
-            slots available at the same time > 1, default=1
-        """
         self.capacity = capacity
         self._resource_type = resource_type
         # [HIERARCHICAL SYSTEM INFORMATION]
@@ -2914,12 +2624,18 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             state=current_state,
         )
         # [STATS] Monitoring
-        if current_state is not None and states is not None:
+        if add_monitor:
+            if not isinstance(current_state, SimStatesCommon):
+                raise TypeError(
+                    (
+                        'Current State for infrastructure monitor'
+                        'must be a state of >>SimStatesCommon<<.'
+                    )
+                )
             self._stat_monitor = monitors.InfStructMonitor(
                 env=env,
                 obj=self,
                 current_state=current_state,
-                states=states,
             )
         # [SALABIM COMPONENT]
         self._sim_control = SimulationComponent(
@@ -3090,9 +2806,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         else:
             # simply obtain target station if no agent decision is needed
             target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
-
-        # TODO check removal
-        # yield self.sim_control.hold(0)
 
         # get logic queue
         logic_queue = target_station.logic_queue
@@ -3276,6 +2989,11 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         """returns: tuple with values or None"""
         ...
 
+    @override
+    def initialise(self) -> None:
+        pass
+
+    @override
     def finalise(self) -> None:
         """
         method to be called at the end of the simulation run by
@@ -3299,7 +3017,6 @@ class StorageLike(InfrastructureObject):
         setup_time: Timedelta | None = None,
         capacity: int | Infinite = INF,
         current_state: SimStatesStorage = SimStatesStorage.INIT,
-        states: type[SimStatesStorage] = SimStatesStorage,
         fill_level_init: int = 0,
     ) -> None:
         super().__init__(
@@ -3310,8 +3027,8 @@ class StorageLike(InfrastructureObject):
             name=name,
             setup_time=setup_time,
             capacity=capacity,
-            current_state=None,
-            states=None,
+            add_monitor=False,
+            current_state=current_state,
         )
 
         self.fill_level_init = fill_level_init
@@ -3319,7 +3036,6 @@ class StorageLike(InfrastructureObject):
             env=env,
             obj=self,
             current_state=current_state,
-            states=states,
         )
 
         self._sim_control = StorageComponent(
@@ -3364,7 +3080,6 @@ class ProcessingStation(InfrastructureObject):
         setup_time: Timedelta | None = None,
         capacity: float = INF,
         current_state: SimStatesCommon = SimStatesCommon.INIT,
-        states: type[SimStatesCommon] = SimStatesCommon,
         buffers: Iterable[Buffer] | None = None,
     ) -> None:
         """
@@ -3382,7 +3097,6 @@ class ProcessingStation(InfrastructureObject):
             setup_time=setup_time,
             capacity=capacity,
             current_state=current_state,
-            states=states,
         )
 
         # add physical buffers, more than one allowed
@@ -3431,17 +3145,6 @@ class ProcessingStation(InfrastructureObject):
 
     def buffers_as_tuple(self) -> tuple[Buffer, ...]:
         return tuple(self._buffers)
-
-    # TODO: add station group information or delete
-    """
-    @property
-    def station_group_id(self) -> SystemID:
-        return self._station_group_id
-    
-    @property
-    def station_group(self) -> StationGroup:
-        return self._station_group
-    """
 
     def add_buffer(
         self,
@@ -3562,7 +3265,6 @@ class Machine(ProcessingStation):
         setup_time: Timedelta | None = None,
         capacity: float = INF,
         current_state: SimStatesCommon = SimStatesCommon.INIT,
-        states: type[SimStatesCommon] = SimStatesCommon,
         buffers: Iterable[Buffer] | None = None,
     ) -> None:
         """
@@ -3581,7 +3283,6 @@ class Machine(ProcessingStation):
             setup_time=setup_time,
             capacity=capacity,
             current_state=current_state,
-            states=states,
             buffers=buffers,
         )
 
@@ -3596,7 +3297,6 @@ class Buffer(StorageLike):
         setup_time: Timedelta | None = None,
         capacity: int | Infinite = INF,
         current_state: SimStatesStorage = SimStatesStorage.INIT,
-        states: type[SimStatesStorage] = SimStatesStorage,
         fill_level_init: int = 0,
     ) -> None:
         """
@@ -3612,7 +3312,6 @@ class Buffer(StorageLike):
             setup_time=setup_time,
             capacity=capacity,
             current_state=current_state,
-            states=states,
             fill_level_init=fill_level_init,
         )
         # material flow relationships
@@ -3754,7 +3453,6 @@ class Source(InfrastructureObject):
         setup_time: Timedelta | None = None,
         capacity: float = INF,
         current_state: SimStatesCommon = SimStatesCommon.INIT,
-        states: type[SimStatesCommon] = SimStatesCommon,
         job_generation_limit: int | None = None,
         seed: int = 42,
     ) -> None:
@@ -3770,7 +3468,6 @@ class Source(InfrastructureObject):
             setup_time=setup_time,
             capacity=capacity,
             current_state=current_state,
-            states=states,
         )
         # TODO REWORK
         # initialise component with necessary process function
@@ -3960,7 +3657,6 @@ class Sink(InfrastructureObject):
         setup_time: Timedelta | None = None,
         capacity: float = INF,
         current_state: SimStatesCommon = SimStatesCommon.INIT,
-        states: type[SimStatesCommon] = SimStatesCommon,
     ) -> None:
         """
         num_gen_jobs: total number of jobs to be generated
@@ -3975,7 +3671,6 @@ class Sink(InfrastructureObject):
             setup_time=setup_time,
             capacity=capacity,
             current_state=current_state,
-            states=states,
         )
 
     @override

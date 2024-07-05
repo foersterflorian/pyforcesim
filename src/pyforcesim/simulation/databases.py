@@ -1,7 +1,7 @@
 import sqlalchemy as sql
 from sqlalchemy import Column, ForeignKey, Table
 
-from pyforcesim.constants import DB_HANDLE, DB_ECHO
+from pyforcesim.constants import DB_ECHO, DB_HANDLE
 
 metadata_obj = sql.MetaData()
 
