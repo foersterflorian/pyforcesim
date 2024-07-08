@@ -74,7 +74,7 @@ class TimeUnitsTimedelta(enum.StrEnum):
 
 TIMEZONE_CEST: Final[ZoneInfo] = ZoneInfo('Europe/Berlin')
 TIMEZONE_UTC: Final[Timezone] = Timezone.utc
-DEFAULT_DATETIME: Final[Datetime] = Datetime(datetime.MINYEAR, 1, 1, tzinfo=TIMEZONE_UTC)
+DEFAULT_DATETIME: Final[Datetime] = Datetime(1970, 1, 1, tzinfo=TIMEZONE_UTC)
 
 
 # ** database

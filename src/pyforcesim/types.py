@@ -68,6 +68,9 @@ AgentTasks: TypeAlias = Literal['SEQ', 'ALLOC']
 
 
 # ** database
+PandasDateColParseInfo: TypeAlias = dict[str, dict[str, bool]]
+PandasDatetimeCols: TypeAlias = list[str]
+PandasTimedeltaCols: TypeAlias = list[str]
 DBColumnName: TypeAlias = str
 DBColumnType: TypeAlias = str
 DBColumnDeclaration: TypeAlias = dict[DBColumnName, DBColumnType]
