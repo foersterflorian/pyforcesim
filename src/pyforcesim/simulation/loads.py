@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import random
-import typing
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from datetime import timedelta as Timedelta
 from typing import TYPE_CHECKING, cast
+from typing_extensions import override
 
 import numpy as np
 import numpy.typing as npt
@@ -157,8 +157,7 @@ class RandomJobGenerator(BaseJobGenerator):
                 proc_times.append(td)
 
             # setup times
-            setup_times: list[Timedelta] | None = None
-            setup_times_time_unit: list[int] | None = None
+            setup_times: list[Timedelta]
             if gen_setup_times:
                 setup_times = []
                 setup_times_time_unit = cast(
@@ -173,6 +172,8 @@ class RandomJobGenerator(BaseJobGenerator):
                 for time in setup_times_time_unit:
                     td = pyf_dt.timedelta_from_val(val=time, time_unit=time_unit)
                     setup_times.append(td)
+            else:
+                setup_times = [Timedelta()] * n_objects
 
             prio: OrderPriority | None = None
             if gen_prio:
@@ -232,17 +233,23 @@ class ConstantSequenceSinglePA(ProductionSequence):
 
         # associated production area
         self._prod_area_id = prod_area_id
-        self._prod_area = typing.cast(
-            'ProductionArea',
-            self.env.infstruct_mgr.lookup_subsystem_info(
-                system_type=SimSystemTypes.PRODUCTION_AREA,
-                lookup_val=self._prod_area_id,
-            ),
+        self._prod_area = self.env.infstruct_mgr.get_system_by_id(
+            system_type=SimSystemTypes.PRODUCTION_AREA,
+            system_id=self._prod_area_id,
         )
 
     def __repr__(self) -> str:
         return super().__repr__() + f' | ProductionAreaID: {self._prod_area_id}'
 
+    @property
+    def prod_area_id(self) -> SystemID:
+        return self._prod_area_id
+
+    @property
+    def prod_area(self) -> ProductionArea:
+        return self._prod_area
+
+    @override
     def retrieve(
         self,
         target_obj: Source,
@@ -260,11 +267,7 @@ class ConstantSequenceSinglePA(ProductionSequence):
             job generation infos
         """
         # request StationGroupIDs by ProdAreaID in StationGroup database
-        stat_group_db = self.env.infstruct_mgr.station_group_db
-        filter_by_prod_area = stat_group_db.loc[
-            stat_group_db['prod_area_id'] == self._prod_area_id, :
-        ]
-        stat_groups: list[StationGroup] = filter_by_prod_area['station_group'].tolist()
+        stat_groups = cast(tuple['StationGroup'], self.prod_area.subsystems_as_tuple())
 
         loggers.loads.debug('stat_groups: %s', stat_groups)
 

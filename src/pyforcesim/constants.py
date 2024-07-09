@@ -27,6 +27,7 @@ from pyforcesim.types import Infinite
 from pyforcesim.types import LoggingLevels as loglevel
 
 # ** logging
+LOGGING_TO_FILE: Final[bool] = False
 LOGGING_LEVEL_BASE: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_ENV: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_GYM_ENV: Final[loglevel] = loglevel.INFO
@@ -34,7 +35,7 @@ LOGGING_LEVEL_DISPATCHER: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_INFSTRCT: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_SINKS: Final[loglevel] = loglevel.ERROR
-LOGGING_LEVEL_PRODSTATIONS: Final[loglevel] = loglevel.ERROR
+LOGGING_LEVEL_PRODSTATIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_JOBS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_BUFFERS: Final[loglevel] = loglevel.ERROR
@@ -73,10 +74,12 @@ class TimeUnitsTimedelta(enum.StrEnum):
 
 TIMEZONE_CEST: Final[ZoneInfo] = ZoneInfo('Europe/Berlin')
 TIMEZONE_UTC: Final[Timezone] = Timezone.utc
-DEFAULT_DATETIME: Final[Datetime] = Datetime(datetime.MINYEAR, 1, 1, tzinfo=TIMEZONE_UTC)
+DEFAULT_DATETIME: Final[Datetime] = Datetime(1970, 1, 1, tzinfo=TIMEZONE_UTC)
 
 
 # ** database
+DB_HANDLE: Final[str] = 'sqlite:///:memory:'
+DB_ECHO: Final[bool] = False
 DB_ROOT: Final[str] = 'databases'
 DB_DATA_TYPES: Final[set[str]] = {
     'INTEGER',

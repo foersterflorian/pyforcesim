@@ -9,6 +9,7 @@ from collections import deque
 from collections.abc import Generator, Iterable, Iterator, Sequence
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
+from datetime import tzinfo as TZInfo
 from functools import lru_cache
 from operator import attrgetter
 from typing import (
@@ -25,6 +26,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.io
 import salabim
+import sqlalchemy as sql
 from pandas import DataFrame
 from websocket import create_connection
 
@@ -35,6 +37,7 @@ from pyforcesim.constants import (
     INF,
     POLICIES_ALLOC,
     POLICIES_SEQ,
+    TIMEZONE_CEST,
     TIMEZONE_UTC,
     SimResourceTypes,
     SimStatesCommon,
@@ -47,8 +50,9 @@ from pyforcesim.dashboard.dashboard import (
     start_dashboard,
 )
 from pyforcesim.dashboard.websocket_server import start_websocket_server
-from pyforcesim.errors import AssociationError
+from pyforcesim.errors import AssociationError, SQLNotFoundError, SQLTooManyValuesFoundError
 from pyforcesim.rl.agents import Agent, AllocationAgent
+from pyforcesim.simulation import databases as db
 from pyforcesim.simulation import monitors
 from pyforcesim.simulation.base_components import (
     SimulationComponent,
@@ -107,6 +111,7 @@ class SimulationEnvironment(salabim.Environment):
         self,
         time_unit: str = 'seconds',
         starting_datetime: Datetime | None = None,
+        local_timezone: TZInfo = TIMEZONE_CEST,
         debug_dashboard: bool = False,
         **kwargs,
     ) -> None:
@@ -124,8 +129,9 @@ class SimulationEnvironment(salabim.Environment):
             using a debug dashboard implemented in Dash for testing purposes,
             by default False
         """
-        # time units
+        # time units and timezone
         self.time_unit = time_unit
+        self.local_timezone = local_timezone
         # if starting datetime not provided use current time
         if starting_datetime is None:
             starting_datetime = pyf_dt.current_time_tz(cut_microseconds=True)
@@ -155,7 +161,10 @@ class SimulationEnvironment(salabim.Environment):
         # state allows direct waiting for flag changes
         self.is_transient_cond: bool = True
         self.duration_transient: Timedelta | None = None
-
+        # ** databases
+        self.db_engine = db.get_engine()
+        # databases
+        db.metadata_obj.create_all(self.db_engine)
         # ** debug dashboard
         self.debug_dashboard = debug_dashboard
         self.servers_connected: bool = False
@@ -242,8 +251,8 @@ class SimulationEnvironment(salabim.Environment):
         if not self._infstruct_mgr.sink_registered:
             raise ValueError('No Sink instance registered.')
         # check if all subsystems are associated to supersystems
-        elif not self._infstruct_mgr.verify_system_association():
-            raise AssociationError('Non-associated subsystems detected!')
+        # elif not self._infstruct_mgr.verify_system_association():
+        #     raise AssociationError('Non-associated subsystems detected!')
 
         loggers.pyf_env.info(
             'Integrity check for Environment >>%s<< successful.', self.name()
@@ -251,10 +260,9 @@ class SimulationEnvironment(salabim.Environment):
 
     def initialise(self) -> None:
         # infrastructure manager instance
-        self._infstruct_mgr.initialise()
-
+        self.infstruct_mgr.initialise()
         # dispatcher instance
-        self._dispatcher.initialise()
+        self.dispatcher.initialise()
 
         # establish websocket connection
         if self.debug_dashboard and not self.servers_connected:
@@ -315,61 +323,18 @@ class InfrastructureManager:
         # COMMON
         self._env = env
         self._system_types = common.enum_str_values_as_frzset(SimSystemTypes)
-
-        # PRODUCTION AREAS database as simple Pandas DataFrame
-        self._prod_area_prop: dict[str, type] = {
-            'prod_area_id': int,
-            'custom_id': str,
-            'name': str,
-            'prod_area': object,
-            'containing_proc_stations': bool,
-        }
-        self._prod_area_db: DataFrame = pd.DataFrame(
-            columns=list(self._prod_area_prop.keys())
-        )
-        self._prod_area_db = self._prod_area_db.astype(self._prod_area_prop)
-        self._prod_area_db = self._prod_area_db.set_index('prod_area_id')
-        self._prod_area_lookup_props: set[str] = set(['prod_area_id', 'custom_id', 'name'])
-        # [PRODUCTION AREAS] identifiers
+        # PRODUCTION AREAS
+        self._prod_areas: dict[SystemID, ProductionArea] = {}
         self._prod_area_counter = SystemID(0)
         self._prod_area_custom_identifiers: set[CustomID] = set()
 
-        # [STATION GROUPS] database as simple Pandas DataFrame
-        self._station_group_prop: dict[str, type | pd.Int64Dtype] = {
-            'station_group_id': int,
-            'custom_id': str,
-            'name': str,
-            'station_group': object,
-            'prod_area_id': pd.Int64Dtype(),
-            'containing_proc_stations': bool,
-        }
-        self._station_group_db: DataFrame = pd.DataFrame(
-            columns=list(self._station_group_prop.keys())
-        )
-        self._station_group_db = self._station_group_db.astype(self._station_group_prop)
-        self._station_group_db = self._station_group_db.set_index('station_group_id')
-        self._station_group_lookup_props: set[str] = set(
-            ['station_group_id', 'custom_id', 'name']
-        )
-        # [STATION GROUPS] identifiers
+        # [STATION GROUPS]
+        self._station_groups: dict[SystemID, StationGroup] = {}
         self._station_group_counter = SystemID(0)
         self._station_groups_custom_identifiers: set[CustomID] = set()
 
-        # [RESOURCES] database as simple Pandas DataFrame
-        self._infstruct_prop: dict[str, type | pd.Int64Dtype] = {
-            'res_id': int,
-            'custom_id': str,
-            'resource': object,
-            'name': str,
-            'resource_type': str,
-            'state': str,
-            'station_group_id': pd.Int64Dtype(),
-        }
-        self._res_db: DataFrame = pd.DataFrame(columns=list(self._infstruct_prop.keys()))
-        self._res_db = self._res_db.astype(self._infstruct_prop)
-        self._res_db = self._res_db.set_index('res_id')
-        self._res_lookup_props: set[str] = set(['res_id', 'custom_id', 'name'])
-        # [RESOURCES] custom identifiers
+        # [RESOURCES]
+        self._resources: dict[SystemID, InfrastructureObject] = {}
         self._res_counter = SystemID(0)
         self._res_custom_identifiers: set[CustomID] = set()
         # [RESOURCES] sink: pool of sinks possible to allow multiple sinks in one environment
@@ -386,15 +351,17 @@ class InfrastructureManager:
     def env(self) -> SimulationEnvironment:
         return self._env
 
-    # [PRODUCTION AREAS]
     @property
-    def prod_area_db(self) -> DataFrame:
-        return self._prod_area_db
+    def prod_areas(self) -> dict[SystemID, ProductionArea]:
+        return self._prod_areas
 
-    # [STATION GROUPS]
     @property
-    def station_group_db(self) -> DataFrame:
-        return self._station_group_db
+    def station_groups(self) -> dict[SystemID, StationGroup]:
+        return self._station_groups
+
+    @property
+    def resources(self) -> dict[SystemID, InfrastructureObject]:
+        return self._resources
 
     def get_total_per_system_type(
         self,
@@ -420,44 +387,6 @@ class InfrastructureManager:
                 return self._station_group_counter
             case SimSystemTypes.RESOURCE:
                 return self._res_counter
-
-    def verify_system_association(self) -> bool:
-        """checks if there are any registered, but non-associated
-        subsystems for each subsystem type
-
-        Returns
-        -------
-        bool
-            indicator if all systems are associated (True) or not (False)
-        """
-        # check all subsystem types with reference to supersystems if there are
-        # any open references (NA values as secondary key)
-        relevant_subsystems = (SimSystemTypes.STATION_GROUP, SimSystemTypes.RESOURCE)
-
-        for system_type in relevant_subsystems:
-            match system_type:
-                case SimSystemTypes.STATION_GROUP:
-                    target_db = self._station_group_db
-                    secondary_key: str = 'prod_area_id'
-                case SimSystemTypes.RESOURCE:
-                    target_db = self._res_db
-                    secondary_key: str = 'station_group_id'
-            # check if there are any NA values as secondary key
-            check_val = target_db[secondary_key].isna().any()
-            if check_val:
-                # there are NA values
-                loggers.infstrct.error(
-                    (
-                        'There are non-associated systems for '
-                        'system type >>%s<<. '
-                        'Please check these systems and add them to a '
-                        'corresponding supersystem.'
-                    ),
-                    system_type,
-                )
-                return False
-
-        return True
 
     ####################################################################################
     ## REWORK TO WORK WITH DIFFERENT SUBSYSTEMS
@@ -501,26 +430,15 @@ class InfrastructureManager:
 
         return system_id
 
-    def register_subsystem(
+    def register_system(
         self,
+        supersystem: System | None,
         system_type: SimSystemTypes,
         obj: System,
         custom_identifier: CustomID,
         name: str | None,
         state: SimStatesCommon | SimStatesStorage | None = None,
     ) -> tuple[SystemID, str]:
-        """
-        registers an infrastructure object in the environment by assigning an unique id and 
-        adding the object to the associated resources of the environment
-        
-        obj: env resource = instance of a subclass of InfrastructureObject
-        custom_identifier: user defined identifier
-        name: custom name of the object, \
-            default: None
-        returns:
-            SystemID: assigned resource ID
-            str: assigned resource's name
-        """
         if system_type not in self._system_types:
             raise ValueError(
                 (
@@ -528,28 +446,6 @@ class InfrastructureManager:
                     f'Choose from {self._system_types}'
                 )
             )
-
-        match system_type:
-            case SimSystemTypes.PRODUCTION_AREA:
-                custom_identifiers = self._prod_area_custom_identifiers
-            case SimSystemTypes.STATION_GROUP:
-                custom_identifiers = self._station_groups_custom_identifiers
-            case SimSystemTypes.RESOURCE:
-                custom_identifiers = self._res_custom_identifiers
-            case _:
-                raise ValueError(f'Unknown subsystem type of {system_type}')
-
-        # check if value already exists
-        if custom_identifier in custom_identifiers:
-            raise ValueError(
-                (
-                    f'The custom identifier {custom_identifier} provided '
-                    f'for subsystem type {system_type} '
-                    f'already exists, but has to be unique.'
-                )
-            )
-        else:
-            custom_identifiers.add(custom_identifier)
 
         # obtain system ID
         system_id = self._obtain_system_id(system_type=system_type)
@@ -571,47 +467,79 @@ class InfrastructureManager:
         # new entry for corresponding database
         match system_type:
             case SimSystemTypes.PRODUCTION_AREA:
-                new_entry: DataFrame = pd.DataFrame(
-                    {
-                        'prod_area_id': [system_id],
-                        'custom_id': [custom_identifier],
-                        'name': [name],
-                        'prod_area': [obj],
-                        'containing_proc_stations': [obj.containing_proc_stations],
-                    }
-                )
-                new_entry = new_entry.astype(self._prod_area_prop)
-                new_entry = new_entry.set_index('prod_area_id')
-                self._prod_area_db = pd.concat([self._prod_area_db, new_entry])
+                obj = cast('ProductionArea', obj)
+                # add to database
+                entry = {
+                    'sys_id': system_id,
+                    'custom_id': custom_identifier,
+                    'name': name,
+                    'contains_proc_stations': obj.containing_proc_stations,
+                }
+                # execute insertion
+                with self.env.db_engine.connect() as conn:
+                    conn.execute(sql.insert(db.production_areas), entry)
+                    conn.commit()
+                # add to object lookup
+                self.prod_areas[system_id] = obj
+
             case SimSystemTypes.STATION_GROUP:
-                new_entry: DataFrame = pd.DataFrame(
-                    {
-                        'station_group_id': [system_id],
-                        'custom_id': [custom_identifier],
-                        'name': [name],
-                        'station_group': [obj],
-                        'prod_area_id': [None],
-                        'containing_proc_stations': [obj.containing_proc_stations],
-                    }
-                )
-                new_entry = new_entry.astype(self._station_group_prop)
-                new_entry = new_entry.set_index('station_group_id')
-                self._station_group_db = pd.concat([self._station_group_db, new_entry])
+                if supersystem is None:
+                    raise ValueError(
+                        f'Supersystem must be provided for >>{SimSystemTypes.STATION_GROUP}<<'
+                    )
+                elif not isinstance(supersystem, ProductionArea):
+                    raise TypeError(
+                        (
+                            f'Supersystem for >>{obj.__class__.__name__}<< '
+                            f'must be of type >>ProductionArea<<'
+                        )
+                    )
+                obj = cast('StationGroup', obj)
+                # add to database
+                entry = {
+                    'sys_id': system_id,
+                    'prod_area_id': supersystem.system_id,
+                    'custom_id': custom_identifier,
+                    'name': name,
+                    'contains_proc_stations': obj.containing_proc_stations,
+                }
+                # execute insertion
+                with self.env.db_engine.connect() as conn:
+                    conn.execute(sql.insert(db.station_groups), entry)
+                    conn.commit()
+                # add to object lookup
+                self.station_groups[system_id] = obj
+
             case SimSystemTypes.RESOURCE:
-                new_entry: DataFrame = pd.DataFrame(
-                    {
-                        'res_id': [system_id],
-                        'custom_id': [custom_identifier],
-                        'resource': [obj],
-                        'name': [name],
-                        'resource_type': [obj.resource_type],  # type: ignore
-                        'state': [state],
-                        'station_group_id': [None],
-                    }
-                )
-                new_entry = new_entry.astype(self._infstruct_prop)
-                new_entry = new_entry.set_index('res_id')
-                self._res_db = pd.concat([self._res_db, new_entry])
+                if supersystem is None:
+                    raise ValueError(
+                        f'Supersystem must be provided for >>{SimSystemTypes.RESOURCE}<<'
+                    )
+                elif not isinstance(supersystem, StationGroup):
+                    raise TypeError(
+                        (
+                            f'Supersystem for >>{obj.__class__.__name__}<< '
+                            f'must be of type >>StationGroup<<'
+                        )
+                    )
+                if state is None:
+                    raise ValueError('State can not be >>None<<.')
+                obj = cast('InfrastructureObject', obj)
+                # add to database
+                entry = {
+                    'sys_id': system_id,
+                    'stat_group_id': supersystem.system_id,
+                    'custom_id': custom_identifier,
+                    'name': name,
+                    'type': obj.resource_type,
+                    'state': state,
+                }
+                # execute insertion
+                with self.env.db_engine.connect() as conn:
+                    conn.execute(sql.insert(db.resources), entry)
+                    conn.commit()
+                # add to object lookup
+                self.resources[system_id] = obj
 
         loggers.infstrct.info(
             'Successfully registered object with SystemID >>%s<< and name >>%s<<',
@@ -621,65 +549,74 @@ class InfrastructureManager:
 
         return system_id, name
 
-    def register_system_association(
-        self,
-        supersystem: System,
-        subsystem: System,
-    ) -> None:
-        """associate two system types with each other in the corresponding databases
-
-        Parameters
-        ----------
-        supersystem : System
-            system to which the subsystem is added
-        subsystem : System
-            system which is added to the supersystem and to whose database the entry is made
-        """
-        # target subsystem type -> identify appropriate database
-        system_type = subsystem.system_type
-
-        match system_type:
-            case SimSystemTypes.STATION_GROUP:
-                target_db = self._station_group_db
-                target_property: str = 'prod_area_id'
-            case SimSystemTypes.RESOURCE:
-                target_db = self._res_db
-                target_property: str = 'station_group_id'
-        # system IDs
-        supersystem_id = supersystem.system_id
-        subsystem_id = subsystem.system_id
-        # write supersystem ID to subsystem database entry
-        target_db.at[subsystem_id, target_property] = supersystem_id
-
     def set_contain_proc_station(
         self,
         system: System,
     ) -> None:
         match system.system_type:
             case SimSystemTypes.PRODUCTION_AREA:
-                lookup_db = self._prod_area_db
+                # lookup_db = self._prod_area_db
+                target_db = db.production_areas
             case SimSystemTypes.STATION_GROUP:
-                lookup_db = self._station_group_db
+                # lookup_db = self._station_group_db
+                target_db = db.station_groups
 
-        lookup_db.at[system.system_id, 'containing_proc_stations'] = True
+        stmt = (
+            sql.update(target_db)
+            .where(target_db.c.sys_id == system.system_id)
+            .values(contains_proc_stations=True)
+        )
+        with self.env.db_engine.connect() as conn:
+            conn.execute(stmt)
+            conn.commit()
+
         system.containing_proc_stations = True
-
         # iterate over supersystems
         for supersystem in system.supersystems.values():
             if not supersystem.containing_proc_stations:
                 self.set_contain_proc_station(system=supersystem)
 
+    @overload
+    def get_system_by_id(
+        self,
+        system_type: Literal[SimSystemTypes.PRODUCTION_AREA],
+        system_id: SystemID,
+    ) -> ProductionArea: ...
+
+    @overload
+    def get_system_by_id(
+        self,
+        system_type: Literal[SimSystemTypes.STATION_GROUP],
+        system_id: SystemID,
+    ) -> StationGroup: ...
+
+    @overload
+    def get_system_by_id(
+        self,
+        system_type: Literal[SimSystemTypes.RESOURCE],
+        system_id: SystemID,
+    ) -> InfrastructureObject: ...
+
+    def get_system_by_id(
+        self,
+        system_type: SimSystemTypes,
+        system_id: SystemID,
+    ) -> ProductionArea | StationGroup | InfrastructureObject:
+        match system_type:
+            case SimSystemTypes.PRODUCTION_AREA:
+                return self.prod_areas[system_id]
+            case SimSystemTypes.STATION_GROUP:
+                return self.station_groups[system_id]
+            case SimSystemTypes.RESOURCE:
+                return self.resources[system_id]
+
     def lookup_subsystem_info(
         self,
         system_type: SimSystemTypes,
         lookup_val: SystemID | CustomID,
-        lookup_property: str | None = None,
-        target_property: str | None = None,
+        target_property: str,
+        use_sys_id: bool = True,
     ) -> Any:
-        """
-        obtain a subsystem by its property and corresponding value
-        properties: Subsystem ID, Custom ID, Name
-        """
         if system_type not in self._system_types:
             raise ValueError(
                 (
@@ -688,133 +625,49 @@ class InfrastructureManager:
                 )
             )
 
-        id_prop: str
         match system_type:
             case SimSystemTypes.PRODUCTION_AREA:
-                allowed_lookup_props = self._prod_area_lookup_props
-                lookup_db = self._prod_area_db
-                if target_property is None:
-                    target_property = 'prod_area'
-                id_prop = 'prod_area_id'
+                lookup_db = db.production_areas
             case SimSystemTypes.STATION_GROUP:
-                allowed_lookup_props = self._station_group_lookup_props
-                lookup_db = self._station_group_db
-                if target_property is None:
-                    target_property = 'station_group'
-                id_prop = 'station_group_id'
+                lookup_db = db.station_groups
             case SimSystemTypes.RESOURCE:
-                allowed_lookup_props = self._res_lookup_props
-                lookup_db = self._res_db
-                if target_property is None:
-                    target_property = 'resource'
-                id_prop = 'res_id'
+                lookup_db = db.resources
 
-        # if no lookup property provided use ID
-        if lookup_property is None:
-            lookup_property = id_prop
-
-        # allowed target properties
-        allowed_target_props: set[str] = set(lookup_db.columns.to_list())
-        # lookup property can not be part of the target properties
-        if lookup_property in allowed_target_props:
-            allowed_target_props.remove(lookup_property)
-
-        # check if property is a filter criterion
-        if lookup_property not in allowed_lookup_props:
-            raise IndexError(
-                (
-                    f'Lookup Property >>{lookup_property}<< is not allowed for '
-                    f'subsystem type {system_type}. Choose from '
-                    f'{allowed_lookup_props}'
-                )
-            )
-        # check if target property is allowed
-        if target_property not in allowed_target_props:
-            raise IndexError(
-                (
-                    f'Target Property >>{target_property}<< is not allowed for '
-                    f'subsystem type {system_type}. Choose from {allowed_target_props}'
-                )
-            )
-        # None type value can not be looked for
-        if lookup_val is None:
-            raise TypeError('The lookup value can not be of type >>None<<.')
-
-        # filter resource database for prop-value pair
-        if lookup_property == id_prop:
-            # direct indexing for ID property: always unique, no need for duplicate check
-            try:
-                idx_res: Any = lookup_db.at[lookup_val, target_property]
-                return idx_res
-            except KeyError:
-                raise IndexError(
-                    (
-                        f'There were no subsystems found for the '
-                        f'lookup property >>{lookup_property}<< '
-                        f'with the value >>{lookup_val}<<'
-                    )
-                )
+        lookup_property: str
+        if use_sys_id:
+            lookup_property = 'sys_id'
         else:
-            try:
-                multi_res = lookup_db.loc[
-                    lookup_db[lookup_property] == lookup_val, target_property
-                ]
-                # check for empty search result, at least one result necessary
-                if len(multi_res) == 0:
-                    raise IndexError(
-                        (
-                            f'There were no subsystems found for the lookup '
-                            f'property >>{lookup_property}<< '
-                            f'with the value >>{lookup_val}<<'
-                        )
-                    )
-            except KeyError:
-                raise IndexError(
-                    (
-                        f'There were no subsystems found for the '
-                        f'lookup property >>{lookup_property}<< '
-                        f'with the value >>{lookup_val}<<'
-                    )
-                )
-            # check for multiple entries with same prop-value pair
-            ########### PERHAPS CHANGE NECESSARY
-            ### multiple entries but only one returned --> prone to errors
-            if len(multi_res) > 1:
-                # warn user
-                loggers.infstrct.warning(
-                    (
-                        'CAUTION: There are multiple subsystems which share the '
-                        'same value >>%s<< for the '
-                        'lookup property >>%s<<. '
-                        'Only the first entry is returned.'
-                    ),
-                    lookup_val,
-                    lookup_property,
-                )
+            lookup_property = 'custom_id'
 
-            return multi_res.iat[0]
+        stmt = sql.select(lookup_db).where(lookup_db.c[lookup_property] == lookup_val)
+        with self.env.db_engine.connect() as conn:
+            res = conn.execute(stmt)
+            conn.commit()
+
+        sql_results = tuple(res.mappings())
+        if len(sql_results) == 0:
+            raise SQLNotFoundError(f'Given query >>{stmt}<< did not return any results.')
+        elif len(sql_results) > 1:
+            raise SQLTooManyValuesFoundError(
+                f'Given query >>{stmt}<< returned too many values.'
+            )
+
+        ret_value = sql_results[0][target_property]  # type: ignore
+
+        return ret_value
 
     def lookup_custom_ID(
         self,
         system_type: SimSystemTypes,
-        system_ID: SystemID,
+        system_id: SystemID,
     ) -> CustomID:
-        id_prop: str
-        match system_type:
-            case SimSystemTypes.PRODUCTION_AREA:
-                id_prop = 'prod_area_id'
-            case SimSystemTypes.STATION_GROUP:
-                id_prop = 'station_group_id'
-            case SimSystemTypes.RESOURCE:
-                id_prop = 'res_id'
-
         custom_id = cast(
             CustomID,
             self.lookup_subsystem_info(
                 system_type=system_type,
-                lookup_val=system_ID,
-                lookup_property=id_prop,
+                lookup_val=system_id,
                 target_property='custom_id',
+                use_sys_id=True,
             ),
         )
 
@@ -823,27 +676,21 @@ class InfrastructureManager:
     def lookup_system_ID(
         self,
         system_type: SimSystemTypes,
-        custom_ID: CustomID,
+        custom_id: CustomID,
     ) -> SystemID:
-        system = cast(
-            System,
+        system_id = cast(
+            SystemID,
             self.lookup_subsystem_info(
                 system_type=system_type,
-                lookup_val=custom_ID,
-                lookup_property='custom_id',
+                lookup_val=custom_id,
+                target_property='sys_id',
+                use_sys_id=False,
             ),
         )
 
-        return system.system_id
-
-    ####################################################################
+        return system_id
 
     # [RESOURCES]
-    @property
-    def res_db(self) -> DataFrame:
-        """obtain a current overview of registered objects in the environment"""
-        return self._res_db
-
     @property
     def sinks(self) -> list[Sink]:
         """registered sinks"""
@@ -870,7 +717,15 @@ class InfrastructureManager:
         else:
             obj.stat_monitor.set_state(target_state=state)
 
-        self._res_db.at[obj.system_id, 'state'] = state
+        stmt = (
+            sql.update(db.resources)
+            .where(db.resources.c.sys_id == obj.system_id)
+            .values(state=state)
+        )
+        with self.env.db_engine.connect() as conn:
+            conn.execute(stmt)
+            conn.commit()
+
         loggers.infstrct.debug('Executed state setting of >>%s<< to >>%s<<', obj, state)
 
     def res_objs_temp_state(
@@ -894,15 +749,21 @@ class InfrastructureManager:
                 obj.stat_monitor.calc_KPI()
 
     def initialise(self) -> None:
-        for prod_area in self._prod_area_db['prod_area']:
+        for prod_area in self.prod_areas.values():
             prod_area.initialise()
-        for station_group in self._station_group_db['station_group']:
+        for station_group in self.station_groups.values():
             station_group.initialise()
+        for resource in self.resources.values():
+            resource.initialise()
 
     def finalise(self) -> None:
         # set end state for each resource object to calculate the right time amounts
-        for res_obj in self._res_db['resource']:
-            res_obj.finalise()
+        for prod_area in self.prod_areas.values():
+            prod_area.finalise()
+        for station_group in self.station_groups.values():
+            station_group.finalise()
+        for resource in self.resources.values():
+            resource.finalise()
         loggers.infstrct.info(
             'Successful finalisation of the state information for all resource objects.'
         )
@@ -926,102 +787,115 @@ class Dispatcher:
         # job data base as simple Pandas DataFrame
         # column data types
         self._jobs: dict[LoadID, Job] = {}
-        self._job_prop: dict[str, type] = {
-            'job_id': int,
-            'custom_id': object,
-            #'job': object,
-            'job_type': str,
-            'prio': object,
-            'total_proc_time': object,
-            'creation_date': object,
-            'release_date': object,
-            'planned_starting_date': object,
-            'actual_starting_date': object,
-            'starting_date_deviation': object,
-            'planned_ending_date': object,
-            'actual_ending_date': object,
-            'ending_date_deviation': object,
-            'lead_time': object,
-            'state': str,
-        }
-        self._job_db: DataFrame = pd.DataFrame(columns=list(self._job_prop.keys()))
-        self._job_db: DataFrame = self._job_db.astype(self._job_prop)
-        self._job_db: DataFrame = self._job_db.set_index('job_id')
-        # properties by which a object can be obtained from the job database
-        self._job_lookup_props: set[str] = set(['job_id', 'custom_id', 'name'])
-        # properties which can be updated after creation
-        self._job_update_props: set[str] = set(
-            [
-                'prio',
-                'creation_date',
-                'release_date',
-                'planned_starting_date',
-                'actual_starting_date',
-                'starting_date_deviation',
-                'planned_ending_date',
-                'actual_ending_date',
-                'ending_date_deviation',
-                'lead_time',
-                'state',
-            ]
+        self._pd_date_parse_info_jobs, self._datetime_cols_job, self._timedelta_cols_jobs = (
+            db.pandas_date_col_parser(db.jobs)
         )
+        self._db_props_job: frozenset[str] = frozenset(db.jobs.c.keys())
+        # TODO remove
+        # self._job_prop: dict[str, type] = {
+        #     'job_id': int,
+        #     'custom_id': object,
+        #     #'job': object,
+        #     'job_type': str,
+        #     'prio': object,
+        #     'total_proc_time': object,
+        #     'creation_date': object,
+        #     'release_date': object,
+        #     'planned_starting_date': object,
+        #     'actual_starting_date': object,
+        #     'starting_date_deviation': object,
+        #     'planned_ending_date': object,
+        #     'actual_ending_date': object,
+        #     'ending_date_deviation': object,
+        #     'lead_time': object,
+        #     'state': str,
+        # }
+        # self._job_db: DataFrame = pd.DataFrame(columns=list(self._job_prop.keys()))
+        # self._job_db: DataFrame = self._job_db.astype(self._job_prop)
+        # self._job_db: DataFrame = self._job_db.set_index('job_id')
+        # # properties by which a object can be obtained from the job database
+        # self._job_lookup_props: set[str] = set(['job_id', 'custom_id', 'name'])
+        # properties which can be updated after creation
+        # self._job_update_props: set[str] = set(
+        #     [
+        #         'prio',
+        #         'creation_date',
+        #         'release_date',
+        #         'planned_starting_date',
+        #         'actual_starting_date',
+        #         'starting_date_deviation',
+        #         'planned_ending_date',
+        #         'actual_ending_date',
+        #         'ending_date_deviation',
+        #         'lead_time',
+        #         'state',
+        #     ]
+        # )
         # date adjusted database for finalisation at the end of a simulation run
-        self._job_db_date_adjusted = self._job_db.copy()
+        # self._job_db_date_adjusted = self._job_db.copy()
 
         # operation data base as simple Pandas DataFrame
         # column data types
         self._ops: dict[LoadID, Operation] = {}
-        self._op_prop: dict[str, type] = {
-            'op_id': int,
-            'job_id': int,
-            'custom_id': object,
-            #'op': object,
-            'prio': object,
-            'execution_system': object,
-            'execution_system_custom_id': object,
-            'execution_system_name': str,
-            'execution_system_type': str,
-            'target_station_custom_id': object,
-            'target_station_name': object,
-            'proc_time': object,
-            'setup_time': object,
-            'order_time': object,
-            'creation_date': object,
-            'release_date': object,
-            'planned_starting_date': object,
-            'actual_starting_date': object,
-            'starting_date_deviation': object,
-            'planned_ending_date': object,
-            'actual_ending_date': object,
-            'ending_date_deviation': object,
-            'lead_time': object,
-            'state': str,
-        }
-        self._op_db: DataFrame = pd.DataFrame(columns=list(self._op_prop.keys()))
-        self._op_db: DataFrame = self._op_db.astype(self._op_prop)
-        self._op_db: DataFrame = self._op_db.set_index('op_id')
-        # properties by which a object can be obtained from the operation database
-        self._op_lookup_props: set[str] = set(
-            ['op_id', 'job_id', 'custom_id', 'name', 'machine']
+        self._pd_date_parse_info_ops, self._datetime_cols_ops, self._timedelta_cols_ops = (
+            db.pandas_date_col_parser(db.operations)
         )
-        # properties which can be updated after creation
-        self._op_update_props: set[str] = set(
-            [
-                'prio',
-                'target_station_custom_id',
-                'target_station_name',
-                'creation_date',
-                'release_date',
-                'actual_starting_date',
-                'starting_date_deviation',
-                'actual_ending_date',
-                'ending_date_deviation',
-                'lead_time',
-                'state',
-            ]
-        )
+        self._db_props_op: frozenset[str] = frozenset(db.operations.c.keys())
+        # self._op_prop: dict[str, type] = {
+        #     'op_id': int,
+        #     'job_id': int,
+        #     'custom_id': object,
+        #     #'op': object,
+        #     'prio': object,
+        #     'execution_system': object,
+        #     'execution_system_custom_id': object,
+        #     'execution_system_name': str,
+        #     'execution_system_type': str,
+        #     'station_group': object,
+        #     'station_group_custom_id': object,
+        #     'station_group_name': str,
+        #     'station_group_type': str,
+        #     'target_station_custom_id': object,
+        #     'target_station_name': object,
+        #     'proc_time': object,
+        #     'setup_time': object,
+        #     'order_time': object,
+        #     'creation_date': object,
+        #     'release_date': object,
+        #     'planned_starting_date': object,
+        #     'actual_starting_date': object,
+        #     'starting_date_deviation': object,
+        #     'planned_ending_date': object,
+        #     'actual_ending_date': object,
+        #     'ending_date_deviation': object,
+        #     'lead_time': object,
+        #     'state': str,
+        # }
+        # self._op_db: DataFrame = pd.DataFrame(columns=list(self._op_prop.keys()))
+        # self._op_db: DataFrame = self._op_db.astype(self._op_prop)
+        # self._op_db: DataFrame = self._op_db.set_index('op_id')
+        # # properties by which a object can be obtained from the operation database
+        # self._op_lookup_props: set[str] = set(
+        #     ['op_id', 'job_id', 'custom_id', 'name', 'machine']
+        # )
+        # # properties which can be updated after creation
+        # self._op_update_props: set[str] = set(
+        #     [
+        #         'prio',
+        #         'target_station_custom_id',
+        #         'target_station_name',
+        #         'creation_date',
+        #         'release_date',
+        #         'actual_starting_date',
+        #         'starting_date_deviation',
+        #         'actual_ending_date',
+        #         'ending_date_deviation',
+        #         'lead_time',
+        #         'state',
+        #     ]
+        # )
         # date adjusted database for finalisation at the end of a simulation run
-        self._op_db_date_adjusted = self._op_db.copy()
+        # self._op_db_date_adjusted = self._op_db.copy()
 
         # register in environment and get EnvID
         self._env = env
@@ -1100,7 +974,7 @@ class Dispatcher:
 
     def _obtain_load_obj_id(
         self,
-        load_type: str,
+        load_type: Literal['job', 'op'],
     ) -> LoadID:
         """Simple counter function for managing operation IDs"""
         # assign id and set counter up
@@ -1127,7 +1001,7 @@ class Dispatcher:
         Obtaining the current cycle time of all operations
         """
         self._cycle_time = cast(
-            Timedelta, self._op_db['actual_ending_date'].max() - self._env.starting_datetime
+            Timedelta, self.op_db['actual_ending_date'].max() - self._env.starting_datetime
         )
 
     ### JOBS ###
@@ -1135,7 +1009,7 @@ class Dispatcher:
         self,
         job: Job,
         custom_identifier: CustomID | None,
-        state: str,
+        state: SimStatesCommon,
     ) -> tuple[SimulationEnvironment, LoadID]:
         """
         registers an job object in the dispatcher instance by assigning an unique id and
@@ -1148,30 +1022,58 @@ class Dispatcher:
         # creation_date = self.env.now()
         creation_date = self.env.t_as_dt()
 
+        if custom_identifier is None:
+            custom_identifier = CustomID(f'Job_gen_{job_id}')
+
         # new entry for job data base
-        new_entry: DataFrame = pd.DataFrame(
-            {
-                'job_id': [job_id],
-                'custom_id': [custom_identifier],
-                #'job': [job],
-                'job_type': [job.job_type],
-                'prio': [job.prio],
-                'total_proc_time': [job.total_proc_time],
-                'creation_date': [creation_date],
-                'release_date': [job.time_release],
-                'planned_starting_date': [job.time_planned_starting],
-                'actual_starting_date': [job.time_actual_starting],
-                'starting_date_deviation': [job.starting_date_deviation],
-                'planned_ending_date': [job.time_planned_ending],
-                'actual_ending_date': [job.time_actual_ending],
-                'ending_date_deviation': [job.ending_date_deviation],
-                'lead_time': [job.lead_time],
-                'state': [state],
-            }
-        )
-        new_entry = new_entry.astype(self._job_prop)
-        new_entry = new_entry.set_index('job_id')
-        self._job_db = pd.concat([self._job_db, new_entry])
+        entry = {
+            'load_id': job_id,
+            'custom_id': custom_identifier,
+            'type': job.job_type,
+            'prio': job.prio,
+            'state': state,
+            'total_order_time': job.total_order_time,
+            'total_proc_time': job.total_proc_time,
+            'total_setup_time': job.total_setup_time,
+            'creation_date': creation_date,
+            'release_date': job.time_release,
+            'planned_starting_date': job.time_planned_starting,
+            'actual_starting_date': job.time_actual_starting,
+            'starting_date_deviation': job.starting_date_deviation,
+            'planned_ending_date': job.time_planned_ending,
+            'actual_ending_date': job.time_actual_ending,
+            'ending_date_deviation': job.ending_date_deviation,
+            'lead_time': job.lead_time,
+        }
+        # execute insertion
+        with self.env.db_engine.connect() as conn:
+            conn.execute(sql.insert(db.jobs), entry)
+            conn.commit()
+
+        # TODO remove
+        # new_entry: DataFrame = pd.DataFrame(
+        #     {
+        #         'job_id': [job_id],
+        #         'custom_id': [custom_identifier],
+        #         #'job': [job],
+        #         'job_type': [job.job_type],
+        #         'prio': [job.prio],
+        #         'total_proc_time': [job.total_proc_time],
+        #         'creation_date': [creation_date],
+        #         'release_date': [job.time_release],
+        #         'planned_starting_date': [job.time_planned_starting],
+        #         'actual_starting_date': [job.time_actual_starting],
+        #         'starting_date_deviation': [job.starting_date_deviation],
+        #         'planned_ending_date': [job.time_planned_ending],
+        #         'actual_ending_date': [job.time_actual_ending],
+        #         'ending_date_deviation': [job.ending_date_deviation],
+        #         'lead_time': [job.lead_time],
+        #         'state': [state],
+        #     }
+        # )
+        # new_entry = new_entry.astype(self._job_prop)
+        # new_entry = new_entry.set_index('job_id')
+        # self._job_db = pd.concat([self._job_db, new_entry])
         self._jobs[job_id] = job
 
         loggers.dispatcher.debug('Successfully registered job with JobID >>%s<<', job_id)
@@ -1191,16 +1093,23 @@ class Dispatcher:
         """
         updates the information of a job for a given property
         """
-        # check if property is a filter criterion
-        if property not in self._job_update_props:
+        # TODO remove
+        # # check if property is a filter criterion
+        if property not in self._db_props_job:
             raise IndexError(
-                f"Property '{property}' is not allowed. Choose from {self._job_update_props}"
+                f"Property '{property}' is not defined. Choose from {self._db_props_job}"
             )
-        # None type value can not be set
-        if val is None:
-            raise TypeError('The set value can not be of type >>None<<.')
+        # TODO remove
+        # # None type value can not be set
+        # if val is None:
+        #     raise TypeError('The set value can not be of type >>None<<.')
 
-        self._job_db.at[job.job_id, property] = val
+        # self._job_db.at[job.job_id, property] = val
+        entry = {property: val}
+        stmt = sql.update(db.jobs).where(db.jobs.c.load_id == job.job_id)
+        with self.env.db_engine.connect() as conn:
+            conn.execute(stmt, entry)
+            conn.commit()
 
     def release_job(
         self,
@@ -1376,7 +1285,7 @@ class Dispatcher:
         exec_system_identifier: SystemID,
         target_station_group_identifier: SystemID | None,
         custom_identifier: CustomID | None,
-        state: str,
+        state: SimStatesCommon,
     ) -> LoadID:
         """
         registers an operation object in the dispatcher instance by assigning an unique id and
@@ -1400,7 +1309,6 @@ class Dispatcher:
         # obtain id
         op_id = self._obtain_load_obj_id(load_type='op')
         # time of creation
-        # creation_date = self.env.now()
         creation_date = self.env.t_as_dt()
 
         # setup time
@@ -1412,62 +1320,95 @@ class Dispatcher:
 
         # corresponding execution system in which the operation is performed
         # no pre-determined assignment of processing stations
-        exec_system = cast(
-            ProductionArea,
-            infstruct_mgr.lookup_subsystem_info(
-                system_type=EXEC_SYSTEM_TYPE, lookup_val=exec_system_identifier
-            ),
-        )
+        exec_system = infstruct_mgr.get_system_by_id(EXEC_SYSTEM_TYPE, exec_system_identifier)
         # if target station group is specified, get instance
         target_station_group: StationGroup | None
         if target_station_group_identifier is not None:
-            target_station_group = cast(
-                StationGroup,
-                infstruct_mgr.lookup_subsystem_info(
-                    system_type=SimSystemTypes.STATION_GROUP,
-                    lookup_val=target_station_group_identifier,
-                ),
+            target_station_group = infstruct_mgr.get_system_by_id(
+                SimSystemTypes.STATION_GROUP, target_station_group_identifier
             )
+
             # validity check: only target stations allowed which are
             # part of the current execution system
             if target_station_group.system_id not in exec_system.subsystems:
-                raise ValueError(f'{target_station_group} is not part of {exec_system}. \
-                    Mismatch between execution system and associated station groups.')
+                raise AssociationError(
+                    (
+                        f'Station Group >>{target_station_group}<< is not part of execution '
+                        f'system >>{exec_system}<<. Mismatch between execution '
+                        f'system and associated station groups.'
+                    )
+                )
         else:
-            target_station_group = None
+            # !! temporarily raising error, no target station should usually be allowed
+            # target_station_group = None
+            raise ValueError('Station Group is None')
+
+        if custom_identifier is None:
+            custom_identifier = CustomID(f'Op_gen_{op_id}')
 
         # new entry for operation data base
-        new_entry: DataFrame = pd.DataFrame(
-            {
-                'op_id': [op_id],
-                'job_id': [op.job_id],
-                'custom_id': [custom_identifier],
-                #'op': [op],
-                'prio': [op.prio],
-                'execution_system': [exec_system],
-                'execution_system_custom_id': [exec_system.custom_identifier],
-                'execution_system_name': [exec_system.name],
-                'execution_system_type': [exec_system.system_type],
-                'target_station_custom_id': [None],
-                'target_station_name': [None],
-                'proc_time': [op.proc_time],
-                'setup_time': [setup_time],
-                'order_time': [op.order_time],
-                'creation_date': [creation_date],
-                'release_date': [op.time_release],
-                'planned_starting_date': [op.time_planned_starting],
-                'actual_starting_date': [op.time_actual_starting],
-                'starting_date_deviation': [op.starting_date_deviation],
-                'planned_ending_date': [op.time_planned_ending],
-                'actual_ending_date': [op.time_actual_ending],
-                'ending_date_deviation': [op.ending_date_deviation],
-                'lead_time': [op.lead_time],
-                'state': [state],
-            }
-        )
-        new_entry: DataFrame = new_entry.astype(self._op_prop)
-        new_entry = new_entry.set_index('op_id')
-        self._op_db = pd.concat([self._op_db, new_entry])
+        entry = {
+            'load_id': op_id,
+            'job_id': op.job_id,
+            'execution_sys_id': exec_system_identifier,
+            'station_group_sys_id': target_station_group_identifier,
+            'custom_id': custom_identifier,
+            'target_station_sys_id': None,
+            'prio': op.prio,
+            'state': state,
+            'order_time': op.order_time,
+            'proc_time': op.proc_time,
+            'setup_time': setup_time,
+            'creation_date': creation_date,
+            'release_date': op.time_release,
+            'planned_starting_date': op.time_planned_starting,
+            'actual_starting_date': op.time_actual_starting,
+            'starting_date_deviation': op.starting_date_deviation,
+            'planned_ending_date': op.time_planned_ending,
+            'actual_ending_date': op.time_actual_ending,
+            'ending_date_deviation': op.ending_date_deviation,
+            'lead_time': op.lead_time,
+        }
+        # execute insertion
+        with self.env.db_engine.connect() as conn:
+            conn.execute(sql.insert(db.operations), entry)
+            conn.commit()
+
+        # new_entry: DataFrame = pd.DataFrame(
+        #     {
+        #         'op_id': [op_id],
+        #         'job_id': [op.job_id],
+        #         'custom_id': [custom_identifier],
+        #         #'op': [op],
+        #         'prio': [op.prio],
+        #         'execution_system': [exec_system],
+        #         'execution_system_custom_id': [exec_system.custom_identifier],
+        #         'execution_system_name': [exec_system.name],
+        #         'execution_system_type': [exec_system.system_type],
+        #         'station_group': [target_station_group],
+        #         'station_group_custom_id': [target_station_group.custom_identifier],
+        #         'station_group_name': [target_station_group.name],
+        #         'station_group_type': [target_station_group.system_type],
+        #         'target_station_custom_id': [None],
+        #         'target_station_name': [None],
+        #         'proc_time': [op.proc_time],
+        #         'setup_time': [setup_time],
+        #         'order_time': [op.order_time],
+        #         'creation_date': [creation_date],
+        #         'release_date': [op.time_release],
+        #         'planned_starting_date': [op.time_planned_starting],
+        #         'actual_starting_date': [op.time_actual_starting],
+        #         'starting_date_deviation': [op.starting_date_deviation],
+        #         'planned_ending_date': [op.time_planned_ending],
+        #         'actual_ending_date': [op.time_actual_ending],
+        #         'ending_date_deviation': [op.ending_date_deviation],
+        #         'lead_time': [op.lead_time],
+        #         'state': [state],
+        #     }
+        # )
+        # new_entry: DataFrame = new_entry.astype(self._op_prop)
+        # new_entry = new_entry.set_index('op_id')
+        # self._op_db = pd.concat([self._op_db, new_entry])
         self._ops[op_id] = op
 
         loggers.dispatcher.debug('Successfully registered operation with OpID >>%s<<', op_id)
@@ -1490,15 +1431,21 @@ class Dispatcher:
         updates the information of a job for a given property
         """
         # check if property is a filter criterion
-        if property not in self._op_update_props:
+        if property not in self._db_props_op:
             raise IndexError(
-                f"Property '{property}' is not allowed. Choose from {self._op_update_props}"
+                f"Property '{property}' is not defined. Choose from {self._db_props_op}"
             )
-        # None type value can not be looked for
-        if val is None:
-            raise TypeError("The lookup value can not be of type 'None'.")
+        # TODO remove
+        # # None type value can not be looked for
+        # if val is None:
+        #     raise TypeError("The lookup value can not be of type 'None'.")
 
-        self._op_db.at[op.op_id, property] = val
+        # self._op_db.at[op.op_id, property] = val
+        entry = {property: val}
+        stmt = sql.update(db.operations).where(db.operations.c.load_id == op.op_id)
+        with self.env.db_engine.connect() as conn:
+            conn.execute(stmt, entry)
+            conn.commit()
 
     def update_operation_state(
         self,
@@ -1530,11 +1477,12 @@ class Dispatcher:
         self.update_operation_db(op=op, property='release_date', val=op.time_release)
         # target station: custom identifier + name
         self.update_operation_db(
-            op=op, property='target_station_custom_id', val=target_station.custom_identifier
+            op=op, property='target_station_sys_id', val=target_station.system_id
         )
-        self.update_operation_db(
-            op=op, property='target_station_name', val=target_station.name
-        )
+        # TODO remove
+        # self.update_operation_db(
+        #     op=op, property='target_station_name', val=target_station.name
+        # )
 
     def enter_operation(
         self,
@@ -1610,94 +1558,165 @@ class Dispatcher:
     @property
     def job_db(self) -> DataFrame:
         """
-        obtain a current overview of registered jobs in the environment
+        returns a copy of the underlying SQL job database as parsed Pandas DataFrame
         """
-        return self._job_db
+        job_db = db.parse_database_to_dataframe(
+            database=db.jobs,
+            db_engine=self.env.db_engine,
+            datetime_parse_info=self._pd_date_parse_info_jobs,
+            timedelta_cols=self._timedelta_cols_jobs,
+        )
+        # TODO remove
+        # job_db = pd.read_sql_table(
+        #     db.jobs.name,
+        #     self.env.db_engine,
+        #     parse_dates=self._pd_date_parse_info_jobs,
+        # )
+        # job_db[self._timedelta_cols_jobs] = (
+        #     job_db.loc[:, self._timedelta_cols_jobs] - DEFAULT_DATETIME
+        # )
+        return job_db
 
     @property
-    def job_db_date_adjusted(self) -> DataFrame:
+    def job_db_local_tz(self) -> DataFrame:
         """
-        obtain a current date adjusted overview of registered jobs in
-        the environment
+        returns a copy of the underlying SQL job database as parsed Pandas DataFrame
+        with adjusted timezone
         """
-        return self._job_db_date_adjusted
+        job_db = self.job_db
+        # TODO remove
+        # job_db[self._datetime_cols_job] = job_db.loc[:, self._datetime_cols_job].apply(
+        #     lambda col: col.dt.tz_convert(self.env.local_timezone)
+        # )
+        job_db = pyf_dt.df_convert_timezone(
+            df=job_db,
+            datetime_cols=self._datetime_cols_job,
+            tz=self.env.local_timezone,
+        )
+
+        return job_db
 
     @property
     def op_db(self) -> DataFrame:
         """
-        obtain a current overview of registered operations in the environment
+        returns a copy of the underlying SQL operation database as parsed Pandas DataFrame
         """
-        return self._op_db
+        op_db = db.parse_database_to_dataframe(
+            database=db.operations,
+            db_engine=self.env.db_engine,
+            datetime_parse_info=self._pd_date_parse_info_ops,
+            timedelta_cols=self._timedelta_cols_ops,
+        )
+        # TODO remove
+        # op_db = pd.read_sql_table(
+        #     db.operations.name,
+        #     self.env.db_engine,
+        #     parse_dates=self._pd_date_parse_info_ops,
+        # )
+        # op_db[self._timedelta_cols_ops] = (
+        #     op_db.loc[:, self._timedelta_cols_ops] - DEFAULT_DATETIME
+        # )
+        return op_db
 
     @property
-    def op_db_date_adjusted(self) -> DataFrame:
+    def op_db_local_tz(self) -> DataFrame:
         """
-        obtain a current date adjusted overview of registered
-        operations in the environment
+        returns a copy of the underlying SQL operation database as parsed Pandas DataFrame
+        with adjusted timezone
         """
-        return self._op_db_date_adjusted
+        op_db = self.op_db
+        # TODO remove
+        # op_db[self._datetime_cols_ops] = op_db.loc[:, self._datetime_cols_ops].apply(
+        #     lambda col: col.dt.tz_convert(self.env.local_timezone)
+        # )
+        op_db = pyf_dt.df_convert_timezone(
+            df=op_db,
+            datetime_cols=self._datetime_cols_ops,
+            tz=self.env.local_timezone,
+        )
+
+        return op_db
 
     # @lru_cache(maxsize=200)
     def lookup_job_obj_prop(
         self,
-        val: LoadID | CustomID | str,
-        property: str = 'job_id',
-        target_prop: str = 'job',
+        lookup_val: LoadID | CustomID,
+        target_property: str,
+        use_load_id: bool = True,
     ) -> Any:
-        """
-        obtain a job object from the dispatcher by its property and corresponding value
-        properties: job_id, custom_id, name
-        """
-        # check if property is a filter criterion
-        if property not in self._job_lookup_props:
-            raise IndexError(
-                f"Property '{property}' is not allowed. Choose from {self._job_lookup_props}"
-            )
-        # None type value can not be looked for
-        if val is None:
-            raise TypeError("The lookup value can not be of type 'None'.")
+        # # check if property is a filter criterion
+        # if property not in self._job_lookup_props:
+        #     raise IndexError(
+        #         f"Property '{property}' is not allowed. Choose from {self._job_lookup_props}"
+        #     )
+        # # None type value can not be looked for
+        # if lookup_val is None:
+        #     raise TypeError("The lookup value can not be of type 'None'.")
 
-        # filter resource database for prop-value pair
-        if property == 'job_id':
-            # direct indexing for ID property; job_id always unique,
-            # no need for duplicate check
-            try:
-                idx_res: Any = self._job_db.at[val, target_prop]
-                return idx_res
-            except KeyError:
-                raise IndexError(
-                    (
-                        f'There were no jobs found for the '
-                        f'property >>{property}<< '
-                        f'with the value >>{val}<<'
-                    )
-                )
+        lookup_property: str
+        if use_load_id:
+            lookup_property = 'sys_id'
         else:
-            multi_res = self._job_db.loc[self._job_db[property] == val, target_prop]
-            # check for empty search result, at least one result necessary
-            if len(multi_res) == 0:
-                raise IndexError(
-                    (
-                        f'There were no jobs found for the property >>{property}<< '
-                        f'with the value >>{val}<<'
-                    )
-                )
-            # check for multiple entries with same prop-value pair
-            ########### PERHAPS CHANGE NECESSARY
-            ### multiple entries but only one returned --> prone to errors
-            elif len(multi_res) > 1:
-                # warn user
-                loggers.dispatcher.warning(
-                    (
-                        'CAUTION: There are multiple jobs which share the '
-                        'same value >>%s<< for the property >>%s<<. '
-                        'Only the first entry is returned.'
-                    ),
-                    val,
-                    property,
-                )
+            lookup_property = 'custom_id'
 
-            return multi_res.iat[0]
+        stmt = sql.select(db.jobs).where(db.jobs.c[lookup_property] == lookup_val)
+        with self.env.db_engine.connect() as conn:
+            res = conn.execute(stmt)
+            conn.commit()
+
+        sql_results = tuple(res.mappings())
+        if len(sql_results) == 0:
+            raise SQLNotFoundError(f'Given query >>{stmt}<< did not return any results.')
+        elif len(sql_results) > 1:
+            raise SQLTooManyValuesFoundError(
+                f'Given query >>{stmt}<< returned too many values.'
+            )
+
+        ret_value = sql_results[0][target_property]  # type: ignore
+
+        return ret_value
+
+        # # filter resource database for prop-value pair
+        # if property == 'job_id':
+        #     # direct indexing for ID property; job_id always unique,
+        #     # no need for duplicate check
+        #     try:
+        #         idx_res: Any = self._job_db.at[lookup_val, target_property]
+        #         return idx_res
+        #     except KeyError:
+        #         raise IndexError(
+        #             (
+        #                 f'There were no jobs found for the '
+        #                 f'property >>{property}<< '
+        #                 f'with the value >>{lookup_val}<<'
+        #             )
+        #         )
+        # else:
+        #     multi_res = self._job_db.loc[self._job_db[property] == lookup_val, target_property]
+        #     # check for empty search result, at least one result necessary
+        #     if len(multi_res) == 0:
+        #         raise IndexError(
+        #             (
+        #                 f'There were no jobs found for the property >>{property}<< '
+        #                 f'with the value >>{lookup_val}<<'
+        #             )
+        #         )
+        #     # check for multiple entries with same prop-value pair
+        #     ########### PERHAPS CHANGE NECESSARY
+        #     ### multiple entries but only one returned --> prone to errors
+        #     elif len(multi_res) > 1:
+        #         # warn user
+        #         loggers.dispatcher.warning(
+        #             (
+        #                 'CAUTION: There are multiple jobs which share the '
+        #                 'same value >>%s<< for the property >>%s<<. '
+        #                 'Only the first entry is returned.'
+        #             ),
+        #             lookup_val,
+        #             property,
+        #         )
+
+        #     return multi_res.iat[0]
 
     ### ROUTING LOGIC ###
 
@@ -1905,11 +1924,10 @@ class Dispatcher:
 
         return target_station
 
-    # TODO change return type to only job
     def request_job_sequencing(
         self,
         req_obj: InfrastructureObject,
-    ) -> tuple[Job, Timedelta, Timedelta | None]:
+    ) -> Job:
         """
         request a sequencing decision for a given queue of the requesting resource
         requester: input side processing stations
@@ -1937,7 +1955,7 @@ class Dispatcher:
         if job.current_proc_time is None:
             raise ValueError(f'No processing time defined for job {job}.')
 
-        return job, job.current_proc_time, job.current_setup_time
+        return job
 
     # TODO policy-based decision making
     def _seq_priority_rule(
@@ -1970,10 +1988,13 @@ class Dispatcher:
         sort_by_proc_station: bool = False,
         sort_ascending: bool = True,
         group_by_exec_system: bool = False,
-        dates_to_local_tz: bool = True,
+        dates_to_local_tz: bool = False,
         save_img: bool = False,
         save_html: bool = False,
+        title: str | None = None,
         filename: str = 'gantt_chart',
+        base_folder: str | None = None,
+        target_folder: str | None = None,
         num_last_entries: int | None = None,
     ) -> PlotlyFigure:
         """
@@ -1994,53 +2015,91 @@ class Dispatcher:
         """
         # TODO: Implement debug function to display results during sim runs
 
+        # SQL query
+        stmt = (
+            sql.select(
+                db.operations,
+                db.resources.c.custom_id.label('res_custom_id'),
+                db.resources.c.name.label('res_name'),
+                db.production_areas.c.custom_id.label('prod_area_custom_id'),
+                db.production_areas.c.name.label('prod_area_name'),
+                db.station_groups.c.custom_id.label('station_group_custom_id'),
+                db.station_groups.c.name.label('station_group_name'),
+            )
+            .join_from(db.operations, db.resources)
+            .join_from(db.operations, db.production_areas)
+            .join_from(db.operations, db.station_groups)
+        )
+        db_df = db.parse_sql_query_to_dataframe(
+            query_select=stmt,
+            engine=self.env.db_engine,
+            index_col='load_id',
+            datetime_parse_info=self._pd_date_parse_info_ops,
+            timedelta_cols=self._timedelta_cols_ops,
+        )
+
         # filter operation DB for relevant information
         filter_items: list[str] = [
             'job_id',
-            'target_station_custom_id',
-            'target_station_name',
-            'execution_system',
-            'execution_system_custom_id',
+            'prod_area_custom_id',
+            'prod_area_name',
+            'station_group_custom_id',
+            'station_group_name',
+            'res_custom_id',
+            'res_name',
             'prio',
+            'creation_date',
+            'release_date',
             'planned_starting_date',
             'actual_starting_date',
             'planned_ending_date',
             'actual_ending_date',
+            'order_time',
             'proc_time',
             'setup_time',
-            'order_time',
+            'lead_time',
         ]
 
         hover_data: dict[str, str | bool] = {
             'job_id': False,
-            'target_station_custom_id': True,
-            'execution_system_custom_id': True,
+            'prod_area_custom_id': True,
+            'prod_area_name': True,
+            'station_group_custom_id': True,
+            'station_group_name': True,
+            'res_custom_id': True,
+            'res_name': True,
             'prio': True,
+            'creation_date': '|%d.%m.%Y %H:%M:%S',
+            'release_date': '|%d.%m.%Y %H:%M:%S',
             'planned_starting_date': '|%d.%m.%Y %H:%M:%S',
             'actual_starting_date': '|%d.%m.%Y %H:%M:%S',
             'planned_ending_date': '|%d.%m.%Y %H:%M:%S',
             'actual_ending_date': '|%d.%m.%Y %H:%M:%S',
+            'order_time': True,
             'proc_time': True,
             'setup_time': True,
-            'order_time': True,
+            'lead_time': True,
         }
         # TODO: disable hover infos if some entries are None
 
         # hover_template: str = 'proc_time: %{customdata[-3]|%d:%H:%M:%S}'
-        # TODO: use dedicated method to transform dates of job and op databases
         if dates_to_local_tz:
+            # TODO remove
             # self._job_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._job_db)
-            self._op_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._op_db)
-            target_db = self._op_db_date_adjusted
-        else:
-            target_db = self._op_db
+            # self._op_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._op_db)
+            # db_df = self.op_db_local_tz
+            db_df = pyf_dt.df_convert_timezone(
+                df=db_df,
+                datetime_cols=self._datetime_cols_ops,
+                tz=self.env.local_timezone,
+            )
 
         # filter only finished operations (for debug display)
-        target_db = target_db.loc[(target_db['state'] == SimStatesCommon.FINISH)]
+        db_df = db_df.loc[(db_df['state'] == SimStatesCommon.FINISH)]
         if num_last_entries is not None:
-            target_db = target_db.iloc[-num_last_entries:, :]
+            db_df = db_df.iloc[-num_last_entries:, :]
 
-        df = target_db.filter(items=filter_items)
+        df = db_df.filter(items=filter_items)
         # calculate delta time between start and end
         # Timedelta
         df['delta'] = df['actual_ending_date'] - df['actual_starting_date']
@@ -2048,9 +2107,9 @@ class Dispatcher:
         # choose relevant processing station property
         proc_station_prop: str
         if use_custom_proc_station_id:
-            proc_station_prop = 'target_station_custom_id'
+            proc_station_prop = 'res_custom_id'
         else:
-            proc_station_prop = 'target_station_name'
+            proc_station_prop = 'res_name'
 
         # check if sorting by processing station is wanted and custom ID should be used or not
         # sorting
@@ -2065,7 +2124,7 @@ class Dispatcher:
 
         # group by value
         if group_by_exec_system:
-            group_by_key = 'execution_system_custom_id'
+            group_by_key = 'prod_area_custom_id'
         else:
             group_by_key = 'job_id'
 
@@ -2080,18 +2139,21 @@ class Dispatcher:
             hover_data=hover_data,
         )
         fig.update_yaxes(type='category', autorange='reversed')
+        if title is not None:
+            fig.update_layout(title=title, margin=dict(t=150))
 
-        if self._env.debug_dashboard:
+        if self.env.debug_dashboard:
             # send by websocket
             fig_json = cast(str | None, plotly.io.to_json(fig=fig))
             if fig_json is None:
                 raise ValueError('Could not convert figure to JSON. Returned >>None<<.')
-            self._env.ws_con.send(fig_json)
+            self.env.ws_con.send(fig_json)
         else:
             fig.show()
         if save_html:
             save_pth = common.prepare_save_paths(
-                target_folder='results',
+                base_folder=base_folder,
+                target_folder=target_folder,
                 filename=filename,
                 suffix='html',
             )
@@ -2099,7 +2161,8 @@ class Dispatcher:
 
         if save_img:
             save_pth = common.prepare_save_paths(
-                target_folder='results',
+                base_folder=base_folder,
+                target_folder=target_folder,
                 filename=filename,
                 suffix='svg',
             )
@@ -2117,8 +2180,9 @@ class Dispatcher:
         the environment's "finalise_sim" method
         """
         self._calc_cycle_time()
-        self._job_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._job_db)
-        self._op_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._op_db)
+        # TODO remove
+        # self._job_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._job_db)
+        # self._op_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._op_db)
 
     def dashboard_update(self) -> None:
         """
@@ -2131,10 +2195,11 @@ class Dispatcher:
 # ** systems
 
 
-class System:
+class System(metaclass=ABCMeta):
     def __init__(
         self,
         env: SimulationEnvironment,
+        supersystem: System | None,
         system_type: SimSystemTypes,
         custom_identifier: CustomID,
         abstraction_level: int,
@@ -2166,7 +2231,8 @@ class System:
         self._containing_proc_stations: bool = False
 
         infstruct_mgr = self.env.infstruct_mgr
-        self._system_id, self._name = infstruct_mgr.register_subsystem(
+        self._system_id, self._name = infstruct_mgr.register_system(
+            supersystem=supersystem,
             system_type=self._system_type,
             obj=self,
             custom_identifier=custom_identifier,
@@ -2174,6 +2240,9 @@ class System:
             state=state,
         )
         self._custom_identifier = custom_identifier
+
+        if supersystem is not None:
+            supersystem.add_subsystem(self)
 
         self.seq_policy: GeneralPolicy | SequencingPolicy | None = None
         self.alloc_policy: GeneralPolicy | AllocationPolicy | None = None
@@ -2470,7 +2539,7 @@ class System:
 
         # register association in corresponding database
         infstruct_mgr = self.env.infstruct_mgr
-        infstruct_mgr.register_system_association(supersystem=self, subsystem=subsystem)
+        # infstruct_mgr.register_system_association(supersystem=self, subsystem=subsystem)
 
         # check if a processing station was added
         if isinstance(subsystem, ProcessingStation):
@@ -2577,12 +2646,11 @@ class System:
         """
         return max(self.subsystems_ids)
 
-    def initialise(self) -> None:
-        # assign associated ProcessingStations and corresponding info
-        self._assoc_proc_stations = self.lowest_level_subsystems(
-            only_processing_stations=True
-        )
-        self._num_assoc_proc_stations = len(self._assoc_proc_stations)
+    @abstractmethod
+    def initialise(self) -> None: ...
+
+    @abstractmethod
+    def finalise(self) -> None: ...
 
 
 class ProductionArea(System):
@@ -2600,6 +2668,7 @@ class ProductionArea(System):
         # initialise base class
         super().__init__(
             env=env,
+            supersystem=None,
             system_type=SimSystemTypes.PRODUCTION_AREA,
             custom_identifier=custom_identifier,
             abstraction_level=2,
@@ -2637,11 +2706,24 @@ class ProductionArea(System):
 
         super().add_subsystem(subsystem=subsystem)
 
+    @override
+    def initialise(self) -> None:
+        # assign associated ProcessingStations and corresponding info
+        self._assoc_proc_stations = self.lowest_level_subsystems(
+            only_processing_stations=True
+        )
+        self._num_assoc_proc_stations = len(self._assoc_proc_stations)
+
+    @override
+    def finalise(self) -> None:
+        pass
+
 
 class StationGroup(System):
     def __init__(
         self,
         env: SimulationEnvironment,
+        supersystem: ProductionArea,
         custom_identifier: CustomID,
         name: str | None = None,
         state: SimStatesCommon | SimStatesStorage | None = None,
@@ -2651,6 +2733,7 @@ class StationGroup(System):
         # initialise base class
         super().__init__(
             env=env,
+            supersystem=supersystem,
             system_type=SimSystemTypes.STATION_GROUP,
             custom_identifier=custom_identifier,
             abstraction_level=1,
@@ -2688,6 +2771,18 @@ class StationGroup(System):
 
         super().add_subsystem(subsystem=subsystem)
 
+    @override
+    def initialise(self) -> None:
+        # assign associated ProcessingStations and corresponding info
+        self._assoc_proc_stations = self.lowest_level_subsystems(
+            only_processing_stations=True
+        )
+        self._num_assoc_proc_stations = len(self._assoc_proc_stations)
+
+    @override
+    def finalise(self) -> None:
+        pass
+
 
 # INFRASTRUCTURE COMPONENTS
 
@@ -2696,21 +2791,15 @@ class InfrastructureObject(System, metaclass=ABCMeta):
     def __init__(
         self,
         env: SimulationEnvironment,
+        supersystem: StationGroup,
         custom_identifier: CustomID,
         resource_type: SimResourceTypes,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
-        current_state: SimStatesCommon | None = SimStatesCommon.INIT,
-        states: type[SimStatesCommon] | None = SimStatesCommon,
+        add_monitor: bool = True,
+        current_state: SimStatesCommon | SimStatesStorage = SimStatesCommon.INIT,
     ) -> None:
-        """
-        env: simulation environment in which the infrastructure object is embedded
-        custom_identifier: unique user-defined custom ID of the given object \
-            necessary for user interfaces
-        capacity: capacity of the infrastructure object, if multiple processing \
-            slots available at the same time > 1, default=1
-        """
         self.capacity = capacity
         self._resource_type = resource_type
         # [HIERARCHICAL SYSTEM INFORMATION]
@@ -2720,6 +2809,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # calls to Infrastructure Manager to register object
         super().__init__(
             env=env,
+            supersystem=supersystem,
             system_type=SimSystemTypes.RESOURCE,
             custom_identifier=custom_identifier,
             abstraction_level=0,
@@ -2727,12 +2817,18 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             state=current_state,
         )
         # [STATS] Monitoring
-        if current_state is not None and states is not None:
+        if add_monitor:
+            if not isinstance(current_state, SimStatesCommon):
+                raise TypeError(
+                    (
+                        'Current State for infrastructure monitor'
+                        'must be a state of >>SimStatesCommon<<.'
+                    )
+                )
             self._stat_monitor = monitors.InfStructMonitor(
                 env=env,
                 obj=self,
                 current_state=current_state,
-                states=states,
             )
         # [SALABIM COMPONENT]
         self._sim_control = SimulationComponent(
@@ -2904,9 +3000,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             # simply obtain target station if no agent decision is needed
             target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
 
-        # TODO check removal
-        # yield self.sim_control.hold(0)
-
         # get logic queue
         logic_queue = target_station.logic_queue
         # check if the target is a sink
@@ -3004,12 +3097,13 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         infstruct_mgr = self.env.infstruct_mgr
         # request job and its time characteristics from associated queue
         yield self.sim_control.hold(0, priority=self.sim_get_prio)
-        # TODO retrieve times from job object directly
-        job, job_proc_time, job_setup_time = dispatcher.request_job_sequencing(req_obj=self)
+        job = dispatcher.request_job_sequencing(req_obj=self)
         # update time characteristics of the infrastructure object
         # contains additional checks if the target values are allowed
-        self.proc_time = job_proc_time
-        if job_setup_time is not None:
+        if job.current_proc_time is None:
+            raise ValueError(f'Processing time of job >>{job}<< None.')
+        self.proc_time = job.current_proc_time
+        if job.current_setup_time is not None:
             loggers.prod_stations.debug(
                 (
                     '[SETUP TIME DETECTED] job ID %s at %s on machine ID %s '
@@ -3020,7 +3114,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 self.custom_identifier,
                 self.setup_time,
             )
-            self.setup_time = job_setup_time
+            self.setup_time = job.current_setup_time
 
         # Processing Station only
         # request and get job from associated buffer if it exists
@@ -3088,6 +3182,11 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         """returns: tuple with values or None"""
         ...
 
+    @override
+    def initialise(self) -> None:
+        pass
+
+    @override
     def finalise(self) -> None:
         """
         method to be called at the end of the simulation run by
@@ -3104,24 +3203,25 @@ class StorageLike(InfrastructureObject):
     def __init__(
         self,
         env: SimulationEnvironment,
+        supersystem: StationGroup,
         custom_identifier: CustomID,
         resource_type: SimResourceTypes,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: int | Infinite = INF,
         current_state: SimStatesStorage = SimStatesStorage.INIT,
-        states: type[SimStatesStorage] = SimStatesStorage,
         fill_level_init: int = 0,
     ) -> None:
         super().__init__(
             env=env,
+            supersystem=supersystem,
             custom_identifier=custom_identifier,
             resource_type=resource_type,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
-            current_state=None,
-            states=None,
+            add_monitor=False,
+            current_state=current_state,
         )
 
         self.fill_level_init = fill_level_init
@@ -3129,7 +3229,6 @@ class StorageLike(InfrastructureObject):
             env=env,
             obj=self,
             current_state=current_state,
-            states=states,
         )
 
         self._sim_control = StorageComponent(
@@ -3167,13 +3266,13 @@ class ProcessingStation(InfrastructureObject):
     def __init__(
         self,
         env: SimulationEnvironment,
+        supersystem: StationGroup,
         custom_identifier: CustomID,
         resource_type: SimResourceTypes,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
         current_state: SimStatesCommon = SimStatesCommon.INIT,
-        states: type[SimStatesCommon] = SimStatesCommon,
         buffers: Iterable[Buffer] | None = None,
     ) -> None:
         """
@@ -3184,13 +3283,13 @@ class ProcessingStation(InfrastructureObject):
         # initialise base class
         super().__init__(
             env=env,
+            supersystem=supersystem,
             custom_identifier=custom_identifier,
             resource_type=resource_type,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
             current_state=current_state,
-            states=states,
         )
 
         # add physical buffers, more than one allowed
@@ -3239,17 +3338,6 @@ class ProcessingStation(InfrastructureObject):
 
     def buffers_as_tuple(self) -> tuple[Buffer, ...]:
         return tuple(self._buffers)
-
-    # TODO: add station group information or delete
-    """
-    @property
-    def station_group_id(self) -> SystemID:
-        return self._station_group_id
-    
-    @property
-    def station_group(self) -> StationGroup:
-        return self._station_group
-    """
 
     def add_buffer(
         self,
@@ -3364,12 +3452,12 @@ class Machine(ProcessingStation):
     def __init__(
         self,
         env: SimulationEnvironment,
+        supersystem: StationGroup,
         custom_identifier: CustomID,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
         current_state: SimStatesCommon = SimStatesCommon.INIT,
-        states: type[SimStatesCommon] = SimStatesCommon,
         buffers: Iterable[Buffer] | None = None,
     ) -> None:
         """
@@ -3381,13 +3469,13 @@ class Machine(ProcessingStation):
         # initialise base class
         super().__init__(
             env=env,
+            supersystem=supersystem,
             custom_identifier=custom_identifier,
             resource_type=resource_type,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
             current_state=current_state,
-            states=states,
             buffers=buffers,
         )
 
@@ -3396,12 +3484,12 @@ class Buffer(StorageLike):
     def __init__(
         self,
         env: SimulationEnvironment,
+        supersystem: StationGroup,
         custom_identifier: CustomID,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: int | Infinite = INF,
         current_state: SimStatesStorage = SimStatesStorage.INIT,
-        states: type[SimStatesStorage] = SimStatesStorage,
         fill_level_init: int = 0,
     ) -> None:
         """
@@ -3410,13 +3498,13 @@ class Buffer(StorageLike):
         resource_type = SimResourceTypes.BUFFER
         super().__init__(
             env=env,
+            supersystem=supersystem,
             custom_identifier=custom_identifier,
             resource_type=resource_type,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
             current_state=current_state,
-            states=states,
             fill_level_init=fill_level_init,
         )
         # material flow relationships
@@ -3551,13 +3639,13 @@ class Source(InfrastructureObject):
     def __init__(
         self,
         env: SimulationEnvironment,
+        supersystem: StationGroup,
         custom_identifier: CustomID,
         proc_time: Timedelta,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
         current_state: SimStatesCommon = SimStatesCommon.INIT,
-        states: type[SimStatesCommon] = SimStatesCommon,
         job_generation_limit: int | None = None,
         seed: int = 42,
     ) -> None:
@@ -3566,13 +3654,13 @@ class Source(InfrastructureObject):
 
         super().__init__(
             env=env,
+            supersystem=supersystem,
             custom_identifier=custom_identifier,
             resource_type=resource_type,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
             current_state=current_state,
-            states=states,
         )
         # TODO REWORK
         # initialise component with necessary process function
@@ -3720,7 +3808,7 @@ class Source(InfrastructureObject):
             # implemented in 'get_job' method which is not executed by source objects
             self.num_inputs += 1
             loggers.sources.debug(
-                '[SOURCE: %s] Generated %s at %s', self, job, self.env.now()
+                '[SOURCE: %s] Generated %s at %s', self, job, self.env.t_as_dt()
             )
 
             loggers.sources.debug('[SOURCE: %s] Request allocation...', self)
@@ -3737,7 +3825,7 @@ class Source(InfrastructureObject):
             # if hold time elapsed start new generation
             order_time = self._obtain_order_time()
             loggers.sources.debug(
-                '[SOURCE: %s] Hold for >>%s<< at %s', self, order_time, self.env.now()
+                '[SOURCE: %s] Hold for >>%s<< at %s', self, order_time, self.env.t_as_dt()
             )
 
             yield self.sim_control.hold(order_time, priority=self.sim_put_prio)
@@ -3756,12 +3844,12 @@ class Sink(InfrastructureObject):
     def __init__(
         self,
         env: SimulationEnvironment,
+        supersystem: StationGroup,
         custom_identifier: CustomID,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
         current_state: SimStatesCommon = SimStatesCommon.INIT,
-        states: type[SimStatesCommon] = SimStatesCommon,
     ) -> None:
         """
         num_gen_jobs: total number of jobs to be generated
@@ -3769,13 +3857,13 @@ class Sink(InfrastructureObject):
         resource_type = SimResourceTypes.SINK
         super().__init__(
             env=env,
+            supersystem=supersystem,
             custom_identifier=custom_identifier,
             resource_type=resource_type,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
             current_state=current_state,
-            states=states,
         )
 
     @override
@@ -3811,14 +3899,13 @@ class Operation:
         job: Job,
         exec_system_identifier: SystemID,
         proc_time: Timedelta,
-        setup_time: Timedelta | None = None,
+        setup_time: Timedelta,
         target_station_group_identifier: SystemID | None = None,
         prio: int | None = None,
         planned_starting_date: Datetime | None = None,
         planned_ending_date: Datetime | None = None,
         custom_identifier: CustomID | None = None,
         current_state: SimStatesCommon = SimStatesCommon.INIT,
-        states: type[SimStatesCommon] = SimStatesCommon,
     ) -> None:
         """
         ADD DESCRIPTION
@@ -3842,17 +3929,14 @@ class Operation:
             env=self._dispatcher.env,
             obj=self,
             current_state=current_state,
-            states=states,
+            states=SimStatesCommon,
         )
 
         # process information
         # time characteristics
         self.proc_time = proc_time
         self.setup_time = setup_time
-        if self.setup_time is not None:
-            self.order_time = self.proc_time + self.setup_time
-        else:
-            self.order_time = self.proc_time
+        self.order_time = self.proc_time + self.setup_time
         # inter-process time characteristics
         # time of release
         self.time_release = DEFAULT_DATETIME
@@ -3885,7 +3969,8 @@ class Operation:
         # assignment of machine instance by dispatcher
         # from dispatcher: op_id, name, target_machine
         # register operation instance
-        current_state = cast(SimStatesCommon, self._stat_monitor.get_current_state())
+        # TODO remove
+        # current_state = cast(SimStatesCommon, self._stat_monitor.get_current_state())
 
         # registration: only return OpID, other properties directly
         # written by dispatcher method
@@ -3975,14 +4060,13 @@ class Job(salabim.Component):
         dispatcher: Dispatcher,
         execution_systems: Sequence[SystemID],
         proc_times: Sequence[Timedelta],
+        setup_times: Sequence[Timedelta],
         station_groups: Sequence[SystemID | None] | None = None,
-        setup_times: Sequence[Timedelta | None] | None = None,
         prio: int | Sequence[int | None] | None = None,
         planned_starting_date: Datetime | Sequence[Datetime | None] | None = None,
         planned_ending_date: Datetime | Sequence[Datetime | None] | None = None,
         custom_identifier: CustomID | None = None,
         current_state: SimStatesCommon = SimStatesCommon.INIT,
-        states: type[SimStatesCommon] = SimStatesCommon,
         additional_info: dict[str, CustomID] | None = None,
         **kwargs,
     ) -> None:
@@ -3997,9 +4081,6 @@ class Job(salabim.Component):
             op_target_stations = station_groups
         else:
             op_target_stations = [None] * len(execution_systems)
-        # setup times
-        if setup_times is None:
-            setup_times = [None] * len(proc_times)
 
         # prio
         self.op_wise_prio: bool
@@ -4058,6 +4139,7 @@ class Job(salabim.Component):
 
         ### VALIDITY CHECK ###
         # length of provided identifiers and lists must match
+        # TODO put in separate method
         if station_groups is not None:
             if len(station_groups) != len(execution_systems):
                 raise ValueError(
@@ -4105,8 +4187,9 @@ class Job(salabim.Component):
         self.job_type: str = 'Job'
         self._dispatcher = dispatcher
         # sum of the proc times of each operation
-        # self.total_proc_time: float = sum(proc_times)
-        self.total_proc_time: Timedelta = sum(proc_times, Timedelta())
+        self.total_proc_time = sum(proc_times, Timedelta())
+        self.total_setup_time = sum(setup_times, Timedelta())
+        self.total_order_time = self.total_proc_time + self.total_setup_time
 
         # inter-process job state parameters
         # first operation scheduled --> released job
@@ -4134,7 +4217,7 @@ class Job(salabim.Component):
             env=self._dispatcher.env,
             obj=self,
             current_state=current_state,
-            states=states,
+            states=SimStatesCommon,
         )
 
         # register job instance

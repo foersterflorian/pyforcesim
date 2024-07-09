@@ -334,14 +334,13 @@ class StorageMonitor(Monitor):
         env: SimulationEnvironment,
         obj: StorageLike,
         current_state: SimStatesStorage = SimStatesStorage.INIT,
-        states: type[SimStatesStorage] = SimStatesStorage,
     ) -> None:
         # initialise parent class
         super().__init__(
             env=env,
             obj=obj,
             current_state=current_state,
-            states=states,
+            states=SimStatesStorage,
         )
 
         # fill level tracking
@@ -492,14 +491,13 @@ class InfStructMonitor(Monitor):
         env: SimulationEnvironment,
         obj: InfrastructureObject,
         current_state: SimStatesCommon = SimStatesCommon.INIT,
-        states: type[SimStatesCommon] = SimStatesCommon,
     ) -> None:
         # initialise parent class
         super().__init__(
             env=env,
             obj=obj,
             current_state=current_state,
-            states=states,
+            states=SimStatesCommon,
         )
 
         # WIP tracking time load

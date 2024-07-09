@@ -43,7 +43,7 @@ StateTimes: TypeAlias = dict[str, Timedelta]
 @dataclass(kw_only=True, slots=True, eq=False, match_args=False)
 class OrderTimes:
     proc: Sequence[Timedelta]
-    setup: Sequence[Timedelta | None] | None = field(default=None)
+    setup: Sequence[Timedelta]
 
 
 @dataclass(kw_only=True, slots=True, eq=False, match_args=False)
@@ -68,6 +68,9 @@ AgentTasks: TypeAlias = Literal['SEQ', 'ALLOC']
 
 
 # ** database
+PandasDateColParseInfo: TypeAlias = dict[str, dict[str, bool]]
+PandasDatetimeCols: TypeAlias = list[str]
+PandasTimedeltaCols: TypeAlias = list[str]
 DBColumnName: TypeAlias = str
 DBColumnType: TypeAlias = str
 DBColumnDeclaration: TypeAlias = dict[DBColumnName, DBColumnType]

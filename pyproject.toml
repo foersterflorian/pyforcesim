@@ -68,6 +68,9 @@ rl = [
     "rich>=13.7.1",
     "sb3-contrib>=2.3.0",
 ]
+db = [
+    "SQLAlchemy>=2.0.31",
+]
 
 [tool.ruff]
 line-length = 94
