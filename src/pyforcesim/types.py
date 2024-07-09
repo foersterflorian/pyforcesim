@@ -43,7 +43,7 @@ StateTimes: TypeAlias = dict[str, Timedelta]
 @dataclass(kw_only=True, slots=True, eq=False, match_args=False)
 class OrderTimes:
     proc: Sequence[Timedelta]
-    setup: Sequence[Timedelta | None] | None = field(default=None)
+    setup: Sequence[Timedelta]
 
 
 @dataclass(kw_only=True, slots=True, eq=False, match_args=False)

@@ -790,6 +790,8 @@ class Dispatcher:
         self._pd_date_parse_info_jobs, self._datetime_cols_job, self._timedelta_cols_jobs = (
             db.pandas_date_col_parser(db.jobs)
         )
+        self._db_props_job: frozenset[str] = frozenset(db.jobs.c.keys())
+        # TODO remove
         # self._job_prop: dict[str, type] = {
         #     'job_id': int,
         #     'custom_id': object,
@@ -838,6 +840,7 @@ class Dispatcher:
         self._pd_date_parse_info_ops, self._datetime_cols_ops, self._timedelta_cols_ops = (
             db.pandas_date_col_parser(db.operations)
         )
+        self._db_props_op: frozenset[str] = frozenset(db.operations.c.keys())
         # self._op_prop: dict[str, type] = {
         #     'op_id': int,
         #     'job_id': int,
@@ -998,7 +1001,7 @@ class Dispatcher:
         Obtaining the current cycle time of all operations
         """
         self._cycle_time = cast(
-            Timedelta, self._op_db['actual_ending_date'].max() - self._env.starting_datetime
+            Timedelta, self.op_db['actual_ending_date'].max() - self._env.starting_datetime
         )
 
     ### JOBS ###
@@ -1029,7 +1032,9 @@ class Dispatcher:
             'type': job.job_type,
             'prio': job.prio,
             'state': state,
+            'total_order_time': job.total_order_time,
             'total_proc_time': job.total_proc_time,
+            'total_setup_time': job.total_setup_time,
             'creation_date': creation_date,
             'release_date': job.time_release,
             'planned_starting_date': job.time_planned_starting,
@@ -1045,6 +1050,7 @@ class Dispatcher:
             conn.execute(sql.insert(db.jobs), entry)
             conn.commit()
 
+        # TODO remove
         # new_entry: DataFrame = pd.DataFrame(
         #     {
         #         'job_id': [job_id],
@@ -1087,11 +1093,13 @@ class Dispatcher:
         """
         updates the information of a job for a given property
         """
+        # TODO remove
         # # check if property is a filter criterion
-        # if property not in self._job_update_props:
-        #     raise IndexError(
-        #         f"Property '{property}' is not allowed. Choose from {self._job_update_props}"
-        #     )
+        if property not in self._db_props_job:
+            raise IndexError(
+                f"Property '{property}' is not defined. Choose from {self._db_props_job}"
+            )
+        # TODO remove
         # # None type value can not be set
         # if val is None:
         #     raise TypeError('The set value can not be of type >>None<<.')
@@ -1348,9 +1356,9 @@ class Dispatcher:
             'target_station_sys_id': None,
             'prio': op.prio,
             'state': state,
+            'order_time': op.order_time,
             'proc_time': op.proc_time,
             'setup_time': setup_time,
-            'order_time': op.order_time,
             'creation_date': creation_date,
             'release_date': op.time_release,
             'planned_starting_date': op.time_planned_starting,
@@ -1423,10 +1431,11 @@ class Dispatcher:
         updates the information of a job for a given property
         """
         # check if property is a filter criterion
-        # if property not in self._op_update_props:
-        #     raise IndexError(
-        #         f"Property '{property}' is not allowed. Choose from {self._op_update_props}"
-        #     )
+        if property not in self._db_props_op:
+            raise IndexError(
+                f"Property '{property}' is not defined. Choose from {self._db_props_op}"
+            )
+        # TODO remove
         # # None type value can not be looked for
         # if val is None:
         #     raise TypeError("The lookup value can not be of type 'None'.")
@@ -1468,11 +1477,12 @@ class Dispatcher:
         self.update_operation_db(op=op, property='release_date', val=op.time_release)
         # target station: custom identifier + name
         self.update_operation_db(
-            op=op, property='target_station_custom_id', val=target_station.custom_identifier
+            op=op, property='target_station_sys_id', val=target_station.system_id
         )
-        self.update_operation_db(
-            op=op, property='target_station_name', val=target_station.name
-        )
+        # TODO remove
+        # self.update_operation_db(
+        #     op=op, property='target_station_name', val=target_station.name
+        # )
 
     def enter_operation(
         self,
@@ -1550,14 +1560,21 @@ class Dispatcher:
         """
         returns a copy of the underlying SQL job database as parsed Pandas DataFrame
         """
-        job_db = pd.read_sql_table(
-            db.jobs.name,
-            self.env.db_engine,
-            parse_dates=self._pd_date_parse_info_jobs,
+        job_db = db.parse_database_to_dataframe(
+            database=db.jobs,
+            db_engine=self.env.db_engine,
+            datetime_parse_info=self._pd_date_parse_info_jobs,
+            timedelta_cols=self._timedelta_cols_jobs,
         )
-        job_db[self._timedelta_cols_jobs] = (
-            job_db.loc[:, self._timedelta_cols_jobs] - DEFAULT_DATETIME
-        )
+        # TODO remove
+        # job_db = pd.read_sql_table(
+        #     db.jobs.name,
+        #     self.env.db_engine,
+        #     parse_dates=self._pd_date_parse_info_jobs,
+        # )
+        # job_db[self._timedelta_cols_jobs] = (
+        #     job_db.loc[:, self._timedelta_cols_jobs] - DEFAULT_DATETIME
+        # )
         return job_db
 
     @property
@@ -1567,9 +1584,16 @@ class Dispatcher:
         with adjusted timezone
         """
         job_db = self.job_db
-        job_db[self._datetime_cols_job] = job_db.loc[:, self._datetime_cols_job].apply(
-            lambda col: col.dt.tz_convert(self.env.local_timezone)
+        # TODO remove
+        # job_db[self._datetime_cols_job] = job_db.loc[:, self._datetime_cols_job].apply(
+        #     lambda col: col.dt.tz_convert(self.env.local_timezone)
+        # )
+        job_db = pyf_dt.df_convert_timezone(
+            df=job_db,
+            datetime_cols=self._datetime_cols_job,
+            tz=self.env.local_timezone,
         )
+
         return job_db
 
     @property
@@ -1577,14 +1601,21 @@ class Dispatcher:
         """
         returns a copy of the underlying SQL operation database as parsed Pandas DataFrame
         """
-        op_db = pd.read_sql_table(
-            db.operations.name,
-            self.env.db_engine,
-            parse_dates=self._pd_date_parse_info_ops,
+        op_db = db.parse_database_to_dataframe(
+            database=db.operations,
+            db_engine=self.env.db_engine,
+            datetime_parse_info=self._pd_date_parse_info_ops,
+            timedelta_cols=self._timedelta_cols_ops,
         )
-        op_db[self._timedelta_cols_ops] = (
-            op_db.loc[:, self._timedelta_cols_ops] - DEFAULT_DATETIME
-        )
+        # TODO remove
+        # op_db = pd.read_sql_table(
+        #     db.operations.name,
+        #     self.env.db_engine,
+        #     parse_dates=self._pd_date_parse_info_ops,
+        # )
+        # op_db[self._timedelta_cols_ops] = (
+        #     op_db.loc[:, self._timedelta_cols_ops] - DEFAULT_DATETIME
+        # )
         return op_db
 
     @property
@@ -1594,9 +1625,16 @@ class Dispatcher:
         with adjusted timezone
         """
         op_db = self.op_db
-        op_db[self._datetime_cols_ops] = op_db.loc[:, self._datetime_cols_ops].apply(
-            lambda col: col.dt.tz_convert(self.env.local_timezone)
+        # TODO remove
+        # op_db[self._datetime_cols_ops] = op_db.loc[:, self._datetime_cols_ops].apply(
+        #     lambda col: col.dt.tz_convert(self.env.local_timezone)
+        # )
+        op_db = pyf_dt.df_convert_timezone(
+            df=op_db,
+            datetime_cols=self._datetime_cols_ops,
+            tz=self.env.local_timezone,
         )
+
         return op_db
 
     # @lru_cache(maxsize=200)
@@ -1977,54 +2015,91 @@ class Dispatcher:
         """
         # TODO: Implement debug function to display results during sim runs
 
+        # SQL query
+        stmt = (
+            sql.select(
+                db.operations,
+                db.resources.c.custom_id.label('res_custom_id'),
+                db.resources.c.name.label('res_name'),
+                db.production_areas.c.custom_id.label('prod_area_custom_id'),
+                db.production_areas.c.name.label('prod_area_name'),
+                db.station_groups.c.custom_id.label('station_group_custom_id'),
+                db.station_groups.c.name.label('station_group_name'),
+            )
+            .join_from(db.operations, db.resources)
+            .join_from(db.operations, db.production_areas)
+            .join_from(db.operations, db.station_groups)
+        )
+        db_df = db.parse_sql_query_to_dataframe(
+            query_select=stmt,
+            engine=self.env.db_engine,
+            index_col='load_id',
+            datetime_parse_info=self._pd_date_parse_info_ops,
+            timedelta_cols=self._timedelta_cols_ops,
+        )
+
         # filter operation DB for relevant information
         filter_items: list[str] = [
             'job_id',
-            'target_station_custom_id',
-            'target_station_name',
-            'execution_system_custom_id',
+            'prod_area_custom_id',
+            'prod_area_name',
             'station_group_custom_id',
+            'station_group_name',
+            'res_custom_id',
+            'res_name',
             'prio',
+            'creation_date',
+            'release_date',
             'planned_starting_date',
             'actual_starting_date',
             'planned_ending_date',
             'actual_ending_date',
+            'order_time',
             'proc_time',
             'setup_time',
-            'order_time',
+            'lead_time',
         ]
 
         hover_data: dict[str, str | bool] = {
             'job_id': False,
-            'target_station_custom_id': True,
-            'execution_system_custom_id': True,
+            'prod_area_custom_id': True,
+            'prod_area_name': True,
             'station_group_custom_id': True,
+            'station_group_name': True,
+            'res_custom_id': True,
+            'res_name': True,
             'prio': True,
+            'creation_date': '|%d.%m.%Y %H:%M:%S',
+            'release_date': '|%d.%m.%Y %H:%M:%S',
             'planned_starting_date': '|%d.%m.%Y %H:%M:%S',
             'actual_starting_date': '|%d.%m.%Y %H:%M:%S',
             'planned_ending_date': '|%d.%m.%Y %H:%M:%S',
             'actual_ending_date': '|%d.%m.%Y %H:%M:%S',
+            'order_time': True,
             'proc_time': True,
             'setup_time': True,
-            'order_time': True,
+            'lead_time': True,
         }
         # TODO: disable hover infos if some entries are None
 
         # hover_template: str = 'proc_time: %{customdata[-3]|%d:%H:%M:%S}'
-        # TODO: use dedicated method to transform dates of job and op databases
         if dates_to_local_tz:
+            # TODO remove
             # self._job_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._job_db)
             # self._op_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._op_db)
-            target_db = self.op_db_local_tz
-        else:
-            target_db = self.op_db
+            # db_df = self.op_db_local_tz
+            db_df = pyf_dt.df_convert_timezone(
+                df=db_df,
+                datetime_cols=self._datetime_cols_ops,
+                tz=self.env.local_timezone,
+            )
 
         # filter only finished operations (for debug display)
-        target_db = target_db.loc[(target_db['state'] == SimStatesCommon.FINISH)]
+        db_df = db_df.loc[(db_df['state'] == SimStatesCommon.FINISH)]
         if num_last_entries is not None:
-            target_db = target_db.iloc[-num_last_entries:, :]
+            db_df = db_df.iloc[-num_last_entries:, :]
 
-        df = target_db.filter(items=filter_items)
+        df = db_df.filter(items=filter_items)
         # calculate delta time between start and end
         # Timedelta
         df['delta'] = df['actual_ending_date'] - df['actual_starting_date']
@@ -2032,9 +2107,9 @@ class Dispatcher:
         # choose relevant processing station property
         proc_station_prop: str
         if use_custom_proc_station_id:
-            proc_station_prop = 'target_station_custom_id'
+            proc_station_prop = 'res_custom_id'
         else:
-            proc_station_prop = 'target_station_name'
+            proc_station_prop = 'res_name'
 
         # check if sorting by processing station is wanted and custom ID should be used or not
         # sorting
@@ -2049,7 +2124,7 @@ class Dispatcher:
 
         # group by value
         if group_by_exec_system:
-            group_by_key = 'execution_system_custom_id'
+            group_by_key = 'prod_area_custom_id'
         else:
             group_by_key = 'job_id'
 
@@ -2105,8 +2180,9 @@ class Dispatcher:
         the environment's "finalise_sim" method
         """
         self._calc_cycle_time()
-        self._job_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._job_db)
-        self._op_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._op_db)
+        # TODO remove
+        # self._job_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._job_db)
+        # self._op_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._op_db)
 
     def dashboard_update(self) -> None:
         """
@@ -3823,7 +3899,7 @@ class Operation:
         job: Job,
         exec_system_identifier: SystemID,
         proc_time: Timedelta,
-        setup_time: Timedelta | None = None,
+        setup_time: Timedelta,
         target_station_group_identifier: SystemID | None = None,
         prio: int | None = None,
         planned_starting_date: Datetime | None = None,
@@ -3860,10 +3936,7 @@ class Operation:
         # time characteristics
         self.proc_time = proc_time
         self.setup_time = setup_time
-        if self.setup_time is not None:
-            self.order_time = self.proc_time + self.setup_time
-        else:
-            self.order_time = self.proc_time
+        self.order_time = self.proc_time + self.setup_time
         # inter-process time characteristics
         # time of release
         self.time_release = DEFAULT_DATETIME
@@ -3896,7 +3969,8 @@ class Operation:
         # assignment of machine instance by dispatcher
         # from dispatcher: op_id, name, target_machine
         # register operation instance
-        current_state = cast(SimStatesCommon, self._stat_monitor.get_current_state())
+        # TODO remove
+        # current_state = cast(SimStatesCommon, self._stat_monitor.get_current_state())
 
         # registration: only return OpID, other properties directly
         # written by dispatcher method
@@ -3986,8 +4060,8 @@ class Job(salabim.Component):
         dispatcher: Dispatcher,
         execution_systems: Sequence[SystemID],
         proc_times: Sequence[Timedelta],
+        setup_times: Sequence[Timedelta],
         station_groups: Sequence[SystemID | None] | None = None,
-        setup_times: Sequence[Timedelta | None] | None = None,
         prio: int | Sequence[int | None] | None = None,
         planned_starting_date: Datetime | Sequence[Datetime | None] | None = None,
         planned_ending_date: Datetime | Sequence[Datetime | None] | None = None,
@@ -4007,9 +4081,6 @@ class Job(salabim.Component):
             op_target_stations = station_groups
         else:
             op_target_stations = [None] * len(execution_systems)
-        # setup times
-        if setup_times is None:
-            setup_times = [None] * len(proc_times)
 
         # prio
         self.op_wise_prio: bool
@@ -4068,6 +4139,7 @@ class Job(salabim.Component):
 
         ### VALIDITY CHECK ###
         # length of provided identifiers and lists must match
+        # TODO put in separate method
         if station_groups is not None:
             if len(station_groups) != len(execution_systems):
                 raise ValueError(
@@ -4115,7 +4187,9 @@ class Job(salabim.Component):
         self.job_type: str = 'Job'
         self._dispatcher = dispatcher
         # sum of the proc times of each operation
-        self.total_proc_time: Timedelta = sum(proc_times, Timedelta())
+        self.total_proc_time = sum(proc_times, Timedelta())
+        self.total_setup_time = sum(setup_times, Timedelta())
+        self.total_order_time = self.total_proc_time + self.total_setup_time
 
         # inter-process job state parameters
         # first operation scheduled --> released job

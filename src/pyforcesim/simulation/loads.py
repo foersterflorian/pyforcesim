@@ -157,8 +157,7 @@ class RandomJobGenerator(BaseJobGenerator):
                 proc_times.append(td)
 
             # setup times
-            setup_times: list[Timedelta] | None = None
-            setup_times_time_unit: list[int] | None = None
+            setup_times: list[Timedelta]
             if gen_setup_times:
                 setup_times = []
                 setup_times_time_unit = cast(
@@ -173,6 +172,8 @@ class RandomJobGenerator(BaseJobGenerator):
                 for time in setup_times_time_unit:
                     td = pyf_dt.timedelta_from_val(val=time, time_unit=time_unit)
                     setup_times.append(td)
+            else:
+                setup_times = [Timedelta()] * n_objects
 
             prio: OrderPriority | None = None
             if gen_prio:

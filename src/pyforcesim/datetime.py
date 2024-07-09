@@ -15,6 +15,7 @@ from pyforcesim.constants import (
     TIMEZONE_UTC,
     TimeUnitsTimedelta,
 )
+from pyforcesim.types import PandasDatetimeCols
 
 
 def timedelta_from_val(
@@ -205,29 +206,25 @@ def cut_dt_microseconds(
     return dt.replace(microsecond=0)
 
 
-# TODO rework after change to database usage
-def get_date_cols_from_db(
-    db: DataFrame,
-) -> list[str]:
-    target_cols: list[str] = []
+# TODO remove
+# def get_date_cols_from_db(
+#     db: DataFrame,
+# ) -> list[str]:
+#     target_cols: list[str] = []
 
-    for col in db.columns:
-        if 'date' in col and 'deviation' not in col:
-            target_cols.append(col)
+#     for col in db.columns:
+#         if 'date' in col and 'deviation' not in col:
+#             target_cols.append(col)
 
-    return target_cols.copy()
+#     return target_cols.copy()
 
 
-def adjust_db_dates_local_tz(
-    db: DataFrame,
+def df_convert_timezone(
+    df: DataFrame,
+    datetime_cols: PandasDatetimeCols,
     tz: TZInfo = TIMEZONE_CEST,
 ) -> DataFrame:
-    db = db.copy()
-    # obtain date columns from database
-    date_cols = get_date_cols_from_db(db=db)
-    # adjust UTC times to local time zone provided
-    dates_only = db[date_cols]
-    dates_only = dates_only.map(dt_to_timezone, na_action='ignore', target_tz=tz)
-    db[date_cols] = dates_only
+    df = df.copy()
+    df[datetime_cols] = df.loc[:, datetime_cols].apply(lambda col: col.dt.tz_convert(tz))
 
-    return db.copy()
+    return df
