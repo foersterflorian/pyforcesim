@@ -206,19 +206,6 @@ def cut_dt_microseconds(
     return dt.replace(microsecond=0)
 
 
-# TODO remove
-# def get_date_cols_from_db(
-#     db: DataFrame,
-# ) -> list[str]:
-#     target_cols: list[str] = []
-
-#     for col in db.columns:
-#         if 'date' in col and 'deviation' not in col:
-#             target_cols.append(col)
-
-#     return target_cols.copy()
-
-
 def df_convert_timezone(
     df: DataFrame,
     datetime_cols: PandasDatetimeCols,
