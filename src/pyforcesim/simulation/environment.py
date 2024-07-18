@@ -218,20 +218,13 @@ class SimulationEnvironment(salabim.Environment):
         method which checks for feasibility of agent allocation decisions
         returning True if feasible, False otherwise
         """
-        # check if operation has station group identifier (SGI) (SystemID)
         op_SGI = op.target_station_group_identifier
-
-        # no station group assigned, chosen station is automatically feasible
         if op_SGI is None:
             return True
         else:
-            # lookup SGIs of the target station's station groups
-            # target_SGIs = target_station.supersystems_custom_ids
             target_SGIs = target_station.supersystems_ids
 
         if op_SGI in target_SGIs:
-            # operation SGI in associated station group IDs found,
-            # target station is feasible for given operation
             return True
         else:
             return False
@@ -248,9 +241,6 @@ class SimulationEnvironment(salabim.Environment):
         """
         if not self._infstruct_mgr.sink_registered:
             raise ValueError('No Sink instance registered.')
-        # check if all subsystems are associated to supersystems
-        # elif not self._infstruct_mgr.verify_system_association():
-        #     raise AssociationError('Non-associated subsystems detected!')
 
         loggers.pyf_env.info(
             'Integrity check for Environment >>%s<< successful.', self.name()
@@ -264,16 +254,12 @@ class SimulationEnvironment(salabim.Environment):
 
         # establish websocket connection
         if self.debug_dashboard and not self.servers_connected:
-            # start websocket server
             loggers.pyf_env.info('Starting websocket server...')
             self.ws_server_process.start()
-            # start dashboard server
             loggers.pyf_env.info('Starting dashboard server...')
             self.dashboard_server_process.start()
-            # establish websocket connection used for streaming of updates
             loggers.pyf_env.info('Establish websocket connection...')
             self.ws_con = create_connection(WS_URL)
-            # set internal flag indicating that servers are started
             self.servers_connected = True
 
         loggers.pyf_env.info('Initialisation for Environment >>%s<< successful.', self.name())
@@ -1766,9 +1752,14 @@ class Dispatcher:
                 db.station_groups.c.custom_id.label('station_group_custom_id'),
                 db.station_groups.c.name.label('station_group_name'),
             )
+            .select_from(db.operations)
             .join_from(db.operations, db.resources)
             .join_from(db.operations, db.production_areas)
-            .join_from(db.operations, db.station_groups)
+            .join_from(
+                db.operations,
+                db.station_groups,
+                db.operations.c.station_group_sys_id == db.station_groups.c.sys_id,
+            )
         )
         db_df = db.parse_sql_query_to_dataframe(
             query_select=stmt,
@@ -1857,7 +1848,7 @@ class Dispatcher:
         else:
             group_by_key = 'job_id'
 
-        fig: PlotlyFigure = px.timeline(
+        fig = px.timeline(
             df,
             x_start='actual_starting_date',
             x_end='actual_ending_date',

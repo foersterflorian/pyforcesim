@@ -229,9 +229,7 @@ class AllocationAgent(Agent):
             if state in UTIL_PROPERTIES:
                 time_utilisation += time_diff
 
-        # if time_total.total_seconds() > 0:
         if time_non_helpers.total_seconds() > 0:
-            # utilisation = round(time_utilisation / time_total, 4)
             utilisation = round(time_utilisation / time_non_helpers, 4)
 
         return utilisation
@@ -281,10 +279,8 @@ class AllocationAgent(Agent):
         self,
         action: int,
     ) -> None:
-        # get action from RL agent
         self._action = action
-        # indicator that request was processed
-        # reset dispatching signal
+        # indicator that request was processed, reset dispatching signal
         self.set_dispatching_signal(reset=True)
 
         loggers.agents.debug('[DECISION SET Agent %s]: Set %d', self, self._action)
@@ -297,8 +293,7 @@ class AllocationAgent(Agent):
         action_mask: list[bool] = []
         station_feasible: bool
         # job
-        # needed properties
-        # target station group ID, order time
+        # needed properties: target station group ID, order time
         if job.current_order_time is None:
             raise ValueError(f'Current order time of job {job} >>None<<')
         norm_td = pyf_dt.timedelta_from_val(1.0, TimeUnitsTimedelta.HOURS)
@@ -367,10 +362,11 @@ class AllocationAgent(Agent):
 
         if not self.past_action_feasible:
             # non-feasible actions
+            # TODO check removal after using action masking
             reward = -100.0
         else:
-            # calc reward based on feasible action chosen and
-            # utilisation, but based on target station group
+            # calc reward based on feasible action chosen and utilisation,
+            # but based on target station group
             # use last OP because current one already set
             op_rew = self._last_op
 
@@ -386,16 +382,6 @@ class AllocationAgent(Agent):
             # the corresponding StationGroup
             stations = op_rew.target_station_group.assoc_proc_stations
             loggers.agents.debug('relevant stations: %s', stations)
-
-            # relevant_state_times: list[dict[str, Timedelta]] = []
-            # util_vals: list[float] = []
-            # for station in stations:
-            #     # self.state_times_current[station.system_id] = (
-            #     #     station.stat_monitor.state_times.copy()
-            #     # )
-            #     util_vals.append(self.utilisations[station.system_id])
-            #     # last state times
-            #     # current state times
 
             # calculate mean utilisation of all processing stations associated
             # with the corresponding operation and agent's action

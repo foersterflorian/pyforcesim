@@ -22,6 +22,9 @@ models/
 file_system_backend/
 logs*
 
+# prototyping
+prototypes/
+
 # PDM files
 *.pdm-python
 .pdm-build/
