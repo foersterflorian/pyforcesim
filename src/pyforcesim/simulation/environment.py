@@ -78,7 +78,7 @@ from pyforcesim.types import (
 EXEC_SYSTEM_TYPE: Final = SimSystemTypes.PRODUCTION_AREA
 # time after a store request is failed
 FAIL_DELAY: Final[Timedelta] = pyf_dt.timedelta_from_val(
-    7, time_unit=TimeUnitsTimedelta.HOURS
+    24, time_unit=TimeUnitsTimedelta.HOURS
 )
 
 

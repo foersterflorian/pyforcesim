@@ -62,7 +62,24 @@ def test_agent_env() -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]
     group_prod2 = sim.StationGroup(
         env=env, supersystem=area_prod, custom_identifier=CustomID('2')
     )
-    # area_prod.add_subsystem(group_prod2)
+
+    alloc_agent = agents.AllocationAgent(assoc_system=area_prod)
+    sequence_generator = loads.ConstantSequenceSinglePA(
+        env=env, seed=100, prod_area_id=area_prod.system_id
+    )
+    prod_sequence_PA = sequence_generator.retrieve(
+        target_obj=source,
+    )
+    source.register_job_sequence(prod_sequence_PA)
+
+    # conditions
+    duration_transient = pyf_dt.timedelta_from_val(val=6, time_unit=TimeUnitsTimedelta.HOURS)
+    conditions.TransientCondition(env=env, duration_transient=duration_transient)
+    conditions.TriggerAgentCondition(env=env)
+    sim_dur = pyf_dt.timedelta_from_val(val=3, time_unit=TimeUnitsTimedelta.WEEKS)
+    # sim_end_date = pyf_dt.dt_with_tz_UTC(2024, 3, 23, 12)
+    conditions.JobGenDurationCondition(env=env, target_obj=source, sim_run_duration=sim_dur)
+
     # machines
     for machine in range(3):
         if machine < 2:
@@ -82,24 +99,6 @@ def test_agent_env() -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]
             custom_identifier=CustomID(str(machine)),
             buffers=[buffer],
         )
-
-    alloc_agent = agents.AllocationAgent(assoc_system=area_prod)
-
-    sequence_generator = loads.ConstantSequenceSinglePA(
-        env=env, seed=100, prod_area_id=area_prod.system_id
-    )
-    prod_sequence_PA = sequence_generator.retrieve(
-        target_obj=source,
-    )
-    source.register_job_sequence(prod_sequence_PA)
-
-    # conditions
-    duration_transient = pyf_dt.timedelta_from_val(val=6, time_unit=TimeUnitsTimedelta.HOURS)
-    conditions.TransientCondition(env=env, duration_transient=duration_transient)
-    conditions.TriggerAgentCondition(env=env)
-    sim_dur = pyf_dt.timedelta_from_val(val=3, time_unit=TimeUnitsTimedelta.WEEKS)
-    # sim_end_date = pyf_dt.dt_with_tz_UTC(2024, 3, 23, 12)
-    conditions.JobGenDurationCondition(env=env, target_obj=source, sim_run_duration=sim_dur)
 
     return env, alloc_agent
 
