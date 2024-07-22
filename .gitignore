@@ -13,6 +13,7 @@ input/
 output/
 
 # results are user- and data-specific
+research/
 results/
 *.zip
 tensorboard/
@@ -24,6 +25,7 @@ logs*
 
 # prototyping
 prototypes/
+notebooks/
 
 # PDM files
 *.pdm-python
