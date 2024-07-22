@@ -9,6 +9,7 @@ from pandas import DataFrame
 from pyforcesim.env_builder import (
     standard_env_1_2_3_ConstIdeal,
     standard_env_1_3_7_ConstIdeal,
+    standard_env_1_5_15_ConstIdeal,
 )
 from pyforcesim.loggers import gym_env as logger
 from pyforcesim.rl import agents
@@ -24,6 +25,7 @@ BuilderFunc: TypeAlias = Callable[
 BUILDER_FUNCS: Final[dict[str, BuilderFunc]] = {
     '1-2-3_ConstIdeal': standard_env_1_2_3_ConstIdeal,
     '1-3-7_ConstIdeal': standard_env_1_3_7_ConstIdeal,
+    '1-5-15_ConstIdeal': standard_env_1_5_15_ConstIdeal,
 }
 
 
@@ -89,12 +91,6 @@ class JSSEnv(gym.Env):
         # external properties to handle callbacks
         self.last_gantt_chart: PlotlyFigure | None = None
         self.last_op_db: DataFrame | None = None
-        # TODO check removal
-        # self.base_folder: str | None = None
-        # self.episode_num: int | None = None
-        # self.cum_episode_reward: float | None = None
-        # self.algo_type: str | None = None
-        # self.timesteps: int | None = None
 
     def step(
         self,
@@ -183,7 +179,7 @@ class JSSEnv(gym.Env):
             raise ValueError('No Observation in reset!')
         info = {}
 
-        logger.info('Environment reset finished')
+        logger.info('Environment reset finished.')
 
         return observation, info
 
@@ -212,40 +208,6 @@ class JSSEnv(gym.Env):
         if gantt_chart:
             self.last_gantt_chart = self.draw_gantt_chart(sort_by_proc_station=True)
         self.last_op_db = self.sim_env.dispatcher.op_db
-
-    # TODO check removal
-    # def save_gantt_chart_on_termination(self) -> None:
-    #     needed_props = (
-    #         self.base_folder,
-    #         self.algo_type,
-    #         self.episode_num,
-    #         self.timesteps,
-    #         self.exp_type,
-    #     )
-    #     if not all(needed_props):
-    #         raise ValueError(
-    #             (
-    #                 'Not all properties available to successfully '
-    #                 'build Gantt chart out of Gymnasium environment'
-    #             )
-    #         )
-
-    #     title = (
-    #         f'Gantt Chart<br>Model(Algo: {self.algo_type}, Timesteps: '
-    #         f'{self.timesteps})<br>ExpType: {self.exp_type}'
-    #     )
-    #     title_reward = (
-    #         f'<br>Episode: {self.episode_num}, ' f'Cum Reward: {self.cum_episode_reward:.4f}'
-    #     )
-    #     title_chart = title + title_reward
-    #     filename = f'{self.algo_type}_{self.timesteps}_Episode_{self.episode_num}'
-    #     self.draw_gantt_chart(
-    #         save_html=True,
-    #         title=title_chart,
-    #         filename=filename,
-    #         base_folder=self.base_folder,
-    #         sort_by_proc_station=True,
-    #     )
 
     def draw_gantt_chart(
         self,

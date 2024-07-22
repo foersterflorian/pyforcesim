@@ -173,7 +173,7 @@ class SimulationEnvironment(salabim.Environment):
         # ** simulation run
         self.FAIL_DELAY: Final[float] = self.td_to_simtime(timedelta=FAIL_DELAY)
 
-        loggers.pyf_env.warning('New Environment >>%s<< initialised.', self.name())
+        loggers.pyf_env.info('New Environment >>%s<< created.', self.name())
 
     def t_as_dt(self) -> Datetime:
         """return current simulation time as Datetime object
