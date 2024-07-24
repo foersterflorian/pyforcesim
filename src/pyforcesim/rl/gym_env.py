@@ -9,7 +9,13 @@ from pandas import DataFrame
 from pyforcesim.env_builder import (
     standard_env_1_2_3_ConstIdeal,
     standard_env_1_3_7_ConstIdeal,
+    standard_env_1_5_5_ConstIdeal,
+    standard_env_1_5_10_ConstIdeal,
     standard_env_1_5_15_ConstIdeal,
+    standard_env_1_5_20_ConstIdeal,
+    standard_env_1_5_30_ConstIdeal,
+    standard_env_1_5_50_ConstIdeal,
+    standard_env_1_5_70_ConstIdeal,
 )
 from pyforcesim.loggers import gym_env as logger
 from pyforcesim.rl import agents
@@ -25,7 +31,13 @@ BuilderFunc: TypeAlias = Callable[
 BUILDER_FUNCS: Final[dict[str, BuilderFunc]] = {
     '1-2-3_ConstIdeal': standard_env_1_2_3_ConstIdeal,
     '1-3-7_ConstIdeal': standard_env_1_3_7_ConstIdeal,
+    '1-5-5_ConstIdeal': standard_env_1_5_5_ConstIdeal,
+    '1-5-10_ConstIdeal': standard_env_1_5_10_ConstIdeal,
     '1-5-15_ConstIdeal': standard_env_1_5_15_ConstIdeal,
+    '1-5-20_ConstIdeal': standard_env_1_5_20_ConstIdeal,
+    '1-5-30_ConstIdeal': standard_env_1_5_30_ConstIdeal,
+    '1-5-50_ConstIdeal': standard_env_1_5_50_ConstIdeal,
+    '1-5-70_ConstIdeal': standard_env_1_5_70_ConstIdeal,
 }
 
 
@@ -38,7 +50,7 @@ class JSSEnv(gym.Env):
         self,
         experiment_type: str,
         gantt_chart_on_termination: bool = False,
-        seed: int = 42,
+        seed: int | None = 42,
     ) -> None:
         super().__init__()
         super().reset(seed=seed)
@@ -145,10 +157,11 @@ class JSSEnv(gym.Env):
 
     def reset(
         self,
-        seed: int = 42,
+        seed: int | None = None,
         options: dict[str, Any] | None = None,
     ) -> tuple[npt.NDArray[np.float32], dict]:
         logger.debug('Resetting environment')
+        super().reset(seed=seed)
         self.terminated = False
         self.truncated = False
         # re-init simulation environment

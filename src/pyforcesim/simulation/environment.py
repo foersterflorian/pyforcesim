@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-import random
 from abc import ABCMeta, abstractmethod
 from collections import deque
 from collections.abc import Generator, Iterable, Iterator, Sequence
@@ -3377,10 +3376,6 @@ class Source(InfrastructureObject):
             capacity=capacity,
             current_state=current_state,
         )
-        # TODO REWORK
-        # initialise component with necessary process function
-        self._rng = random.Random(seed)
-
         # parameters
         self.proc_time = proc_time
         if setup_time is not None:
@@ -3399,10 +3394,6 @@ class Source(InfrastructureObject):
 
         # job generator
         self._job_sequence: Iterator[JobGenerationInfo] | None = None
-
-    @property
-    def rng(self) -> random.Random:
-        return self._rng
 
     @property
     def job_sequence(self) -> Iterator[JobGenerationInfo] | None:

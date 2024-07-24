@@ -1,16 +1,22 @@
-import shlex
 import subprocess
 import time
 import webbrowser
-from pathlib import Path
 from threading import Thread
 from typing import Final
 
 from pyforcesim import common
 
-EXPERIMENT_FOLDER: Final[str] = '2024-07-22-01__1-5-15__ConstIdeal__Util'
-BASE_FOLDER: Final[str] = f'results/{EXPERIMENT_FOLDER}'
-FOLDER_TB: Final[str] = 'tensorboard'
+USE_TRAIN_CONFIG: Final[bool] = False
+if USE_TRAIN_CONFIG:
+    from train import BASE_FOLDER, FOLDER_TB  # type: ignore
+else:
+    # EXPERIMENT_FOLDER: Final[str] = '2024-07-23-10__1-5-20__ConstIdeal__Util'
+    # EXPERIMENT_FOLDER: Final[str] = '2024-07-23-10__1-5-30__ConstIdeal__Util'
+    # EXPERIMENT_FOLDER: Final[str] = '2024-07-23-10__1-5-50__ConstIdeal__Util'
+    EXPERIMENT_FOLDER: Final[str] = '2024-07-23-11__1-5-70__ConstIdeal__Util'
+    BASE_FOLDER: Final[str] = f'results/{EXPERIMENT_FOLDER}'
+    FOLDER_TB: Final[str] = 'tensorboard'
+
 LOG_DIR = common.prepare_save_paths(BASE_FOLDER, FOLDER_TB, None, None)
 assert LOG_DIR.exists(), 'Tensorboard path does not exist'
 

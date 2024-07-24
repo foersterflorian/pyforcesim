@@ -5,6 +5,8 @@ from sb3_contrib.common.maskable.evaluation import evaluate_policy
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.vec_env import sync_envs_normalization
 
+from pyforcesim.loggers import gym_env as logger
+
 
 class MaskableEvalCallback(EvalCallback):
     """
@@ -94,12 +96,13 @@ class MaskableEvalCallback(EvalCallback):
             mean_ep_length, std_ep_length = np.mean(episode_lengths), np.std(episode_lengths)
             self.last_mean_reward = float(mean_reward)
 
-            if self.verbose > 0:
-                print(
-                    f'Eval num_timesteps={self.num_timesteps}, '
-                    f'episode_reward={mean_reward:.2f} +/- {std_reward:.2f}'
-                )
-                print(f'Episode length: {mean_ep_length:.2f} +/- {std_ep_length:.2f}')
+            logger.info(
+                'Eval num_timesteps=%d, episode_reward=%.2f +/- %.2f',
+                self.num_timesteps,
+                mean_reward,
+                std_reward,
+            )
+            logger.info('Episode length: %.2f +/- %.2f', mean_ep_length, std_ep_length)
             # Add to current Logger
             self.logger.record('eval/mean_reward', float(mean_reward))
             self.logger.record('eval/mean_ep_length', mean_ep_length)

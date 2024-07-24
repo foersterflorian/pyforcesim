@@ -15,18 +15,17 @@ from train import (
     BASE_FOLDER,
     EXP_TYPE,
     FOLDER_MODEL_SAVEPOINTS,
+    RNG_SEED,
     make_env,
 )
 
 from pyforcesim import common
 from pyforcesim.rl.gym_env import JSSEnv
 
-USE_TRAIN_CONFIG: Final[bool] = True
+USE_TRAIN_CONFIG: Final[bool] = False
 NORMALISE_OBS: Final[bool] = True
-NUM_EPISODES: Final[int] = 3
-# FILENAME_TARGET_MODEL: Final[str] = '2024-06-24--16-17-54_pyf_sim_PPO_mask_TS-2048'
-# FILENAME_TARGET_MODEL: Final[str] = '2024-07-19--11-58-27_pyf_sim_PPO_mask_TS-102400'
-FILENAME_TARGET_MODEL: Final[str] = '2024-07-22--18-37-50_pyf_sim_PPO_mask_TS-40960'
+NUM_EPISODES: Final[int] = 2
+FILENAME_TARGET_MODEL: Final[str] = '2024-07-24--05-09-19_pyf_sim_PPO_mask_TS-399360'
 
 model_properties_pattern = re.compile(r'(?:pyf_sim_)([\w]+)_(TS-[\d]+)$')
 matches = model_properties_pattern.search(FILENAME_TARGET_MODEL)
@@ -38,7 +37,7 @@ ALGO_TYPE: Final[str] = matches.group(1)
 TIMESTEPS: Final[str] = matches.group(2)
 
 # USER_TARGET_FOLDER: Final[str] = '2024-06-24-01__1-3-7__ConstIdeal__Util'
-USER_TARGET_FOLDER: Final[str] = '2024-07-18-01__1-3-7__ConstIdeal__Util'
+USER_TARGET_FOLDER: Final[str] = '2024-07-23-11__1-5-70__ConstIdeal__Util'
 USER_FOLDER: Final[str] = f'results/{USER_TARGET_FOLDER}'
 user_exp_type_pattern = re.compile(
     r'^([\d\-]*)(?:[_]*)([\d\-]*)(?:[_]*)([a-zA-Z]*)(?:[_]*)([a-zA-Z]*)$'
@@ -48,12 +47,15 @@ if matches is None:
     raise ValueError(f'Experiment type could not be extracted out of: {USER_TARGET_FOLDER}')
 
 USER_EXP_TYPE: Final[str] = f'{matches.group(2)}_{matches.group(3)}'
+USER_RNG_SEED: Final[int] = 42
 
 ROOT_FOLDER = USER_FOLDER
 ROOT_EXP_TYPE = USER_EXP_TYPE
+ROOT_RNG_SEED = USER_RNG_SEED
 if USE_TRAIN_CONFIG:
     ROOT_FOLDER = BASE_FOLDER
     ROOT_EXP_TYPE = EXP_TYPE
+    ROOT_RNG_SEED = RNG_SEED
 
 
 def get_list_of_models(
@@ -91,7 +93,14 @@ def test() -> None:
     pth_vec_norm, model = load_model()
     # Env
     # env = JSSEnv(ROOT_EXP_TYPE)
-    env = make_env(ROOT_EXP_TYPE, None, normalise_obs=False, gantt_chart=True)
+    env = make_env(
+        ROOT_EXP_TYPE,
+        tensorboard_path=None,
+        normalise_obs=False,
+        gantt_chart=True,
+        seed=ROOT_RNG_SEED,
+        verify_env=False,
+    )
     # vec_norm: VecNormalize | None = None
     if NORMALISE_OBS:
         if not pth_vec_norm.exists():

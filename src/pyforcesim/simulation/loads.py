@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import random
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from datetime import timedelta as Timedelta
@@ -38,13 +37,19 @@ class BaseJobGenerator(ABC):
         env: SimulationEnvironment,
         seed: int = 42,
     ) -> None:
-        """
-        seed: seed value for random number generator
+        """_summary_
+
+        Parameters
+        ----------
+        env : SimulationEnvironment
+            corresponding simulation environment where job generator is used
+        seed : int, optional
+            seed for random number generator, by default 42
         """
         # simulation environment
         self._env = env
         # components for random number generation
-        self._rnd_gen: NPRandomGenerator = np.random.default_rng(seed=seed)
+        self._rnd_gen = np.random.default_rng(seed=seed)
         self._seed = seed
 
     def __repr__(self) -> str:

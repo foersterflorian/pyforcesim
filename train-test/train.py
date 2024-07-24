@@ -3,8 +3,6 @@ import warnings
 from pathlib import Path
 from typing import Any, Final
 
-from custom_callbacks import MaskableEvalCallback as EvalCallback
-
 # from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback as EvalCallback
 # from sb3_contrib.common.maskable.evaluation import evaluate_policy
 from sb3_contrib.ppo_mask import MaskablePPO
@@ -14,18 +12,19 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from pyforcesim import common
-from pyforcesim import datetime as pyf_dt
 from pyforcesim.rl.gym_env import JSSEnv
+from pyforcesim.rl.sb3.custom_callbacks import MaskableEvalCallback as EvalCallback
 
 # ** input
-OVERWRITE_FOLDERS: Final[bool] = True
+OVERWRITE_FOLDERS: Final[bool] = False
 CONTINUE_LEARNING: Final[bool] = False
 NORMALISE_OBS: Final[bool] = True
-CALC_ITERATIONS: Final[int] = 233472 // 2048
+CALC_ITERATIONS: Final[int] = 69632 // 2048
+RNG_SEED: Final[int] = 42
 
 DATE = common.get_timestamp(with_time=False)
-EXP_NUM: Final[str] = '01'
-ENV_STRUCTURE: Final[str] = '1-5-15'
+EXP_NUM: Final[str] = '11'
+ENV_STRUCTURE: Final[str] = '1-5-70'
 JOB_GEN_METHOD: Final[str] = 'ConstIdeal'
 EXP_TYPE: Final[str] = f'{ENV_STRUCTURE}_{JOB_GEN_METHOD}'
 FEEDBACK_MACHANISM: Final[str] = 'Util'
@@ -39,14 +38,14 @@ FOLDER_MODEL_SAVEPOINTS: Final[str] = 'models'
 
 MODEL: Final[str] = 'PPO_mask'
 MODEL_BASE_NAME: Final[str] = f'pyf_sim_{MODEL}'
-NUM_EVAL_EPISODES: Final[int] = 3
-EVAL_FREQ: Final[int] = 2048 * 2
+NUM_EVAL_EPISODES: Final[int] = 2
+EVAL_FREQ: Final[int] = 2048 * 1
 REWARD_THRESHOLD: Final[float | None] = -0.01
 TIMESTEPS_PER_ITER: Final[int] = int(2048 * 1)
-ITERATIONS: Final[int] = 50
-ITERATIONS_TILL_SAVE: Final[int] = 2
+ITERATIONS: Final[int] = 5000
+ITERATIONS_TILL_SAVE: Final[int] = 20
 
-FILENAME_PRETRAINED_MODEL: Final[str] = '2024-06-24--19-35-38_pyf_sim_PPO_mask_TS-233472'
+FILENAME_PRETRAINED_MODEL: Final[str] = '2024-07-23--16-20-52_pyf_sim_PPO_mask_TS-69632'
 
 
 def prepare_base_folder(
@@ -122,17 +121,28 @@ def make_env(
     tensorboard_path: Path | None,
     gantt_chart: bool = False,
     normalise_obs: bool = True,
+    seed: int | None = None,
+    verify_env: bool = True,
 ) -> Any:
     env = JSSEnv(
         experiment_type=experiment_type,
         gantt_chart_on_termination=gantt_chart,
+        seed=seed,
     )
-    check_env(env, warn=True)
+    if verify_env:
+        check_env(env, warn=True)
+        # recreate to ensure that nothing was altered
+        env = JSSEnv(
+            experiment_type=experiment_type,
+            gantt_chart_on_termination=gantt_chart,
+            seed=seed,
+        )
     tb_path: str | None = None
     if tensorboard_path is not None:
         tb_path = str(tensorboard_path)
     env = Monitor(env, filename=tb_path, allow_early_resets=True)
     env = DummyVecEnv([lambda: env])  # type: ignore
+    env.seed(seed=seed)
     if normalise_obs:
         env = VecNormalize(env, norm_obs=True, norm_reward=False, clip_obs=10.0)
 
@@ -148,7 +158,7 @@ def train(
     tensorboard_command = f'pdm run tensorboard --logdir="{tensorboard_path}"'
     print('tensorboard command: ', tensorboard_command)
 
-    env = make_env(EXP_TYPE, tensorboard_path, normalise_obs=NORMALISE_OBS)
+    env = make_env(EXP_TYPE, tensorboard_path, normalise_obs=NORMALISE_OBS, seed=RNG_SEED)
     eval_env = make_env(EXP_TYPE, tensorboard_path, normalise_obs=NORMALISE_OBS)
     # ** reward threshold callback
     reward_thresh_callback: StopTrainingOnRewardThreshold | None = None
@@ -188,7 +198,11 @@ def train(
             print('Normalization info loaded successfully.')
     else:
         model = MaskablePPO(
-            'MlpPolicy', env, verbose=1, tensorboard_log=str(tensorboard_path)
+            'MlpPolicy',
+            env,
+            verbose=1,
+            tensorboard_log=str(tensorboard_path),
+            seed=RNG_SEED,
         )
         calc_iterations = 0
 
@@ -200,7 +214,7 @@ def train(
             tb_log_name=f'{MODEL}',
             reset_num_timesteps=False,
         )
-        num_timesteps: int = TIMESTEPS_PER_ITER * (it + calc_iterations)
+        num_timesteps = TIMESTEPS_PER_ITER * (it + calc_iterations)
         save_path_model, save_path_vec_norm = get_save_path_model(
             num_timesteps=num_timesteps, base_name=MODEL_BASE_NAME
         )
