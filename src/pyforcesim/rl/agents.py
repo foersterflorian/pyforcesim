@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import random
 import statistics
 from abc import ABC, abstractmethod
 from datetime import timedelta as Timedelta
@@ -9,6 +8,7 @@ from typing_extensions import override
 
 import numpy as np
 import numpy.typing as npt
+from numpy.random._generator import Generator as NPRandomGenerator
 
 from pyforcesim import datetime as pyf_dt
 from pyforcesim import loggers
@@ -31,7 +31,7 @@ class Agent(ABC):
         self,
         assoc_system: System,
         agent_task: AgentTasks,
-        seed: int = 42,
+        seed: int | None = None,
     ) -> None:
         # basic information
         self._agent_task = agent_task
@@ -39,10 +39,13 @@ class Agent(ABC):
         self._assoc_system, self._env = assoc_system.register_agent(
             agent=self, agent_task=self._agent_task
         )
+        # if seed not provided use env seed if available
+        if seed is None and self.env.seed is not None:
+            seed = self.env.seed
+        self._seed = seed
+        self._rng = np.random.default_rng(seed=self.seed)
         # dispatching signal: no matter if allocation or sequencing
         self._dispatching_signal: bool = False
-
-        self._rng = random.Random(seed)
 
     def __str__(self) -> str:
         return f'Agent(type={self._agent_task}, Assoc_Syst_ID={self._assoc_system.system_id})'
@@ -60,8 +63,12 @@ class Agent(ABC):
         return self._env
 
     @property
-    def rng(self) -> random.Random:
+    def rng(self) -> NPRandomGenerator:
         return self._rng
+
+    @property
+    def seed(self) -> int | None:
+        return self._seed
 
     @property
     def dispatching_signal(self) -> bool:
@@ -107,7 +114,7 @@ class AllocationAgent(Agent):
     def __init__(
         self,
         assoc_system: System,
-        seed: int = 42,
+        seed: int | None = None,
     ) -> None:
         # init base class
         super().__init__(assoc_system=assoc_system, agent_task='ALLOC', seed=seed)
@@ -251,20 +258,34 @@ class AllocationAgent(Agent):
             self._last_op = self._current_op
             self._current_op = op
 
+        loggers.agents.debug(
+            '[AllocationAgent] Current OP for agent >>%s<<: %s', self, self._current_op
+        )
+
         for station in self.assoc_proc_stations:
             sys_id = station.system_id
             self.state_times_last[sys_id] = self.state_times_current[sys_id].copy()
             self.state_times_current[sys_id] = station.stat_monitor.state_times.copy()
             # calculate difference between last and current for each station
             # calculate utilisation (difference based) for each station
+            loggers.agents.debug(
+                '[AllocationAgent] State times for SystemID %d is - \n\t   last: %s, \n\tcurrent: %s',
+                sys_id,
+                self.state_times_last[sys_id],
+                self.state_times_current[sys_id],
+            )
             utilisation = self.calc_util_state_time_diff(
                 state_times_last=self.state_times_last[sys_id],
                 state_times_current=self.state_times_current[sys_id],
             )
             self.utilisations[sys_id] = utilisation
-            loggers.agents.debug('Utilisation for SystemID %d is %.4f', sys_id, utilisation)
+            loggers.agents.debug(
+                '[AllocationAgent] Utilisation for SystemID %d is %.4f', sys_id, utilisation
+            )
 
-        loggers.agents.debug('Utilisation dict for agent >>%s<<: %s', self, self.utilisations)
+        loggers.agents.debug(
+            '[AllocationAgent] Utilisation dict for agent >>%s<<: %s', self, self.utilisations
+        )
 
         # build feature vector
         self.feat_vec = self.build_feat_vec(job=job)
@@ -283,7 +304,7 @@ class AllocationAgent(Agent):
         # indicator that request was processed, reset dispatching signal
         self.set_dispatching_signal(reset=True)
 
-        loggers.agents.debug('[DECISION SET Agent %s]: Set %d', self, self._action)
+        loggers.agents.debug('[DECISION SET Agent %s]: Set to >>%d<<', self, self._action)
 
     @override
     def build_feat_vec(
@@ -353,7 +374,7 @@ class AllocationAgent(Agent):
         """
         Generate random action based on associated objects
         """
-        return self.rng.randint(0, len(self._assoc_proc_stations) - 1)
+        return self.rng.integers(0, len(self._assoc_proc_stations))
 
     @override
     def calc_reward(self) -> float:
@@ -381,7 +402,7 @@ class AllocationAgent(Agent):
             # obtain relevant ProcessingStations contained in
             # the corresponding StationGroup
             stations = op_rew.target_station_group.assoc_proc_stations
-            loggers.agents.debug('relevant stations: %s', stations)
+            loggers.agents.debug('[AllocationAgent] relevant stations: %s', stations)
 
             # calculate mean utilisation of all processing stations associated
             # with the corresponding operation and agent's action
@@ -389,15 +410,53 @@ class AllocationAgent(Agent):
             util_vals: list[float] = [
                 self.utilisations[station.system_id] for station in stations
             ]
-            loggers.agents.debug('util_vals: %s', util_vals)
+            loggers.agents.debug('[AllocationAgent] util_vals: %s', util_vals)
             util_mean = statistics.mean(util_vals)
-            loggers.agents.debug('util_mean: %.4f', util_mean)
+            loggers.agents.debug('[AllocationAgent] util_mean: %.4f', util_mean)
 
             reward = util_mean - 1.0
 
-        loggers.agents.debug('reward: %.4f', reward)
+        loggers.agents.debug('[AllocationAgent] reward: %.4f', reward)
 
         return reward
+
+
+class ValidateAllocationAgent(AllocationAgent):
+    def __init__(
+        self,
+        assoc_system: System,
+        seed: int | None = None,
+    ) -> None:
+        super().__init__(assoc_system=assoc_system, seed=seed)
+
+        alloc_policy = self.env.dispatcher.alloc_policy
+        if alloc_policy is None:
+            raise ValueError('Validation Agent could not retrieve allocation policy')
+        else:
+            self.alloc_policy = alloc_policy
+
+    def simulate_decision_making(self) -> int:
+        # sets decision based on allocation policy returns action index
+        # use current op
+        op = self._current_op
+        if op is None:
+            raise ValueError('[Validation Agent] Operation >>None<<')
+        target_stat_group = op.target_station_group
+        if target_stat_group is None:
+            raise ValueError('[Validation Agent] Target station group >>None<<')
+        # mimic approach of dispatcher
+        stations = target_stat_group.assoc_proc_stations
+        candidates = tuple(ps for ps in stations if ps.stat_monitor.is_available)
+        # if there are no available ones: use all stations
+        if candidates:
+            avail_stations = candidates
+        else:
+            avail_stations = stations
+
+        target_station = self.alloc_policy.apply(items=avail_stations)
+        action_idx = self.assoc_proc_stations.index(target_station)
+
+        return action_idx
 
 
 class SequencingAgent(Agent):

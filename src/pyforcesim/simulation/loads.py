@@ -13,6 +13,7 @@ from numpy.random._generator import Generator as NPRandomGenerator
 from pyforcesim import datetime as pyf_dt
 from pyforcesim import loggers
 from pyforcesim.constants import SimStatesCommon, SimSystemTypes, TimeUnitsTimedelta
+from pyforcesim.simulation.environment import SimulationEnvironment, SystemID
 from pyforcesim.types import (
     JobGenerationInfo,
     OrderDates,
@@ -35,32 +36,38 @@ class BaseJobGenerator(ABC):
     def __init__(
         self,
         env: SimulationEnvironment,
-        seed: int = 42,
+        seed: int | None = None,
     ) -> None:
-        """_summary_
+        """ABC with which load generators can be build
+        `retrieve` method must be implemented which yields
+        `JobGenerationInfo` objects
 
         Parameters
         ----------
         env : SimulationEnvironment
             corresponding simulation environment where job generator is used
         seed : int, optional
-            seed for random number generator, by default 42
+            seed for random number generator, by default None,
+            if None the seed of the associated simulation environment is checked
+            and used if available
         """
         # simulation environment
         self._env = env
         # components for random number generation
+        if seed is None and self.env.seed is not None:
+            seed = self.env.seed
         self._rnd_gen = np.random.default_rng(seed=seed)
         self._seed = seed
 
     def __repr__(self) -> str:
-        return f'{self.__class__.__name__} | Env: {self._env.name()} | Seed: {self._seed}'
+        return f'{self.__class__.__name__} | Env: {self.env.name()} | Seed: {self.seed}'
 
     @property
     def env(self) -> SimulationEnvironment:
         return self._env
 
     @property
-    def seed(self) -> int:
+    def seed(self) -> int | None:
         return self._seed
 
     @property
@@ -76,7 +83,7 @@ class RandomJobGenerator(BaseJobGenerator):
     def __init__(
         self,
         env: SimulationEnvironment,
-        seed: int = 42,
+        seed: int | None = None,
         min_proc_time: int = 1,
         max_proc_time: int = 10,
         min_setup_time: int = 1,
@@ -221,18 +228,18 @@ class ProductionSequence(BaseJobGenerator):
     def __init__(
         self,
         env: SimulationEnvironment,
-        seed: int = 42,
+        seed: int | None = None,
     ) -> None:
         # init base class
         super().__init__(env=env, seed=seed)
 
 
-class ConstantSequenceSinglePA(ProductionSequence):
+class SequenceSinglePA(ProductionSequence):
     def __init__(
         self,
         env: SimulationEnvironment,
         prod_area_id: SystemID,
-        seed: int = 42,
+        seed: int | None = None,
     ) -> None:
         super().__init__(env=env, seed=seed)
 
@@ -254,6 +261,16 @@ class ConstantSequenceSinglePA(ProductionSequence):
     def prod_area(self) -> ProductionArea:
         return self._prod_area
 
+
+class ConstantSequenceSinglePA(SequenceSinglePA):
+    def __init__(
+        self,
+        env: SimulationEnvironment,
+        prod_area_id: SystemID,
+        seed: int | None = None,
+    ) -> None:
+        super().__init__(env=env, prod_area_id=prod_area_id, seed=seed)
+
     @override
     def retrieve(
         self,
@@ -263,8 +280,8 @@ class ConstantSequenceSinglePA(ProductionSequence):
 
         Parameters
         ----------
-        order_time_source : Timedelta
-            current order time of the source, after which the job is generated
+        target_obj : Source
+            associated source object
 
         Yields
         ------
@@ -296,6 +313,117 @@ class ConstantSequenceSinglePA(ProductionSequence):
             for stat_group in stat_groups:
                 # generate job for each ProcessingStation in StationGroup
                 for _ in range(stat_group.num_assoc_proc_station):
+                    # generate random distribution of setup and processing time
+                    setup_time_percentage = self.rnd_gen.uniform(low=0.1, high=0.8)
+                    setup_time = setup_time_percentage * overall_time
+                    # round to next full minute
+                    setup_time = pyf_dt.round_td_by_seconds(
+                        td=setup_time, round_to_next_seconds=60
+                    )
+                    proc_time = overall_time - setup_time
+                    # StationGroupID
+                    stat_group_id = stat_group.system_id
+                    job_gen_info = JobGenerationInfo(
+                        custom_id=None,
+                        execution_systems=[self._prod_area_id],
+                        station_groups=[stat_group_id],
+                        order_time=OrderTimes(proc=[proc_time], setup=[setup_time]),
+                        dates=OrderDates(),
+                        prio=None,
+                        current_state=SimStatesCommon.INIT,
+                    )
+                    yield job_gen_info
+
+
+class VariableSequenceSinglePA(SequenceSinglePA):
+    def __init__(
+        self,
+        env: SimulationEnvironment,
+        prod_area_id: SystemID,
+        seed: int | None = None,
+    ) -> None:
+        super().__init__(env=env, prod_area_id=prod_area_id, seed=seed)
+
+    @override
+    def retrieve(
+        self,
+        target_obj: Source,
+        delta_percentage: float,
+        delta_lower_bound: float = 0.1,
+        delta_upper_bound: float = 0.5,
+    ) -> Iterator[JobGenerationInfo]:
+        """Generates a variable sequence of job generation infos,
+        evenly distributed within a given percentage range where the middle
+        of the range is the order time of a ideal sequence for the production
+        area
+
+        Parameters
+        ----------
+        target_obj : Source
+            associated source object
+        delta_percentage : float
+            percentage delta measured by the distance from value 1.0
+            (ideal sequence), mus lie in [delta_lower_bound, delta_upper_bound]
+        delta_lower_bound : float, optional
+            allowed lower bound for delta percentage, by default 0.1
+        delta_upper_bound : float, optional
+            allowed upper bound for delta percentage, by default 0.5
+
+        Yields
+        ------
+        Iterator[JobGenerationInfo]
+            job generation infos
+
+        Raises
+        ------
+        ValueError
+            if delta percentage exceeds provided bounds
+        """
+
+        # value bounds
+        if delta_percentage < delta_lower_bound or delta_percentage > delta_upper_bound:
+            raise ValueError(
+                (
+                    f'Percentage delta must lie between '
+                    f'{delta_lower_bound} and {delta_upper_bound}'
+                )
+            )
+        lower_percentage = 1.0 - delta_percentage
+        upper_percentage = 1.0 + delta_percentage
+        # request StationGroupIDs by ProdAreaID in StationGroup database
+        stat_groups = cast(tuple['StationGroup'], self.prod_area.subsystems_as_tuple())
+
+        loggers.loads.debug('stat_groups: %s', stat_groups)
+
+        # number of all processing stations in associated production area
+        total_num_proc_stations = self._prod_area.num_assoc_proc_station
+
+        loggers.loads.debug('total_num_proc_stations: %s', total_num_proc_stations)
+
+        # order time equally distributed between all station within given ProductionArea
+        # source distributes loads in round robin principle
+        # order time for each station has to be the order time of the source
+        # times the number of stations the source delivers to
+        order_time_source = target_obj.order_time
+        overall_time_ideal = order_time_source * total_num_proc_stations
+
+        loggers.loads.debug('station_order_time: %s', overall_time_ideal)
+
+        # generate endless sequence
+        while True:
+            # iterate over all StationGroups
+            for stat_group in stat_groups:
+                # generate job for each ProcessingStation in StationGroup
+                for _ in range(stat_group.num_assoc_proc_station):
+                    # generate random difference in total order time
+                    order_time_percentage = self.rnd_gen.uniform(
+                        low=lower_percentage,
+                        high=upper_percentage,
+                    )
+                    overall_time = order_time_percentage * overall_time_ideal
+                    overall_time = pyf_dt.round_td_by_seconds(
+                        td=overall_time, round_to_next_seconds=60
+                    )
                     # generate random distribution of setup and processing time
                     setup_time_percentage = self.rnd_gen.uniform(low=0.1, high=0.8)
                     setup_time = setup_time_percentage * overall_time

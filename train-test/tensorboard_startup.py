@@ -6,7 +6,7 @@ from typing import Final
 
 from pyforcesim import common
 
-USE_TRAIN_CONFIG: Final[bool] = False
+USE_TRAIN_CONFIG: Final[bool] = True
 if USE_TRAIN_CONFIG:
     from train import BASE_FOLDER, FOLDER_TB  # type: ignore
 else:

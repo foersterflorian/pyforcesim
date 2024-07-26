@@ -26,10 +26,11 @@ from pyforcesim.types import Infinite
 from pyforcesim.types import LoggingLevels as loglevel
 
 # ** logging
-LOGGING_TO_FILE: Final[bool] = False
+LOGGING_TO_FILE: Final[bool] = True
 LOGGING_LEVEL_BASE: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_ENV: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_GYM_ENV: Final[loglevel] = loglevel.INFO
+LOGGING_LEVEL_ENV_BUILDER: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_DISPATCHER: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_INFSTRCT: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.WARNING
@@ -40,14 +41,16 @@ LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_BUFFERS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_POLICIES: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_DB: Final[loglevel] = loglevel.ERROR
 
 
 # ** common
 # infinity
 INF: Final[Infinite] = float('inf')
+DEFAULT_SEED: Final[int] = 42
 
 
 # ** dates and times
@@ -185,22 +188,22 @@ POLICIES: Final[dict[str, Policy]] = {
     'UTILISATION': UtilisationPolicy(),
 }
 
-POLICIES_SEQ: Final[dict[str, GeneralPolicy | SequencingPolicy]] = {
-    'AGENT': AgentPolicy(),
-    'FIFO': FIFOPolicy(),
-    'LIFO': LIFOPolicy(),
-    'SPT': SPTPolicy(),
-    'LPT': LPTPolicy(),
-    'SST': SSTPolicy(),
-    'LST': LSTPolicy(),
-    'PRIORITY': PriorityPolicy(),
-    'RANDOM': RandomPolicy(),
+POLICIES_SEQ: Final[dict[str, type[GeneralPolicy | SequencingPolicy]]] = {
+    'AGENT': AgentPolicy,
+    'FIFO': FIFOPolicy,
+    'LIFO': LIFOPolicy,
+    'SPT': SPTPolicy,
+    'LPT': LPTPolicy,
+    'SST': SSTPolicy,
+    'LST': LSTPolicy,
+    'PRIORITY': PriorityPolicy,
+    'RANDOM': RandomPolicy,
 }
 
-POLICIES_ALLOC: Final[dict[str, GeneralPolicy | AllocationPolicy]] = {
-    'AGENT': AgentPolicy(),
-    'LOAD_TIME': LoadTimePolicy(),
-    'LOAD_JOBS': LoadJobsPolicy(),
-    'UTILISATION': UtilisationPolicy(),
-    'RANDOM': RandomPolicy(),
+POLICIES_ALLOC: Final[dict[str, type[GeneralPolicy | AllocationPolicy]]] = {
+    'AGENT': AgentPolicy,
+    'LOAD_TIME': LoadTimePolicy,
+    'LOAD_JOBS': LoadJobsPolicy,
+    'UTILISATION': UtilisationPolicy,
+    'RANDOM': RandomPolicy,
 }

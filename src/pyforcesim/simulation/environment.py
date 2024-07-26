@@ -31,6 +31,7 @@ from pyforcesim import common, loggers
 from pyforcesim import datetime as pyf_dt
 from pyforcesim.constants import (
     DEFAULT_DATETIME,
+    DEFAULT_SEED,
     INF,
     POLICIES_ALLOC,
     POLICIES_SEQ,
@@ -69,6 +70,7 @@ from pyforcesim.types import (
     OrderDates,
     OrderTimes,
     PlotlyFigure,
+    SalabimTimeUnits,
     SystemID,
 )
 
@@ -106,10 +108,11 @@ def filter_processing_stations(
 class SimulationEnvironment(salabim.Environment):
     def __init__(
         self,
-        time_unit: str = 'seconds',
+        time_unit: SalabimTimeUnits = 'seconds',
         starting_datetime: Datetime | None = None,
         local_timezone: TZInfo = TIMEZONE_CEST,
         debug_dashboard: bool = False,
+        seed: int | None = DEFAULT_SEED,
         **kwargs,
     ) -> None:
         """Simulation Environment:
@@ -129,6 +132,7 @@ class SimulationEnvironment(salabim.Environment):
         # time units and timezone
         self.time_unit = time_unit
         self.local_timezone = local_timezone
+        self.seed = seed
         # if starting datetime not provided use current time
         if starting_datetime is None:
             starting_datetime = pyf_dt.current_time_tz(cut_microseconds=True)
@@ -142,6 +146,8 @@ class SimulationEnvironment(salabim.Environment):
             trace=False,
             time_unit=self.time_unit,
             datetime0=self.starting_datetime,
+            random_seed=self.seed,
+            set_numpy_random_seed=False,
             yieldless=False,
             **kwargs,
         )
@@ -158,6 +164,7 @@ class SimulationEnvironment(salabim.Environment):
         # state allows direct waiting for flag changes
         self.is_transient_cond: bool = True
         self.duration_transient: Timedelta | None = None
+        self.transient_end_date: Datetime | None = None
         # ** databases
         self.db_engine = db.get_engine()
         # databases
@@ -190,6 +197,10 @@ class SimulationEnvironment(salabim.Environment):
     ) -> float:
         """transform Timedelta to simulation time"""
         return self.timedelta_to_duration(timedelta=timedelta)
+
+    def set_end_transient_phase(self) -> None:
+        self.is_transient_cond = False
+        self.transient_end_date = self.t_as_dt()
 
     @property
     def infstruct_mgr(self) -> InfrastructureManager:
@@ -835,7 +846,7 @@ class Dispatcher:
             )
         else:
             self._seq_rule = rule
-            self.seq_policy = POLICIES_SEQ[rule]
+            self.seq_policy = POLICIES_SEQ[rule]()
             loggers.dispatcher.info('Changed priority rule to %s', rule)
 
     @property
@@ -853,7 +864,7 @@ class Dispatcher:
             )
         else:
             self._alloc_rule = rule
-            self.alloc_policy = POLICIES_ALLOC[rule]
+            self.alloc_policy = POLICIES_ALLOC[rule]()
             loggers.dispatcher.info('Changed allocation rule to >>%s<<', rule)
 
     def _obtain_load_obj_id(
@@ -1590,7 +1601,7 @@ class Dispatcher:
         infstruct_mgr = self.env.infstruct_mgr
 
         if not is_agent:
-            if target_station_group:
+            if target_station_group is not None:
                 # preselection of station group only with allocation rules
                 # other than >>AGENT<<
                 # returned ProcessingStations automatically feasible
@@ -1645,6 +1656,9 @@ class Dispatcher:
             agent.action_feasible = self._env.check_feasible_agent_alloc(
                 target_station=target_station, op=op
             )
+            # TODO removal
+            if not agent.action_feasible:
+                raise RuntimeError('action not feasible')
             loggers.agents.debug('Action feasibility status: %s', agent.action_feasible)
 
         return target_station
@@ -1859,6 +1873,14 @@ class Dispatcher:
         fig.update_yaxes(type='category', autorange='reversed')
         if title is not None:
             fig.update_layout(title=title, margin=dict(t=150))
+        start_date_agent = self.env.transient_end_date
+        if start_date_agent is not None:
+            fig.add_vline(
+                x=start_date_agent,
+                line_width=2,
+                line_dash='dash',
+                line_color='black',
+            )
 
         if self.env.debug_dashboard:
             fig_json = cast(str | None, plotly.io.to_json(fig=fig))
@@ -2685,7 +2707,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 # ** SET external Gym flag, build feature vector
                 dispatcher.request_agent_alloc(job=job)
                 # ** Break external loop
-                # ** [only step] Calc reward in Gym-Env
+                # ** [only STEP] Calc reward in Gym-Env
                 loggers.agents.debug(
                     '--------------- DEBUG: call before hold(0) at %s, %s',
                     self.env.t(),
@@ -2703,7 +2725,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                     alloc_agent.action_feasible,
                     alloc_agent.past_action_feasible,
                 )
-
                 # obtain target station, check for feasibility
                 # --> SET ``agent.action_feasible``
                 target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)

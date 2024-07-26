@@ -96,7 +96,7 @@ class TransientCondition(BaseCondition):
         loggers.conditions.debug(
             '[CONDITION %s]: Event list of env: %s', self, self.env._event_list
         )
-        self.env.is_transient_cond = False
+        self.env.set_end_transient_phase()
         loggers.conditions.info(
             (
                 '[CONDITION %s]: Transient Condition over. Set >>is_transient_cond<< '

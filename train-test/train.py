@@ -16,20 +16,20 @@ from pyforcesim.rl.gym_env import JSSEnv
 from pyforcesim.rl.sb3.custom_callbacks import MaskableEvalCallback as EvalCallback
 
 # ** input
-OVERWRITE_FOLDERS: Final[bool] = False
+OVERWRITE_FOLDERS: Final[bool] = True
 CONTINUE_LEARNING: Final[bool] = False
 NORMALISE_OBS: Final[bool] = True
 CALC_ITERATIONS: Final[int] = 69632 // 2048
 RNG_SEED: Final[int] = 42
 
 DATE = common.get_timestamp(with_time=False)
-EXP_NUM: Final[str] = '11'
-ENV_STRUCTURE: Final[str] = '1-5-70'
-JOB_GEN_METHOD: Final[str] = 'ConstIdeal'
+EXP_NUM: Final[str] = '1'
+ENV_STRUCTURE: Final[str] = '1-3-7'
+JOB_GEN_METHOD: Final[str] = 'VarIdeal'
 EXP_TYPE: Final[str] = f'{ENV_STRUCTURE}_{JOB_GEN_METHOD}'
 FEEDBACK_MACHANISM: Final[str] = 'Util'
 EXPERIMENT_FOLDER: Final[str] = (
-    f'{DATE}-{EXP_NUM}__{ENV_STRUCTURE}__{JOB_GEN_METHOD}__{FEEDBACK_MACHANISM}'
+    f'{DATE}-{EXP_NUM.zfill(2)}__{ENV_STRUCTURE}__{JOB_GEN_METHOD}__{FEEDBACK_MACHANISM}'
 )
 BASE_FOLDER: Final[str] = f'results/{EXPERIMENT_FOLDER}'
 
@@ -40,10 +40,10 @@ MODEL: Final[str] = 'PPO_mask'
 MODEL_BASE_NAME: Final[str] = f'pyf_sim_{MODEL}'
 NUM_EVAL_EPISODES: Final[int] = 2
 EVAL_FREQ: Final[int] = 2048 * 1
-REWARD_THRESHOLD: Final[float | None] = -0.01
+REWARD_THRESHOLD: Final[float | None] = None  # -0.01
 TIMESTEPS_PER_ITER: Final[int] = int(2048 * 1)
-ITERATIONS: Final[int] = 5000
-ITERATIONS_TILL_SAVE: Final[int] = 20
+ITERATIONS: Final[int] = 28
+ITERATIONS_TILL_SAVE: Final[int] = 4
 
 FILENAME_PRETRAINED_MODEL: Final[str] = '2024-07-23--16-20-52_pyf_sim_PPO_mask_TS-69632'
 
@@ -123,11 +123,13 @@ def make_env(
     normalise_obs: bool = True,
     seed: int | None = None,
     verify_env: bool = True,
+    sim_randomise_reset: bool = False,
 ) -> Any:
     env = JSSEnv(
         experiment_type=experiment_type,
         gantt_chart_on_termination=gantt_chart,
         seed=seed,
+        sim_randomise_reset=sim_randomise_reset,
     )
     if verify_env:
         check_env(env, warn=True)

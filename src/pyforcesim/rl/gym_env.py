@@ -1,14 +1,18 @@
-from collections.abc import Callable
-from typing import Any, Final, TypeAlias, cast
+from datetime import timedelta as Timedelta
+from typing import Any, Final, cast
 
 import gymnasium as gym
 import numpy as np
 import numpy.typing as npt
 from pandas import DataFrame
 
+from pyforcesim.constants import DEFAULT_SEED
 from pyforcesim.env_builder import (
     standard_env_1_2_3_ConstIdeal,
     standard_env_1_3_7_ConstIdeal,
+    standard_env_1_3_7_ConstIdeal_validate,
+    standard_env_1_3_7_VarIdeal,
+    standard_env_1_3_7_VarIdeal_validate,
     standard_env_1_5_5_ConstIdeal,
     standard_env_1_5_10_ConstIdeal,
     standard_env_1_5_15_ConstIdeal,
@@ -18,19 +22,19 @@ from pyforcesim.env_builder import (
     standard_env_1_5_70_ConstIdeal,
 )
 from pyforcesim.loggers import gym_env as logger
-from pyforcesim.rl import agents
 from pyforcesim.simulation import environment as sim
-from pyforcesim.types import PlotlyFigure
+from pyforcesim.types import EnvBuilderFunc, PlotlyFigure
 
 MAX_WIP_TIME: Final[int] = 300
 MAX_NON_FEASIBLE: Final[int] = 20
-BuilderFunc: TypeAlias = Callable[
-    [bool],
-    tuple[sim.SimulationEnvironment, agents.AllocationAgent],
-]
-BUILDER_FUNCS: Final[dict[str, BuilderFunc]] = {
+
+
+BUILDER_FUNCS: Final[dict[str, EnvBuilderFunc]] = {
     '1-2-3_ConstIdeal': standard_env_1_2_3_ConstIdeal,
     '1-3-7_ConstIdeal': standard_env_1_3_7_ConstIdeal,
+    '1-3-7_ConstIdeal_validate': standard_env_1_3_7_ConstIdeal_validate,
+    '1-3-7_VarIdeal': standard_env_1_3_7_VarIdeal,
+    '1-3-7_VarIdeal_validate': standard_env_1_3_7_VarIdeal_validate,
     '1-5-5_ConstIdeal': standard_env_1_5_5_ConstIdeal,
     '1-5-10_ConstIdeal': standard_env_1_5_10_ConstIdeal,
     '1-5-15_ConstIdeal': standard_env_1_5_15_ConstIdeal,
@@ -50,11 +54,13 @@ class JSSEnv(gym.Env):
         self,
         experiment_type: str,
         gantt_chart_on_termination: bool = False,
-        seed: int | None = 42,
+        seed: int | None = DEFAULT_SEED,
+        sim_randomise_reset: bool = False,
     ) -> None:
         super().__init__()
-        super().reset(seed=seed)
+        # super().reset(seed=seed)
         self.seed = seed
+        self.sim_randomise_reset = sim_randomise_reset
         # build env
         if experiment_type not in BUILDER_FUNCS:
             raise KeyError(
@@ -65,7 +71,7 @@ class JSSEnv(gym.Env):
             )
         self.exp_type = experiment_type
         self.builder_func = BUILDER_FUNCS[self.exp_type]
-        self.sim_env, self.agent = self.builder_func(True)
+        self.sim_env, self.agent = self.builder_func(with_agent=True, seed=self.seed)
         self.sim_env_last_termination: sim.SimulationEnvironment | None = None
         # action space for allocation agent is length of all associated
         # infrastructure objects
@@ -103,6 +109,7 @@ class JSSEnv(gym.Env):
         # external properties to handle callbacks
         self.last_gantt_chart: PlotlyFigure | None = None
         self.last_op_db: DataFrame | None = None
+        self.cycle_time: Timedelta | None = None
 
     def step(
         self,
@@ -122,7 +129,7 @@ class JSSEnv(gym.Env):
             # empty event list, simulation run ended
             if not self.sim_env._event_list:
                 self.terminated = True
-                self.on_termination(self.gantt_chart_on_termination)
+                self._on_termination(gantt_chart=self.gantt_chart_on_termination)
                 break
             if self.agent.non_feasible_counter > MAX_NON_FEASIBLE:
                 self.truncated = True
@@ -142,8 +149,8 @@ class JSSEnv(gym.Env):
         info = {}
 
         # finalise simulation environment
-        if self.terminated:
-            self.sim_env.finalise()
+        # if self.terminated:
+        #     self.sim_env.finalise()
 
         logger.debug(
             'Step in environment finished. Return: %s, %s, %s, %s',
@@ -165,7 +172,10 @@ class JSSEnv(gym.Env):
         self.terminated = False
         self.truncated = False
         # re-init simulation environment
-        self.sim_env, self.agent = self.builder_func(True)
+        if self.sim_randomise_reset:
+            self.sim_env, self.agent = self.builder_func(with_agent=True, seed=seed)
+        else:
+            self.sim_env, self.agent = self.builder_func(with_agent=True, seed=self.seed)
         logger.debug('Environment re-initialised')
         # evaluate if all needed components are registered
         self.sim_env.check_integrity()
@@ -183,7 +193,7 @@ class JSSEnv(gym.Env):
             # is met later than configured simulation time
             if not self.sim_env._event_list:
                 self.terminated = True
-                self.on_termination(self.gantt_chart_on_termination)
+                self._on_termination(gantt_chart=self.gantt_chart_on_termination)
                 break
             self.sim_env.step()
         # feature vector already built internally when dispatching signal is set
@@ -207,20 +217,22 @@ class JSSEnv(gym.Env):
         )
 
     def run_without_agent(self) -> sim.SimulationEnvironment:
-        env, _ = self.builder_func(False)
+        env, _ = self.builder_func(with_agent=False, seed=self.seed)
         env.initialise()
         env.run()
         env.finalise()
 
         return env
 
-    def on_termination(
+    def _on_termination(
         self,
         gantt_chart: bool,
     ) -> None:
+        self.sim_env.finalise()
         if gantt_chart:
             self.last_gantt_chart = self.draw_gantt_chart(sort_by_proc_station=True)
         self.last_op_db = self.sim_env.dispatcher.op_db
+        self.cycle_time = self.sim_env.dispatcher.cycle_time
 
     def draw_gantt_chart(
         self,
