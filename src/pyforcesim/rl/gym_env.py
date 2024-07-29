@@ -110,6 +110,7 @@ class JSSEnv(gym.Env):
         self.last_gantt_chart: PlotlyFigure | None = None
         self.last_op_db: DataFrame | None = None
         self.cycle_time: Timedelta | None = None
+        self.sim_utilisation: float | None = None
 
     def step(
         self,
@@ -233,6 +234,8 @@ class JSSEnv(gym.Env):
             self.last_gantt_chart = self.draw_gantt_chart(sort_by_proc_station=True)
         self.last_op_db = self.sim_env.dispatcher.op_db
         self.cycle_time = self.sim_env.dispatcher.cycle_time
+        mean_util = np.mean(self.sim_env.infstruct_mgr.final_utilisations)
+        self.sim_utilisation = mean_util.item()
 
     def draw_gantt_chart(
         self,

@@ -12,6 +12,7 @@ from pyforcesim.simulation.policies import (
     LIFOPolicy,
     LoadJobsPolicy,
     LoadTimePolicy,
+    LoadTimeRemainingPolicy,
     LPTPolicy,
     LSTPolicy,
     Policy,
@@ -40,8 +41,8 @@ LOGGING_LEVEL_JOBS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_BUFFERS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.ERROR
-LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.DEBUG
+LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.DEBUG
+LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_POLICIES: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_DB: Final[loglevel] = loglevel.ERROR
@@ -173,19 +174,20 @@ class JobGeneration(enum.StrEnum):
 
 
 # ** policies
-POLICIES: Final[dict[str, Policy]] = {
-    'AGENT': AgentPolicy(),
-    'FIFO': FIFOPolicy(),
-    'LIFO': LIFOPolicy(),
-    'SPT': SPTPolicy(),
-    'LPT': LPTPolicy(),
-    'SST': SSTPolicy(),
-    'LST': LSTPolicy(),
-    'PRIORITY': PriorityPolicy(),
-    'RANDOM': RandomPolicy(),
-    'LOAD_TIME': LoadTimePolicy(),
-    'LOAD_JOBS': LoadJobsPolicy(),
-    'UTILISATION': UtilisationPolicy(),
+POLICIES: Final[dict[str, type[Policy]]] = {
+    'AGENT': AgentPolicy,
+    'FIFO': FIFOPolicy,
+    'LIFO': LIFOPolicy,
+    'SPT': SPTPolicy,
+    'LPT': LPTPolicy,
+    'SST': SSTPolicy,
+    'LST': LSTPolicy,
+    'PRIORITY': PriorityPolicy,
+    'RANDOM': RandomPolicy,
+    'LOAD_TIME': LoadTimePolicy,
+    'LOAD_TIME_REMAINING': LoadTimeRemainingPolicy,
+    'LOAD_JOBS': LoadJobsPolicy,
+    'UTILISATION': UtilisationPolicy,
 }
 
 POLICIES_SEQ: Final[dict[str, type[GeneralPolicy | SequencingPolicy]]] = {
@@ -203,6 +205,7 @@ POLICIES_SEQ: Final[dict[str, type[GeneralPolicy | SequencingPolicy]]] = {
 POLICIES_ALLOC: Final[dict[str, type[GeneralPolicy | AllocationPolicy]]] = {
     'AGENT': AgentPolicy,
     'LOAD_TIME': LoadTimePolicy,
+    'LOAD_TIME_REMAINING': LoadTimeRemainingPolicy,
     'LOAD_JOBS': LoadJobsPolicy,
     'UTILISATION': UtilisationPolicy,
     'RANDOM': RandomPolicy,

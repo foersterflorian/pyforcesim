@@ -331,6 +331,7 @@ class InfrastructureManager:
         self._resources: dict[SystemID, InfrastructureObject] = {}
         self._res_counter = SystemID(0)
         self._res_custom_identifiers: set[CustomID] = set()
+        self.final_utilisations: list[float] = []
         # [RESOURCES] sink: pool of sinks possible to allow multiple sinks in one environment
         # [PERHAPS CHANGED LATER]
         # currently only one sink out of the pool is chosen because jobs do not contain
@@ -751,13 +752,14 @@ class InfrastructureManager:
             resource.initialise()
 
     def finalise(self) -> None:
-        # set end state for each resource object to calculate the right time amounts
         for prod_area in self.prod_areas.values():
             prod_area.finalise()
         for station_group in self.station_groups.values():
             station_group.finalise()
         for resource in self.resources.values():
             resource.finalise()
+            if isinstance(resource, ProcessingStation):
+                self.final_utilisations.append(resource.stat_monitor.utilisation)
         loggers.infstrct.info(
             'Successful finalisation of the state information for all resource objects.'
         )
@@ -2581,6 +2583,9 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         self.logic_queue = salabim.Queue(name=queue_name, env=self.env, monitor=False)
         # currently available jobs on that resource
         self.contents: dict[LoadID, Job] = {}
+        # currently processed job
+        self.current_job: Job | None = None
+        self.current_op: Operation | None = None
         # [STATS] additional information
         # number of inputs/outputs
         self.num_inputs: int = 0
@@ -2806,6 +2811,10 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         dispatcher.update_job_state(job=job, state=SimStatesCommon.IDLE)
         # [STATS:InfrStructObj] count number of outputs
         self.num_outputs += 1
+        # [CONTENT] remove content
+        self.remove_content(job=job)
+        self.current_job = None
+        self.current_op = None
 
         loggers.prod_stations.debug(
             'From [%s] Updated states and placed job at %s',
@@ -2833,6 +2842,8 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # request job and its time characteristics from associated queue
         yield self.sim_control.hold(0, priority=self.sim_get_prio)
         job = dispatcher.request_job_sequencing(req_obj=self)
+        self.current_job = job
+        self.current_op = job.current_op
         # update time characteristics of the infrastructure object
         # contains additional checks if the target values are allowed
         if job.current_proc_time is None:
@@ -3167,7 +3178,7 @@ class ProcessingStation(InfrastructureObject):
             )
             _ = yield from self.put_job(job=job)
             # [CONTENT:ProdStation] remove content
-            self.remove_content(job=job)
+            # self.remove_content(job=job)
 
     @override
     def post_process(self) -> None:
@@ -3522,6 +3533,7 @@ class Source(InfrastructureObject):
                 planned_ending_date=job_gen_info.dates.ending_planned,
                 current_state=job_gen_info.current_state,
             )
+            self.add_content(job=job)
 
             loggers.sources.debug(
                 '[SOURCE: %s] Job target station group: %s',
@@ -3714,7 +3726,7 @@ class Operation:
 
     def __repr__(self) -> str:
         return (
-            f'Operation(ProcTime: {self.proc_time}, '
+            f'Operation(OrderTime: {self.order_time}, ProcTime: {self.proc_time}, '
             f'ExecutionSystemID: {self._exec_system_identifier}, '
             f'SGI: {self._target_station_group_identifier})'
         )

@@ -98,6 +98,9 @@ class Agent(ABC):
         )
 
     @abstractmethod
+    def activate(self) -> None: ...
+
+    @abstractmethod
     def request_decision(self) -> None: ...
 
     @abstractmethod
@@ -138,13 +141,6 @@ class AllocationAgent(Agent):
         self.state_times_last: dict[SystemID, StateTimes] = {}
         self.state_times_current: dict[SystemID, StateTimes] = {}
         self.utilisations: dict[SystemID, float] = {}
-
-        for station in self.assoc_proc_stations:
-            self.state_times_last[station.system_id] = station.stat_monitor.state_times.copy()
-            self.state_times_current[station.system_id] = (
-                station.stat_monitor.state_times.copy()
-            )
-            self.utilisations[station.system_id] = 0.0
 
         # RL related properties
         self.feat_vec: npt.NDArray[np.float32] | None = None
@@ -216,6 +212,15 @@ class AllocationAgent(Agent):
             only_processing_stations=True
         )
 
+    @override
+    def activate(self) -> None:
+        for station in self.assoc_proc_stations:
+            self.state_times_last[station.system_id] = station.stat_monitor.state_times.copy()
+            self.state_times_current[station.system_id] = (
+                station.stat_monitor.state_times.copy()
+            )
+            self.utilisations[station.system_id] = 0.0
+
     @staticmethod
     def calc_util_state_time_diff(
         state_times_last: StateTimes,
@@ -261,7 +266,70 @@ class AllocationAgent(Agent):
         loggers.agents.debug(
             '[AllocationAgent] Current OP for agent >>%s<<: %s', self, self._current_op
         )
+        # TODO change: only update relevant stations of station group
+        assert self.current_op is not None, 'Current OP must not be >>None<<'
+        relevant_stat_group = self.current_op.target_station_group
+        assert relevant_stat_group is not None
+        relevant_stations = relevant_stat_group.assoc_proc_stations
+        # TODO check need for independent initialisation of state times
+        # TODO (first decision in respective station group)
+        for station in relevant_stations:
+            sys_id = station.system_id
+            self.state_times_last[sys_id] = self.state_times_current[sys_id].copy()
+            self.state_times_current[sys_id] = station.stat_monitor.state_times.copy()
+            # calculate difference between last and current for each station
+            # calculate utilisation (difference based) for each station
+            loggers.agents.debug(
+                (
+                    '[AllocationAgent] State times for SystemID %d is - \n\t  '
+                    ' last: %s, \n\tcurrent: %s'
+                ),
+                sys_id,
+                self.state_times_last[sys_id],
+                self.state_times_current[sys_id],
+            )
+            utilisation = self.calc_util_state_time_diff(
+                state_times_last=self.state_times_last[sys_id],
+                state_times_current=self.state_times_current[sys_id],
+            )
+            self.utilisations[sys_id] = utilisation
+            loggers.agents.debug(
+                '[AllocationAgent] Utilisation for SystemID %d is %.4f', sys_id, utilisation
+            )
 
+        loggers.agents.debug(
+            '[AllocationAgent] Utilisation dict for agent >>%s<<: %s', self, self.utilisations
+        )
+
+        # build feature vector
+        self.feat_vec = self.build_feat_vec(job=job)
+
+        loggers.agents.debug(
+            '[REQUEST Agent %s]: built FeatVec at %s', self, self.env.t_as_dt()
+        )
+        loggers.agents.debug('[Agent %s]: Feature Vector: %s', self, self.feat_vec)
+
+    # @override
+    def request_decision_backup(
+        self,
+        job: Job,
+        op: Operation,
+    ) -> None:
+        # indicator that request is being made
+        self.set_dispatching_signal(reset=False)
+
+        # remember relevant jobs
+        if self.current_job is None or job != self.current_job:
+            self._last_job = self._current_job
+            self._current_job = job
+        if self.current_op is None or op != self._current_op:
+            self._last_op = self._current_op
+            self._current_op = op
+
+        loggers.agents.debug(
+            '[AllocationAgent] Current OP for agent >>%s<<: %s', self, self._current_op
+        )
+        # TODO change: only update relevant stations of station group
         for station in self.assoc_proc_stations:
             sys_id = station.system_id
             self.state_times_last[sys_id] = self.state_times_current[sys_id].copy()
@@ -269,7 +337,10 @@ class AllocationAgent(Agent):
             # calculate difference between last and current for each station
             # calculate utilisation (difference based) for each station
             loggers.agents.debug(
-                '[AllocationAgent] State times for SystemID %d is - \n\t   last: %s, \n\tcurrent: %s',
+                (
+                    '[AllocationAgent] State times for SystemID %d is - \n\t  '
+                    ' last: %s, \n\tcurrent: %s'
+                ),
                 sys_id,
                 self.state_times_last[sys_id],
                 self.state_times_current[sys_id],
@@ -389,7 +460,7 @@ class AllocationAgent(Agent):
             # calc reward based on feasible action chosen and utilisation,
             # but based on target station group
             # use last OP because current one already set
-            op_rew = self._last_op
+            op_rew = self.last_op
 
             if op_rew is None:
                 raise ValueError(

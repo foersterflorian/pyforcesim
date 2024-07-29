@@ -114,9 +114,11 @@ def callback(locals, *_):
     episode_num = episode_counters[0]
 
     cycle_time = env.cycle_time
+    mean_utilisation = env.sim_utilisation
     title = (
         f'Gantt Chart<br>Model(Algo: {ALGO_TYPE}, Timesteps: '
-        f'{TIMESTEPS})<br>ExpType: {ROOT_EXP_TYPE}, cycle time: {cycle_time}'
+        f'{TIMESTEPS})<br>ExpType: {ROOT_EXP_TYPE}, cycle time: {cycle_time}, '
+        f'mean util: {mean_utilisation}'
     )
     title_reward = f'<br>Episode: {episode_num+1}, Cum Reward: {cum_reward:.4f}'
     title_chart = title + title_reward
@@ -346,7 +348,8 @@ def use_validation_agent():
         all_episode_rewards.append(sum(episode_rewards))
         print(all_episode_rewards)
 
-    print(f'{episode_actions=}')
+    # print(f'{episode_actions=}')
+    print(f'>> {env.cycle_time=}, {env.sim_utilisation=}')
 
     mean_episode_reward = np.mean(all_episode_rewards)
     print(f'Mean reward: {mean_episode_reward:.2f} - Num episodes: {num_episodes}')
@@ -408,12 +411,12 @@ def main() -> None:
         category=UserWarning,
         message=r'^[\s]*.*to get variables from other wrappers is deprecated.*$',
     )
-    test()
+    # test()
     # test_val()
     # benchmark()
     # test_actions()
     print('-----------------------------------\n############################')
-    # use_validation_agent()
+    use_validation_agent()
 
 
 if __name__ == '__main__':

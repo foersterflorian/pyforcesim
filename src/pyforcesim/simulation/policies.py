@@ -231,6 +231,27 @@ class LoadTimePolicy(AllocationPolicy):
         return proc_min
 
 
+class LoadTimeRemainingPolicy(AllocationPolicy):
+    @override
+    def apply(
+        self,
+        items: Iterable[ProcessingStation],
+    ) -> ProcessingStation:
+        proc_min = min(items, key=attrgetter('stat_monitor.WIP_load_time_remaining'))
+        station_group = self.get_station_group(proc_min)
+        min_val_procs = [
+            proc
+            for proc in items
+            if (
+                proc.stat_monitor.WIP_load_time_remaining
+                == proc_min.stat_monitor.WIP_load_time_remaining
+            )
+        ]
+        proc_min = self.load_balancing(station_group, min_val_procs)
+
+        return proc_min
+
+
 class LoadJobsPolicy(AllocationPolicy):
     @override
     def apply(

@@ -225,15 +225,15 @@ class Monitor:
 
         # Utilisation
         # if hasattr(self, 'utilisation') and self.time_total.total_seconds() > 0:
-        if hasattr(self, 'utilisation') and self.time_non_helpers.total_seconds() > 0:
-            # self.utilisation = self.time_utilisation / self.time_total
-            self.utilisation = self.time_utilisation / self.time_non_helpers
-            loggers.monitors.debug(
-                'Utilisation of %s: %.3f at %s',
-                self.target_object,
-                self.utilisation,
-                self.env.t_as_dt(),
-            )
+        # if hasattr(self, 'utilisation') and self.time_non_helpers.total_seconds() > 0:
+        #     # self.utilisation = self.time_utilisation / self.time_total
+        #     self.utilisation = self.time_utilisation / self.time_non_helpers
+        #     loggers.monitors.debug(
+        #         'Utilisation of %s: %.3f at %s',
+        #         self.target_object,
+        #         self.utilisation,
+        #         self.env.t_as_dt(),
+        #     )
 
     def state_durations_as_df(self) -> DataFrame:
         """Calculates absolute and relative state durations at the current time
@@ -536,12 +536,15 @@ class InfStructMonitor(Monitor):
 
         # resource KPIs
         self.utilisation: float = 0.0
+        self.time_op_processed: Timedelta = Timedelta()
+        self.time_op_remaining: Timedelta = Timedelta()
 
         # logistic objective values
         self.WIP_load_time: Timedelta = Timedelta()
         self._WIP_load_time_last: Timedelta = Timedelta()
         self.WIP_load_num_jobs: int = 0
         self._WIP_load_num_jobs_last: int = 0
+        self.WIP_load_time_remaining: Timedelta = Timedelta()
 
     @property
     def wei_avg_WIP_level_time(self) -> Timedelta | None:
@@ -558,6 +561,52 @@ class InfStructMonitor(Monitor):
     @property
     def WIP_num_db(self) -> DataFrame:
         return self._WIP_num_db
+
+    @override
+    def calc_KPI(self) -> None:
+        """calculates different KPIs at any point in time"""
+        super().calc_KPI()
+        # utilisation
+        if self.time_non_helpers.total_seconds() > 0:
+            self.utilisation = self.time_utilisation / self.time_non_helpers
+            loggers.monitors.debug(
+                'Utilisation of %s: %.3f at %s',
+                self.target_object,
+                self.utilisation,
+                self.env.t_as_dt(),
+            )
+        # currently processed operation
+        target_object = cast('InfrastructureObject', self.target_object)
+        current_op = target_object.current_op
+        if current_op is None:
+            self.time_op_processed = Timedelta()
+            self.time_op_remaining = Timedelta()
+        else:
+            current_sim_time = self.env.t_as_dt()
+            time_op_processed = current_sim_time - current_op.time_actual_starting
+            if time_op_processed < Timedelta():
+                raise ValueError(
+                    f'Already processed time of >>{current_op}<< must not be negative.'
+                )
+            self.time_op_processed = time_op_processed
+            self.time_op_remaining = current_op.order_time - time_op_processed
+
+            loggers.monitors.debug(
+                '[Monitor] [OP >>%s<<] total order time: %s, already processed: %s, remaining: %s at ENV-TIME: %s',
+                current_op,
+                current_op.order_time,
+                self.time_op_processed,
+                self.time_op_remaining,
+                current_sim_time,
+            )
+
+        self.WIP_load_time_remaining = self.WIP_load_time - self.time_op_processed
+        loggers.monitors.debug(
+            '[Monitor] [Target Object >>%s<<] WIP Load Time: %s, WIP Load Time remaining: %s',
+            self.target_object,
+            self.WIP_load_time,
+            self.WIP_load_time_remaining,
+        )
 
     def _track_WIP_level(
         self,
