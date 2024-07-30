@@ -28,7 +28,7 @@ from pyforcesim.types import LoggingLevels as loglevel
 
 # ** logging
 LOGGING_TO_FILE: Final[bool] = True
-LOGGING_LEVEL_BASE: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_BASE: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_ENV: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_GYM_ENV: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_ENV_BUILDER: Final[loglevel] = loglevel.WARNING
@@ -41,8 +41,8 @@ LOGGING_LEVEL_JOBS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_BUFFERS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.ERROR
-LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.DEBUG
-LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_POLICIES: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_DB: Final[loglevel] = loglevel.ERROR

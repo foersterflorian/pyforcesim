@@ -113,6 +113,7 @@ class SimulationEnvironment(salabim.Environment):
         local_timezone: TZInfo = TIMEZONE_CEST,
         debug_dashboard: bool = False,
         seed: int | None = DEFAULT_SEED,
+        check_agent_feasibility: bool = True,
         **kwargs,
     ) -> None:
         """Simulation Environment:
@@ -133,6 +134,7 @@ class SimulationEnvironment(salabim.Environment):
         self.time_unit = time_unit
         self.local_timezone = local_timezone
         self.seed = seed
+        self.check_agent_feasibility = check_agent_feasibility
         # if starting datetime not provided use current time
         if starting_datetime is None:
             starting_datetime = pyf_dt.current_time_tz(cut_microseconds=True)
@@ -1658,8 +1660,12 @@ class Dispatcher:
             agent.action_feasible = self._env.check_feasible_agent_alloc(
                 target_station=target_station, op=op
             )
+            # print(
+            #     f'{agent.action_mask}, {station_idx=}\n{target_station=}, {op=}, \n{agent.assoc_proc_stations=}'
+            # )
             # TODO removal
-            if not agent.action_feasible:
+            # print(f'{self.env.check_agent_feasibility=}')
+            if self.env.check_agent_feasibility and not agent.action_feasible:
                 raise RuntimeError('action not feasible')
             loggers.agents.debug('Action feasibility status: %s', agent.action_feasible)
 

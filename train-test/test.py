@@ -20,17 +20,17 @@ from train import (
     make_env,
 )
 
-from pyforcesim import common
+from pyforcesim import common, loggers
 from pyforcesim.rl.gym_env import JSSEnv
 
 if TYPE_CHECKING:
     from pyforcesim.rl.agents import ValidateAllocationAgent
 
 
-USE_TRAIN_CONFIG: Final[bool] = False
+USE_TRAIN_CONFIG: Final[bool] = True
 NORMALISE_OBS: Final[bool] = True
 NUM_EPISODES: Final[int] = 1
-FILENAME_TARGET_MODEL: Final[str] = '2024-07-25--11-04-51_pyf_sim_PPO_mask_TS-99999'
+FILENAME_TARGET_MODEL: Final[str] = '2024-07-30--14-11-14_pyf_sim_PPO_mask_TS-102401'
 
 model_properties_pattern = re.compile(r'(?:pyf_sim_)([\w]+)_(TS-[\d]+)$')
 matches = model_properties_pattern.search(FILENAME_TARGET_MODEL)
@@ -176,6 +176,7 @@ def test() -> None:
     #         f'- Num episodes: {NUM_EPISODES}'
     #     )
     # )
+    loggers.base.info('[MODEL EVAL] Start evaluation...')
     episode_rewards, episode_lengths = evaluate_policy(
         model=model,
         env=env,
@@ -252,9 +253,14 @@ def test_val() -> None:
         # save episode actions
         with open('actions.pkl', 'wb') as file:
             pickle.dump(episode_actions, file)
-        print(f'[manual] Episode {ep+1}: mean reward = {mean_reward}')
+        print(
+            (
+                f'[manual] Episode {ep+1}: all rewards: {all_episode_rewards}, '
+                f'mean reward = {mean_reward}'
+            )
+        )
 
-    print(f'{episode_actions=}')
+    # print(f'{episode_actions=}')
 
     # print(f'{episode_rewards=}, {episode_lengths=}')
     # global rewards_test
@@ -313,6 +319,76 @@ def test_val() -> None:
 #     print(f'Mean reward: {mean_episode_reward:.4f} - Num episodes: {NUM_EPISODES}')
 
 
+def test_val_agent() -> None:
+    # model
+    pth_vec_norm, model = load_model()
+    type = '1-3-7_VarIdeal_validate'
+    # Env
+    # env = JSSEnv(ROOT_EXP_TYPE)
+    env = make_env(
+        type,
+        tensorboard_path=None,
+        normalise_obs=False,
+        gantt_chart=True,
+        seed=ROOT_RNG_SEED,
+        verify_env=False,
+        sim_randomise_reset=False,
+    )
+    # vec_norm: VecNormalize | None = None
+    if NORMALISE_OBS:
+        if not pth_vec_norm.exists():
+            raise FileNotFoundError(f'VecNormalize info not found under: {pth_vec_norm}')
+        env = VecNormalize.load(str(pth_vec_norm), env)
+        env.training = False
+        print('Normalization info loaded successfully.')
+
+    # model.set_env(env)
+
+    all_episode_rewards = []
+
+    obs = env.reset()
+
+    for ep in range(NUM_EPISODES):
+        episode_rewards = []
+        episode_actions = []
+        episode_rewards_monitor = []
+        done: bool = False
+
+        while not done:
+            # action_masks = get_action_masks(env)
+            # print(action_masks)
+            gym_env = cast(JSSEnv, env.envs[0])
+            val_agent = cast('ValidateAllocationAgent', gym_env.agent)
+            action = val_agent.simulate_decision_making()
+            action = np.array([action], dtype=np.int_)
+            # action, _ = model.predict(
+            #     obs,  # type: ignore
+            #     action_masks=action_masks,
+            #     deterministic=True,
+            # )
+            # print(action)
+            _obs, rewards, dones, infos = env.step(action)
+            reward = rewards[0]
+            done = dones[0]
+            info = infos[0]
+            if done:
+                episode_rewards_monitor.append(info['episode']['r'])
+            episode_rewards.append(reward)
+            episode_actions.append(action.item())
+
+        all_episode_rewards.append(sum(episode_rewards))
+        mean_reward = np.mean(episode_rewards)
+        # save episode actions
+        with open('actions.pkl', 'wb') as file:
+            pickle.dump(episode_actions, file)
+        print(
+            (
+                f'[manual] Episode {ep+1}: all rewards: {all_episode_rewards}, '
+                f'mean reward = {mean_reward}, monitor: {episode_rewards_monitor}'
+            )
+        )
+
+
 def use_validation_agent():
     type = '1-3-7_VarIdeal_validate'
     # type = '1-2-3_VarIdeal_validate'
@@ -323,7 +399,7 @@ def use_validation_agent():
         sim_randomise_reset=False,
         gantt_chart_on_termination=True,
     )
-
+    loggers.base.info('[MODEL EVAL - ValAgent] Start evaluation with validation agent...')
     all_episode_rewards = []
     num_episodes = 1
     obs, _ = env.reset(seed=ROOT_RNG_SEED)
@@ -380,7 +456,7 @@ def test_actions():
             action = val_agent.simulate_decision_making()
             _obs, reward, terminated, truncated, _ = env.step(action)
             episode_rewards.append(reward)
-        print('episode_rew: ', episode_rewards)
+        # print('episode_rew: ', episode_rewards)
         all_episode_rewards.append(sum(episode_rewards))
         print(all_episode_rewards)
 
@@ -411,8 +487,10 @@ def main() -> None:
         category=UserWarning,
         message=r'^[\s]*.*to get variables from other wrappers is deprecated.*$',
     )
-    # test()
+    test()
+    print('-----------------------------------\n############################')
     # test_val()
+    # test_val_agent()
     # benchmark()
     # test_actions()
     print('-----------------------------------\n############################')

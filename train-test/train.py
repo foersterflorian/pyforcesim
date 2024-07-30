@@ -39,11 +39,11 @@ FOLDER_MODEL_SAVEPOINTS: Final[str] = 'models'
 MODEL: Final[str] = 'PPO_mask'
 MODEL_BASE_NAME: Final[str] = f'pyf_sim_{MODEL}'
 NUM_EVAL_EPISODES: Final[int] = 2
-EVAL_FREQ: Final[int] = 2048 * 1
+EVAL_FREQ: Final[int] = 2048 * 2
 REWARD_THRESHOLD: Final[float | None] = None  # -0.01
 TIMESTEPS_PER_ITER: Final[int] = int(2048 * 1)
-ITERATIONS: Final[int] = 28
-ITERATIONS_TILL_SAVE: Final[int] = 4
+ITERATIONS: Final[int] = 50
+ITERATIONS_TILL_SAVE: Final[int] = 5
 
 FILENAME_PRETRAINED_MODEL: Final[str] = '2024-07-23--16-20-52_pyf_sim_PPO_mask_TS-69632'
 
@@ -125,12 +125,18 @@ def make_env(
     verify_env: bool = True,
     sim_randomise_reset: bool = False,
 ) -> Any:
+    sim_check_agent_feasibility: bool = True
+    if verify_env:
+        sim_check_agent_feasibility = False
+
     env = JSSEnv(
         experiment_type=experiment_type,
         gantt_chart_on_termination=gantt_chart,
         seed=seed,
         sim_randomise_reset=sim_randomise_reset,
+        sim_check_agent_feasibility=sim_check_agent_feasibility,
     )
+
     if verify_env:
         check_env(env, warn=True)
         # recreate to ensure that nothing was altered
@@ -239,6 +245,19 @@ def train(
             vec_norm = model.get_vec_normalize_env()
             if vec_norm is not None:
                 vec_norm.save(str(save_path_vec_norm))
+
+    # rename best model and vec normalize info if present
+    save_path_model, save_path_vec_norm = get_save_path_model(
+        num_timesteps=(num_timesteps + 1), base_name=MODEL_BASE_NAME
+    )
+    best_model_file = best_model_save_pth.joinpath('best_model.zip')
+    os.rename(best_model_file, save_path_model)
+
+    best_model_vec_norm: Path | None = None
+    vec_norm = model.get_vec_normalize_env()
+    if vec_norm is not None:
+        best_model_vec_norm = best_model_save_pth.joinpath('best_model_vec_norm.pkl')
+        os.rename(best_model_vec_norm, save_path_vec_norm)
 
     print('------------------')
     print('Training finished.')

@@ -36,7 +36,10 @@ LOG_DATE_FMT: Final[str] = '%Y-%m-%d %H:%M:%S +0000'
 if LOGGING_TO_FILE:
     logging_pth = Path.cwd() / 'logs.txt'
     if logging_pth.exists():
-        os.remove(logging_pth)
+        try:
+            os.remove(logging_pth)
+        except PermissionError:
+            pass
     logging.basicConfig(
         filename=logging_pth,
         filemode='a',

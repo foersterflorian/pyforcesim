@@ -56,11 +56,13 @@ class JSSEnv(gym.Env):
         gantt_chart_on_termination: bool = False,
         seed: int | None = DEFAULT_SEED,
         sim_randomise_reset: bool = False,
+        sim_check_agent_feasibility: bool = True,
     ) -> None:
         super().__init__()
         # super().reset(seed=seed)
         self.seed = seed
         self.sim_randomise_reset = sim_randomise_reset
+        self.sim_check_agent_feasibility = sim_check_agent_feasibility
         # build env
         if experiment_type not in BUILDER_FUNCS:
             raise KeyError(
@@ -72,7 +74,9 @@ class JSSEnv(gym.Env):
         self.exp_type = experiment_type
         self.builder_func = BUILDER_FUNCS[self.exp_type]
         self.sim_env, self.agent = self.builder_func(with_agent=True, seed=self.seed)
-        self.sim_env_last_termination: sim.SimulationEnvironment | None = None
+        self.sim_env.check_agent_feasibility = self.sim_check_agent_feasibility
+        # TODO check removal
+        # self.sim_env_last_termination: sim.SimulationEnvironment | None = None
         # action space for allocation agent is length of all associated
         # infrastructure objects
         n_machines = len(self.agent.assoc_proc_stations)
@@ -149,10 +153,6 @@ class JSSEnv(gym.Env):
         # additional info
         info = {}
 
-        # finalise simulation environment
-        # if self.terminated:
-        #     self.sim_env.finalise()
-
         logger.debug(
             'Step in environment finished. Return: %s, %s, %s, %s',
             observation,
@@ -177,6 +177,7 @@ class JSSEnv(gym.Env):
             self.sim_env, self.agent = self.builder_func(with_agent=True, seed=seed)
         else:
             self.sim_env, self.agent = self.builder_func(with_agent=True, seed=self.seed)
+        self.sim_env.check_agent_feasibility = self.sim_check_agent_feasibility
         logger.debug('Environment re-initialised')
         # evaluate if all needed components are registered
         self.sim_env.check_integrity()

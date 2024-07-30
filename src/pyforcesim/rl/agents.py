@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import statistics
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from datetime import timedelta as Timedelta
 from typing import TYPE_CHECKING, cast
 from typing_extensions import override
@@ -141,6 +141,7 @@ class AllocationAgent(Agent):
         self.state_times_last: dict[SystemID, StateTimes] = {}
         self.state_times_current: dict[SystemID, StateTimes] = {}
         self.utilisations: dict[SystemID, float] = {}
+        self.last_station_group: StationGroup | None = None
 
         # RL related properties
         self.feat_vec: npt.NDArray[np.float32] | None = None
@@ -246,6 +247,54 @@ class AllocationAgent(Agent):
 
         return utilisation
 
+    def set_state_times_last(
+        self,
+        stations: Iterable[ProcessingStation],
+        set_current_as_last: bool = False,
+    ) -> None:
+        for station in stations:
+            sys_id = station.system_id
+            if set_current_as_last:
+                self.state_times_last[sys_id] = station.stat_monitor.state_times.copy()
+            else:
+                self.state_times_last[sys_id] = self.state_times_current[sys_id].copy()
+            loggers.agents.debug(
+                ('[AllocationAgent] State times for SystemID %d is - \n\tlast: %s'),
+                sys_id,
+                self.state_times_last[sys_id],
+            )
+
+    def set_state_times_current(
+        self,
+        stations: Iterable[ProcessingStation],
+    ) -> None:
+        for station in stations:
+            sys_id = station.system_id
+            self.state_times_current[sys_id] = station.stat_monitor.state_times.copy()
+            loggers.agents.debug(
+                ('[AllocationAgent] State times for SystemID %d is - \n\tcurrent: %s'),
+                sys_id,
+                self.state_times_current[sys_id],
+            )
+
+    def calc_utilisation(
+        self,
+    ) -> None:
+        for station in self.assoc_proc_stations:
+            sys_id = station.system_id
+            utilisation = self.calc_util_state_time_diff(
+                state_times_last=self.state_times_last[sys_id],
+                state_times_current=self.state_times_current[sys_id],
+            )
+            self.utilisations[sys_id] = utilisation
+            loggers.agents.debug(
+                '[AllocationAgent] Utilisation for SystemID %d is %.4f', sys_id, utilisation
+            )
+
+        loggers.agents.debug(
+            '[AllocationAgent] Utilisation dict for agent >>%s<<: %s', self, self.utilisations
+        )
+
     @override
     def request_decision(
         self,
@@ -266,40 +315,21 @@ class AllocationAgent(Agent):
         loggers.agents.debug(
             '[AllocationAgent] Current OP for agent >>%s<<: %s', self, self._current_op
         )
+
         # TODO change: only update relevant stations of station group
         assert self.current_op is not None, 'Current OP must not be >>None<<'
         relevant_stat_group = self.current_op.target_station_group
         assert relevant_stat_group is not None
         relevant_stations = relevant_stat_group.assoc_proc_stations
-        # TODO check need for independent initialisation of state times
-        # TODO (first decision in respective station group)
-        for station in relevant_stations:
-            sys_id = station.system_id
-            self.state_times_last[sys_id] = self.state_times_current[sys_id].copy()
-            self.state_times_current[sys_id] = station.stat_monitor.state_times.copy()
-            # calculate difference between last and current for each station
-            # calculate utilisation (difference based) for each station
-            loggers.agents.debug(
-                (
-                    '[AllocationAgent] State times for SystemID %d is - \n\t  '
-                    ' last: %s, \n\tcurrent: %s'
-                ),
-                sys_id,
-                self.state_times_last[sys_id],
-                self.state_times_current[sys_id],
-            )
-            utilisation = self.calc_util_state_time_diff(
-                state_times_last=self.state_times_last[sys_id],
-                state_times_current=self.state_times_current[sys_id],
-            )
-            self.utilisations[sys_id] = utilisation
-            loggers.agents.debug(
-                '[AllocationAgent] Utilisation for SystemID %d is %.4f', sys_id, utilisation
-            )
-
-        loggers.agents.debug(
-            '[AllocationAgent] Utilisation dict for agent >>%s<<: %s', self, self.utilisations
+        current_as_last: bool = False
+        if self.last_station_group is None or self.last_station_group != relevant_stat_group:
+            current_as_last = True
+            self.last_station_group = relevant_stat_group
+        self.set_state_times_last(
+            stations=relevant_stations,
+            set_current_as_last=current_as_last,
         )
+        # self.calc_utilisation(stations=relevant_stations)
 
         # build feature vector
         self.feat_vec = self.build_feat_vec(job=job)
@@ -424,9 +454,11 @@ class AllocationAgent(Agent):
             avail = int(monitor.is_available)
             # WIP_time in hours
             WIP_time = monitor.WIP_load_time / Timedelta(hours=1)
+            WIP_time_remain = monitor.WIP_load_time_remaining / Timedelta(hours=1)
             # tuple: (System SGI of resource obj, availability status,
             # WIP calculated in time units)
-            res_info = (res_SGI, avail, WIP_time)
+            # res_info = (res_SGI, avail, WIP_time)
+            res_info = (res_SGI, avail, WIP_time_remain)
             res_info_arr_current = np.array(res_info, dtype=np.float32)
 
             if i == 0:
@@ -474,18 +506,30 @@ class AllocationAgent(Agent):
             # the corresponding StationGroup
             stations = op_rew.target_station_group.assoc_proc_stations
             loggers.agents.debug('[AllocationAgent] relevant stations: %s', stations)
+            self.set_state_times_current(stations=stations)
+            self.calc_utilisation()
 
             # calculate mean utilisation of all processing stations associated
             # with the corresponding operation and agent's action
             # util_vals: list[float] = [ps.stat_monitor.utilisation for ps in stations]
-            util_vals: list[float] = [
-                self.utilisations[station.system_id] for station in stations
+            util_vals = [self.utilisations[station.system_id] for station in stations]
+            complete_util_vals_all = [
+                station.stat_monitor.utilisation for station in self.assoc_proc_stations
             ]
             loggers.agents.debug('[AllocationAgent] util_vals: %s', util_vals)
-            util_mean = statistics.mean(util_vals)
+            loggers.agents.debug(
+                '[AllocationAgent] util_vals all: %s', complete_util_vals_all
+            )
+            util_mean = np.mean(util_vals).item()
+            complete_util_vals_all_mean = np.mean(complete_util_vals_all).item()
             loggers.agents.debug('[AllocationAgent] util_mean: %.4f', util_mean)
+            loggers.agents.debug(
+                '[AllocationAgent] util_mean_all: %.4f',
+                complete_util_vals_all_mean,
+            )
 
-            reward = util_mean - 1.0
+            # reward = util_mean - 1.0
+            reward = complete_util_vals_all_mean - 1.0
 
         loggers.agents.debug('[AllocationAgent] reward: %.4f', reward)
 
