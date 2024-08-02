@@ -13,7 +13,12 @@ from numpy.random._generator import Generator as NPRandomGenerator
 from pyforcesim import datetime as pyf_dt
 from pyforcesim import loggers
 from pyforcesim.constants import HELPER_STATES, UTIL_PROPERTIES, TimeUnitsTimedelta
-from pyforcesim.types import AgentTasks, StateTimes, SystemID
+from pyforcesim.types import (
+    AgentTasks,
+    LoadDistribution,
+    StateTimes,
+    SystemID,
+)
 
 if TYPE_CHECKING:
     from pyforcesim.simulation.environment import (
@@ -152,6 +157,7 @@ class AllocationAgent(Agent):
         self._action: int | None = None
         self._action_feasible: bool = False
         self.past_action_feasible: bool = False
+        self._chosen_station: ProcessingStation | None = None
         # count number of consecutive non-feasible actions
         self.non_feasible_counter: int = 0
 
@@ -176,6 +182,10 @@ class AllocationAgent(Agent):
         return self._action
 
     @property
+    def chosen_station(self) -> ProcessingStation | None:
+        return self._chosen_station
+
+    @property
     def assoc_proc_stations(self) -> tuple[ProcessingStation, ...]:
         return self._assoc_proc_stations
 
@@ -192,6 +202,7 @@ class AllocationAgent(Agent):
             self.non_feasible_counter = 0
         else:
             self.non_feasible_counter += 1
+        self.past_action_feasible = self._action_feasible
         self._action_feasible = feasible
 
     @property
@@ -402,6 +413,7 @@ class AllocationAgent(Agent):
         action: int,
     ) -> None:
         self._action = action
+        self._chosen_station = self.assoc_proc_stations[action]
         # indicator that request was processed, reset dispatching signal
         self.set_dispatching_signal(reset=True)
 
@@ -453,7 +465,7 @@ class AllocationAgent(Agent):
             # availability: boolean to integer
             avail = int(monitor.is_available)
             # WIP_time in hours
-            WIP_time = monitor.WIP_load_time / Timedelta(hours=1)
+            # WIP_time = monitor.WIP_load_time / Timedelta(hours=1)
             WIP_time_remain = monitor.WIP_load_time_remaining / Timedelta(hours=1)
             # tuple: (System SGI of resource obj, availability status,
             # WIP calculated in time units)
@@ -479,8 +491,128 @@ class AllocationAgent(Agent):
         """
         return self.rng.integers(0, len(self._assoc_proc_stations))
 
+    @staticmethod
+    def load_distribution_diff(
+        ideal: LoadDistribution,
+        actual: LoadDistribution,
+    ) -> float:
+        load_ideal = np.array(tuple(ideal.values()), dtype=np.float64)
+        load_actual = np.array(tuple(actual.values()), dtype=np.float64)
+        score = cast(float, np.sum(np.abs(load_ideal - load_actual))) / 2
+
+        return score
+
     @override
     def calc_reward(self) -> float:
+        # punishment for non-feasible-action ``past_action_feasible``
+        reward: float
+        # use current OP
+        op_rew = self.current_op
+        if op_rew is None:
+            raise ValueError('Tried to calculate reward based on a non-existent operation.')
+        # obtain target station (set during action setting)
+        chosen_station = self.chosen_station
+        if chosen_station is None:
+            raise ValueError(
+                "No station was chosen. Maybe the agent's action was not properly set."
+            )
+        # obtain target SG from respective operation
+        target_station = op_rew.target_station_group
+        if target_station is None:
+            raise ValueError(f'Operation >>{op_rew}<< has no associated station group.')
+        # perform feasibility check + set flag
+        self.action_feasible = self.env.check_feasible_agent_alloc(
+            target_station=chosen_station, op=op_rew
+        )
+        if self.action_feasible:
+            # load_distribution_current = target_station.workload_distribution_current()
+            load_distribution_ideal = target_station.load_distribution_ideal
+            load_distribution_action = target_station.workload_distribution_future(
+                target_system_id=chosen_station.system_id,
+                new_load=op_rew.order_time,
+            )
+            score = self.load_distribution_diff(
+                ideal=load_distribution_ideal, actual=load_distribution_action
+            )
+            reward = (-1) * score
+
+        else:
+            # non-feasible actions
+            # TODO check removal after using action masking
+            reward = -100.0
+
+        # !! procedure changes completely since reward calculations happen
+        # !! right after the action was set
+        # add feasibility check in here, remove from dispatcher call
+        # action feasibility check not working any more because flag is set
+        # at later steps
+        # if self.past_action_feasible:
+        #     # calc reward based on feasible action chosen and utilisation,
+        #     # but based on target station group
+        #     # use last OP because current one already set
+        #     op_rew = self.last_op
+
+        #     if op_rew is None:
+        #         raise ValueError(
+        #             ('Tried to calculate reward based on a non-existent operation')
+        #         )
+        #     elif op_rew.target_station_group is None:
+        #         raise ValueError(
+        #             ('Tried to calculate reward, but no target station group is defined')
+        #         )
+        #     # obtain relevant ProcessingStations contained in
+        #     # the corresponding StationGroup
+        #     stations = op_rew.target_station_group.assoc_proc_stations
+        #     loggers.agents.debug('[AllocationAgent] relevant stations: %s', stations)
+        #     self.set_state_times_current(stations=stations)
+        #     self.calc_utilisation()
+
+        #     # calculate mean utilisation of all processing stations associated
+        #     # with the corresponding operation and agent's action
+        #     # util_vals: list[float] = [ps.stat_monitor.utilisation for ps in stations]
+        #     util_vals = [self.utilisations[station.system_id] for station in stations]
+        #     loggers.agents.debug('[AllocationAgent] util_vals: %s', util_vals)
+        #     # !! new
+        #     complete_util_vals_all = [
+        #         station.stat_monitor.utilisation for station in self.assoc_proc_stations
+        #     ]
+        #     complete_util_vals_stat_group = [
+        #         station.stat_monitor.utilisation for station in stations
+        #     ]
+        #     loggers.agents.debug(
+        #         '[AllocationAgent] util_vals all: %s', complete_util_vals_all
+        #     )
+        #     loggers.agents.debug(
+        #         '[AllocationAgent] util_vals stat group: %s', complete_util_vals_stat_group
+        #     )
+        #     util_mean = np.mean(util_vals).item()
+        #     complete_util_vals_all_mean = np.mean(complete_util_vals_all).item()
+        #     complete_util_vals_stat_group_mean = np.mean(complete_util_vals_stat_group).item()
+        #     loggers.agents.debug('[AllocationAgent] util_mean: %.4f', util_mean)
+        #     loggers.agents.debug(
+        #         '[AllocationAgent] util_mean_all: %.4f',
+        #         complete_util_vals_all_mean,
+        #     )
+        #     loggers.agents.debug(
+        #         '[AllocationAgent] util_mean_stat_group: %.4f',
+        #         complete_util_vals_stat_group_mean,
+        #     )
+
+        #     # reward = util_mean - 1.0
+        #     # reward = complete_util_vals_all_mean - 1.0
+        #     reward = complete_util_vals_stat_group_mean - 1.0
+
+        # else:
+        #     # non-feasible actions
+        #     # TODO check removal after using action masking
+        #     reward = -100.0
+
+        loggers.agents.debug('[AllocationAgent] reward: %.4f', reward)
+
+        return reward
+
+    def calc_reward_backup(self) -> float:
+        # !! old way, using next state s_(t+1) to evaluate a_t instead of s_t
         # punishment for non-feasible-action ``past_action_feasible``
         reward: float = 0.0
 
@@ -513,23 +645,36 @@ class AllocationAgent(Agent):
             # with the corresponding operation and agent's action
             # util_vals: list[float] = [ps.stat_monitor.utilisation for ps in stations]
             util_vals = [self.utilisations[station.system_id] for station in stations]
+            loggers.agents.debug('[AllocationAgent] util_vals: %s', util_vals)
+            # !! new
             complete_util_vals_all = [
                 station.stat_monitor.utilisation for station in self.assoc_proc_stations
             ]
-            loggers.agents.debug('[AllocationAgent] util_vals: %s', util_vals)
+            complete_util_vals_stat_group = [
+                station.stat_monitor.utilisation for station in stations
+            ]
             loggers.agents.debug(
                 '[AllocationAgent] util_vals all: %s', complete_util_vals_all
             )
+            loggers.agents.debug(
+                '[AllocationAgent] util_vals stat group: %s', complete_util_vals_stat_group
+            )
             util_mean = np.mean(util_vals).item()
             complete_util_vals_all_mean = np.mean(complete_util_vals_all).item()
+            complete_util_vals_stat_group_mean = np.mean(complete_util_vals_stat_group).item()
             loggers.agents.debug('[AllocationAgent] util_mean: %.4f', util_mean)
             loggers.agents.debug(
                 '[AllocationAgent] util_mean_all: %.4f',
                 complete_util_vals_all_mean,
             )
+            loggers.agents.debug(
+                '[AllocationAgent] util_mean_stat_group: %.4f',
+                complete_util_vals_stat_group_mean,
+            )
 
             # reward = util_mean - 1.0
-            reward = complete_util_vals_all_mean - 1.0
+            # reward = complete_util_vals_all_mean - 1.0
+            reward = complete_util_vals_stat_group_mean - 1.0
 
         loggers.agents.debug('[AllocationAgent] reward: %.4f', reward)
 

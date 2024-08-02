@@ -33,6 +33,7 @@ from pyforcesim.constants import (
     DEFAULT_DATETIME,
     DEFAULT_SEED,
     INF,
+    MAX_PROCESSING_CAPACITY,
     POLICIES_ALLOC,
     POLICIES_SEQ,
     TIMEZONE_CEST,
@@ -66,11 +67,13 @@ from pyforcesim.types import (
     CustomID,
     Infinite,
     JobGenerationInfo,
+    LoadDistribution,
     LoadID,
     OrderDates,
     OrderTimes,
     PlotlyFigure,
     SalabimTimeUnits,
+    SysIDResource,
     SystemID,
 )
 
@@ -83,6 +86,7 @@ FAIL_DELAY: Final[Timedelta] = pyf_dt.timedelta_from_val(
 )
 
 
+# ** functions
 def filter_processing_stations(
     infstruct_obj_collection: Iterable[InfrastructureObject],
 ) -> list[ProcessingStation]:
@@ -220,7 +224,6 @@ class SimulationEnvironment(salabim.Environment):
         else:
             return self._dispatcher
 
-    # ?? adding to Dispatcher class?
     def check_feasible_agent_alloc(
         self,
         target_station: ProcessingStation,
@@ -1468,6 +1471,7 @@ class Dispatcher:
         next_op = self.get_next_operation(job=job)
         is_agent: bool = False
         agent: AllocationAgent | None = None
+        # TODO: add checks for allocations on execution system level
         if self.alloc_rule == 'AGENT' and next_op is not None:
             if next_op.target_exec_system is None:
                 # should never happen as each operation is registered with
@@ -1507,11 +1511,9 @@ class Dispatcher:
             res_objs=agent.assoc_proc_stations,
             reset_temp=False,
         )
-
         # request decision from agent, sets internal flag
         agent.request_decision(job=job, op=op)
         loggers.dispatcher.debug('[DISPATCHER] Alloc Agent: Decision request made.')
-
         # reset TEMP state
         self.env.infstruct_mgr.res_objs_temp_state(
             res_objs=agent.assoc_proc_stations,
@@ -1650,21 +1652,27 @@ class Dispatcher:
             # agent can choose from all associated stations, not only available ones
             # availability of processing stations should be learned by the agent
             agent = exec_system.alloc_agent
-            avail_stations = agent.assoc_proc_stations
+
             # Feature vector already built when request done to agent
             # get chosen station by tuple index (agent's action)
-            station_idx = agent.action
-            if station_idx is None:
-                raise ValueError('No station index chosen')
-            target_station = avail_stations[station_idx]
-            agent.action_feasible = self._env.check_feasible_agent_alloc(
-                target_station=target_station, op=op
-            )
-            # print(
-            #     f'{agent.action_mask}, {station_idx=}\n{target_station=}, {op=}, \n{agent.assoc_proc_stations=}'
+
+            target_station = agent.chosen_station
+            if target_station is None:
+                raise ValueError(
+                    "No station was chosen. Maybe the agent's action was not properly set."
+                )
+
+            # TODO check removal
+            # avail_stations = agent.assoc_proc_stations
+            # station_idx = agent.action
+            # if station_idx is None:
+            #     raise ValueError('No station index chosen')
+
+            # target_station = avail_stations[station_idx]
+            # agent.action_feasible = self._env.check_feasible_agent_alloc(
+            #     target_station=target_station, op=op
             # )
-            # TODO removal
-            # print(f'{self.env.check_agent_feasibility=}')
+
             if self.env.check_agent_feasibility and not agent.action_feasible:
                 raise RuntimeError('action not feasible')
             loggers.agents.debug('Action feasibility status: %s', agent.action_feasible)
@@ -1738,6 +1746,7 @@ class Dispatcher:
         dates_to_local_tz: bool = False,
         save_img: bool = False,
         save_html: bool = False,
+        auto_open_html: bool = False,
         title: str | None = None,
         filename: str = 'gantt_chart',
         base_folder: str | None = None,
@@ -1895,8 +1904,7 @@ class Dispatcher:
             if fig_json is None:
                 raise ValueError('Could not convert figure to JSON. Returned >>None<<.')
             self.env.ws_con.send(fig_json)
-        else:
-            fig.show()
+
         if save_html:
             save_pth = common.prepare_save_paths(
                 base_folder=base_folder,
@@ -1904,7 +1912,7 @@ class Dispatcher:
                 filename=filename,
                 suffix='html',
             )
-            fig.write_html(save_pth, auto_open=False)
+            fig.write_html(save_pth, auto_open=auto_open_html)
 
         if save_img:
             save_pth = common.prepare_save_paths(
@@ -1970,6 +1978,7 @@ class System(metaclass=ABCMeta):
         self._abstraction_level = abstraction_level
         # collection of all associated ProcessingStations
         self._assoc_proc_stations: tuple[ProcessingStation, ...] = ()
+        self._assoc_proc_stations_sys_ids: frozenset[SystemID]
         self._num_assoc_proc_stations: int = 0
         # indicator if the system contains processing stations
         self._containing_proc_stations: bool = False
@@ -2004,6 +2013,10 @@ class System(metaclass=ABCMeta):
     @property
     def assoc_proc_stations(self) -> tuple[ProcessingStation, ...]:
         return self._assoc_proc_stations
+
+    @property
+    def assoc_proc_stations_sys_ids(self) -> frozenset[SystemID]:
+        return self._assoc_proc_stations_sys_ids
 
     @property
     def num_assoc_proc_station(self) -> int:
@@ -2390,6 +2403,20 @@ class System(metaclass=ABCMeta):
         """
         return max(self.subsystems_ids)
 
+    def _init_proc_station_properties(self) -> None:
+        """initialise associated processing stations, their IDs and total number
+        convenient to handle only processing stations within a container systems, e.g.,
+        ``ProductionArea`` or ``StationGroup``
+        only valid for container systems (``abstraction_level`` > 0)
+        """
+        self._assoc_proc_stations = self.lowest_level_subsystems(
+            only_processing_stations=True
+        )
+        self._assoc_proc_stations_sys_ids = frozenset(
+            (s.system_id for s in self.assoc_proc_stations)
+        )
+        self._num_assoc_proc_stations = len(self._assoc_proc_stations)
+
     @abstractmethod
     def initialise(self) -> None: ...
 
@@ -2453,10 +2480,14 @@ class ProductionArea(System):
     @override
     def initialise(self) -> None:
         # assign associated ProcessingStations and corresponding info
-        self._assoc_proc_stations = self.lowest_level_subsystems(
-            only_processing_stations=True
-        )
-        self._num_assoc_proc_stations = len(self._assoc_proc_stations)
+        # self._assoc_proc_stations = self.lowest_level_subsystems(
+        #     only_processing_stations=True
+        # )
+        # self._assoc_proc_stations_sys_ids = frozenset(
+        #     (s.system_id for s in self.assoc_proc_stations)
+        # )
+        # self._num_assoc_proc_stations = len(self._assoc_proc_stations)
+        self._init_proc_station_properties()
 
     @override
     def finalise(self) -> None:
@@ -2484,8 +2515,9 @@ class StationGroup(System):
             name=name,
             state=state,
         )
-
-        return None
+        # workload distribution
+        self.load_distribution_ideal: LoadDistribution = {}
+        # self.proc_capa_perc_map_current: dict[SysIDResource, float] = {}
 
     @override
     def add_subsystem(
@@ -2515,17 +2547,87 @@ class StationGroup(System):
 
         super().add_subsystem(subsystem=subsystem)
 
+    def _workload_distribution_ideal(self) -> None:
+        stations = self.assoc_proc_stations
+        proc_capas = (s.processing_capacity for s in stations)
+        total_workload_capacity = sum(proc_capas, Timedelta())
+        for stat in stations:
+            self.load_distribution_ideal[stat.system_id] = (
+                stat.processing_capacity / total_workload_capacity
+            )
+
+    def workload_distribution_current(
+        self,
+    ) -> LoadDistribution:
+        proc_capa_perc_map_current: dict[SysIDResource, float] = {}
+        stations = self.assoc_proc_stations
+        workload_current = (s.stat_monitor.WIP_load_time_remaining for s in stations)
+        total_workload_current = sum(workload_current, Timedelta())
+        for s in stations:
+            if total_workload_current > Timedelta():
+                proc_capa_perc_map_current[s.system_id] = (
+                    s.stat_monitor.WIP_load_time_remaining / total_workload_current
+                )
+            else:
+                # no workload --> all machines optimal
+                proc_capa_perc_map_current[s.system_id] = self.load_distribution_ideal[
+                    s.system_id
+                ]
+
+        return proc_capa_perc_map_current
+
+    def workload_distribution_future(
+        self,
+        target_system_id: SystemID,
+        new_load: Timedelta,
+    ) -> LoadDistribution:
+        if target_system_id not in self.assoc_proc_stations_sys_ids:
+            raise ValueError(
+                (
+                    f'No processing station with SystemID '
+                    f'>>{target_system_id}<< associated with {self}.'
+                )
+            )
+
+        proc_capa_perc_map_future: dict[SysIDResource, float] = {}
+        stations = self.assoc_proc_stations
+        workload_current = (s.stat_monitor.WIP_load_time_remaining for s in stations)
+        total_workload_current = sum(workload_current, Timedelta())
+        total_workload_future = total_workload_current + new_load
+
+        for s in stations:
+            if total_workload_future > Timedelta():
+                load_time_remaining = s.stat_monitor.WIP_load_time_remaining
+                if s.system_id == target_system_id:
+                    load_time_remaining += new_load
+                proc_capa_perc_map_future[s.system_id] = (
+                    load_time_remaining / total_workload_future
+                )
+            else:
+                # no workload --> all machines optimal
+                proc_capa_perc_map_future[s.system_id] = self.load_distribution_ideal[
+                    s.system_id
+                ]
+
+        return proc_capa_perc_map_future
+
     @override
     def initialise(self) -> None:
         # assign associated ProcessingStations and corresponding info
-        self._assoc_proc_stations = self.lowest_level_subsystems(
-            only_processing_stations=True
-        )
-        self._num_assoc_proc_stations = len(self._assoc_proc_stations)
+        # self._assoc_proc_stations = self.lowest_level_subsystems(
+        #     only_processing_stations=True
+        # )
+        # self._num_assoc_proc_stations = len(self._assoc_proc_stations)
+        self._init_proc_station_properties()
+        self._workload_distribution_ideal()
 
     @override
     def finalise(self) -> None:
         pass
+
+
+# TODO implement method to generate optimal distribution percentages for each
+# TODO station within a station group
 
 
 # INFRASTRUCTURE COMPONENTS
@@ -2540,11 +2642,13 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         resource_type: SimResourceTypes,
         name: str | None = None,
         setup_time: Timedelta | None = None,
+        processing_capacity: Timedelta = MAX_PROCESSING_CAPACITY,
         capacity: float = INF,
         add_monitor: bool = True,
         current_state: SimStatesCommon | SimStatesStorage = SimStatesCommon.INIT,
     ) -> None:
         self.capacity = capacity
+        self.processing_capacity = self._verify_max_processing_capacity(processing_capacity)
         self._resource_type = resource_type
         # [HIERARCHICAL SYSTEM INFORMATION]
         # contrary to other system types no bucket because a processing station
@@ -2592,10 +2696,11 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # currently processed job
         self.current_job: Job | None = None
         self.current_op: Operation | None = None
+        # TODO remove
         # [STATS] additional information
         # number of inputs/outputs
-        self.num_inputs: int = 0
-        self.num_outputs: int = 0
+        # self.num_inputs: int = 0
+        # self.num_outputs: int = 0
 
         # time characteristics
         self._proc_time: Timedelta = Timedelta.min
@@ -2671,6 +2776,21 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 )
             )
 
+    def _verify_max_processing_capacity(
+        self,
+        processing_capacity: Timedelta,
+    ) -> Timedelta:
+        if processing_capacity > MAX_PROCESSING_CAPACITY:
+            raise ValueError(
+                (
+                    f'Processing capacity of >>{self}<< exceeds '
+                    f'maximum value per 24 hours. Desired capacity: {processing_capacity}, '
+                    f'Maximum allowed: {MAX_PROCESSING_CAPACITY}'
+                )
+            )
+
+        return processing_capacity
+
     def add_content(
         self,
         job: Job,
@@ -2710,22 +2830,26 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         is_agent, alloc_agent = dispatcher.check_alloc_dispatch(job=job)
         target_station: InfrastructureObject
         if is_agent and alloc_agent is None:
-            raise ValueError('Agent is set, but no agent is provided.')
+            raise ValueError('Agent decision is set, but no agent is provided.')
         elif is_agent and alloc_agent is not None:
             # if agent is set, set flags and calculate feature vector
             # as long as there is no feasible action
+            # TODO check feasibility check procedure after changing
+            # TODO reward calculation to happen before next steps
             while not alloc_agent.action_feasible:
                 # ** SET external Gym flag, build feature vector
                 dispatcher.request_agent_alloc(job=job)
                 # ** Break external loop
-                # ** [only STEP] Calc reward in Gym-Env
+                # [only STEP] Calc reward in Gym-Env
                 loggers.agents.debug(
                     '--------------- DEBUG: call before hold(0) at %s, %s',
                     self.env.t(),
                     self.env.t_as_dt(),
                 )
                 yield self.sim_control.hold(0, priority=self.sim_put_prio)
-                # ** make and set decision in Gym-Env --> RESET external Gym flag
+                # ** make and set decision in Gym-Env
+                # ** [CHANGED] calculate reward
+                # ** RESET external Gym flag
                 loggers.agents.debug(
                     '--------------- DEBUG: call after hold(0) at %s, %s',
                     self.env.t(),
@@ -2741,7 +2865,8 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
                 # historic value for reward calculation,
                 # prevent overwrite from ``check_alloc_dispatch``
-                alloc_agent.past_action_feasible = alloc_agent.action_feasible
+                # TODO check removal
+                # alloc_agent.past_action_feasible = alloc_agent.action_feasible
         else:
             # simply obtain target station if no agent decision is needed
             target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
@@ -2784,8 +2909,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 buffer.sim_control.activate()
                 # [CONTENT:Buffer] add content
                 buffer.add_content(job=job)
-                # [STATS:Buffer] count number of inputs
-                buffer.num_inputs += 1
+
                 loggers.prod_stations.debug(
                     'obj = %s \t type of buffer >>%s<< = %s at %s',
                     self,
@@ -2815,8 +2939,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
         # [STATE:Job] successfully placed --> WAITING
         dispatcher.update_job_state(job=job, state=SimStatesCommon.IDLE)
-        # [STATS:InfrStructObj] count number of outputs
-        self.num_outputs += 1
         # [CONTENT] remove content
         self.remove_content(job=job)
         self.current_job = None
@@ -2879,8 +3001,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             if salabim_store is None:
                 raise ValueError('No store object honoured.')
             buffer = self.buffer_by_store_name(salabim_store.name())
-            # [STATS:Buffer] count number of outputs
-            buffer.num_outputs += 1
             # [CONTENT:Buffer] remove content
             buffer.remove_content(job=job)
             # [STATE:Buffer] trigger state setting for target buffer
@@ -2888,8 +3008,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
 
         # RELEVANT INFORMATION BEFORE PROCESSING
         dispatcher.update_job_process_info(job=job, preprocess=True)
-        # [STATS] count number of inputs
-        self.num_inputs += 1
         # [CONTENT] add content
         self.add_content(job=job)
 
@@ -3548,10 +3666,9 @@ class Source(InfrastructureObject):
             )
             # [Call:DISPATCHER]
             dispatcher.release_job(job=job)
-            # [STATS:Source] count number of inputs
-            # (source: generation of jobs or entry in pipeline)
-            # implemented in 'get_job' method which is not executed by source objects
-            self.num_inputs += 1
+            # [STATS:Source] inputs
+            self.stat_monitor.change_WIP_num(remove=False)
+
             loggers.sources.debug(
                 '[SOURCE: %s] Generated %s at %s', self, job, self.env.t_as_dt()
             )
@@ -3562,6 +3679,8 @@ class Source(InfrastructureObject):
             loggers.sources.debug('Placing by source at %s', self.env.t_as_dt())
             target_proc_station = yield from self.put_job(job=job)
             loggers.sources.debug('[SOURCE] PUT JOB with ret = %s', target_proc_station)
+            # [STATS:Source] outputs
+            self.stat_monitor.change_WIP_num(remove=True)
             # [STATE:Source] put in 'WAITING' by 'put_job' method but still processing
             # only 'WAITING' if all jobs are generated
             infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)

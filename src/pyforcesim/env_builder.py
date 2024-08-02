@@ -541,8 +541,8 @@ def standard_env_1_3_7_VarIdeal(
         debug_dashboard=False,
     )
     env.dispatcher.seq_rule = 'FIFO'
-    env.dispatcher.alloc_rule = 'LOAD_TIME'
-    # env.dispatcher.alloc_rule = 'LOAD_TIME_REMAINING'
+    # env.dispatcher.alloc_rule = 'LOAD_TIME'
+    env.dispatcher.alloc_rule = 'LOAD_TIME_REMAINING'
     # source
     area_source = sim.ProductionArea(
         env=env,
@@ -559,7 +559,7 @@ def standard_env_1_3_7_VarIdeal(
         supersystem=group_source,
         custom_identifier=CustomID('source'),
         proc_time=order_time_source,
-        job_generation_limit=None,
+        job_generation_limit=1400,
     )
     # sink
     area_sink = sim.ProductionArea(
@@ -627,14 +627,18 @@ def standard_env_1_3_7_VarIdeal(
     source.register_job_sequence(prod_sequence_PA)
 
     # conditions
-    duration_transient = pyf_dt.timedelta_from_val(val=28, time_unit=TimeUnitsTimedelta.HOURS)
-    # duration_transient = pyf_dt.timedelta_from_val(val=1, time_unit=TimeUnitsTimedelta.WEEKS)
+    # duration_transient = pyf_dt.timedelta_from_val(val=28, time_unit=TimeUnitsTimedelta.HOURS)
+    duration_transient = pyf_dt.timedelta_from_val(val=1, time_unit=TimeUnitsTimedelta.WEEKS)
     # duration_transient = pyf_dt.timedelta_from_val(val=14, time_unit=TimeUnitsTimedelta.DAYS)
+    # duration_transient = pyf_dt.timedelta_from_val(
+    #     val=1, time_unit=TimeUnitsTimedelta.SECONDS
+    # )
     conditions.TransientCondition(env=env, duration_transient=duration_transient)
     # sim_dur = pyf_dt.timedelta_from_val(val=3, time_unit=TimeUnitsTimedelta.WEEKS)
-    sim_dur = pyf_dt.timedelta_from_val(val=12, time_unit=TimeUnitsTimedelta.WEEKS)
+    # sim_dur = pyf_dt.timedelta_from_val(val=12, time_unit=TimeUnitsTimedelta.WEEKS)
+    sim_dur = pyf_dt.timedelta_from_val(val=18, time_unit=TimeUnitsTimedelta.WEEKS)
     # sim_end_date = pyf_dt.dt_with_tz_UTC(2024, 3, 23, 12)
-    conditions.JobGenDurationCondition(env=env, target_obj=source, sim_run_duration=sim_dur)
+    # conditions.JobGenDurationCondition(env=env, target_obj=source, sim_run_duration=sim_dur)
 
     alloc_agent = agents.AllocationAgent(assoc_system=area_prod)
     if with_agent:
@@ -656,8 +660,8 @@ def standard_env_1_3_7_VarIdeal_validate(
         debug_dashboard=False,
     )
     env.dispatcher.seq_rule = 'FIFO'
-    env.dispatcher.alloc_rule = 'LOAD_TIME'
-    # env.dispatcher.alloc_rule = 'LOAD_TIME_REMAINING'
+    # env.dispatcher.alloc_rule = 'LOAD_TIME'
+    env.dispatcher.alloc_rule = 'LOAD_TIME_REMAINING'
     # source
     area_source = sim.ProductionArea(
         env=env,
@@ -674,7 +678,7 @@ def standard_env_1_3_7_VarIdeal_validate(
         supersystem=group_source,
         custom_identifier=CustomID('source'),
         proc_time=order_time_source,
-        job_generation_limit=None,
+        job_generation_limit=1400,
     )
     # sink
     area_sink = sim.ProductionArea(
@@ -742,17 +746,18 @@ def standard_env_1_3_7_VarIdeal_validate(
     source.register_job_sequence(prod_sequence_PA)
 
     # conditions
-    duration_transient = pyf_dt.timedelta_from_val(val=28, time_unit=TimeUnitsTimedelta.HOURS)
-    # duration_transient = pyf_dt.timedelta_from_val(val=1, time_unit=TimeUnitsTimedelta.WEEKS)
+    # duration_transient = pyf_dt.timedelta_from_val(val=28, time_unit=TimeUnitsTimedelta.HOURS)
+    duration_transient = pyf_dt.timedelta_from_val(val=1, time_unit=TimeUnitsTimedelta.WEEKS)
     # duration_transient = pyf_dt.timedelta_from_val(val=14, time_unit=TimeUnitsTimedelta.DAYS)
     # duration_transient = pyf_dt.timedelta_from_val(
     #     val=1, time_unit=TimeUnitsTimedelta.SECONDS
     # )
     conditions.TransientCondition(env=env, duration_transient=duration_transient)
     # sim_dur = pyf_dt.timedelta_from_val(val=3, time_unit=TimeUnitsTimedelta.WEEKS)
-    sim_dur = pyf_dt.timedelta_from_val(val=12, time_unit=TimeUnitsTimedelta.WEEKS)
+    # sim_dur = pyf_dt.timedelta_from_val(val=12, time_unit=TimeUnitsTimedelta.WEEKS)
+    sim_dur = pyf_dt.timedelta_from_val(val=18, time_unit=TimeUnitsTimedelta.WEEKS)
     # sim_end_date = pyf_dt.dt_with_tz_UTC(2024, 3, 23, 12)
-    conditions.JobGenDurationCondition(env=env, target_obj=source, sim_run_duration=sim_dur)
+    # conditions.JobGenDurationCondition(env=env, target_obj=source, sim_run_duration=sim_dur)
 
     alloc_agent = agents.ValidateAllocationAgent(assoc_system=area_prod)
     if with_agent:

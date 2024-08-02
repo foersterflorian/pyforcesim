@@ -41,8 +41,8 @@ MODEL_BASE_NAME: Final[str] = f'pyf_sim_{MODEL}'
 NUM_EVAL_EPISODES: Final[int] = 2
 EVAL_FREQ: Final[int] = 2048 * 2
 REWARD_THRESHOLD: Final[float | None] = None  # -0.01
-TIMESTEPS_PER_ITER: Final[int] = int(2048 * 1)
-ITERATIONS: Final[int] = 50
+TIMESTEPS_PER_ITER: Final[int] = int(2048 * 2)
+ITERATIONS: Final[int] = 500
 ITERATIONS_TILL_SAVE: Final[int] = 5
 
 FILENAME_PRETRAINED_MODEL: Final[str] = '2024-07-23--16-20-52_pyf_sim_PPO_mask_TS-69632'

@@ -118,3 +118,7 @@ class ForeignKeyInfo(TypedDict):
     column: str
     ref_table: str
     ref_column: str
+
+
+SysIDResource: TypeAlias = SystemID
+LoadDistribution: TypeAlias = dict[SysIDResource, float]

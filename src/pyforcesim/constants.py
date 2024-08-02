@@ -1,5 +1,6 @@
 import enum
 from datetime import datetime as Datetime
+from datetime import timedelta as Timedelta
 from datetime import timezone as Timezone
 from typing import Final
 from zoneinfo import ZoneInfo
@@ -109,6 +110,12 @@ DB_INJECTION_PATTERN: Final[str] = (
 
 
 # ** simulation
+# indicator how much workload can be processed per day
+# since a day has 24 hours each infrastructure object can process
+# 24 hours of workload per day at the maximum
+MAX_PROCESSING_CAPACITY: Final[Timedelta] = Timedelta(hours=24)
+
+
 class SimResourceTypes(enum.StrEnum):
     MACHINE = enum.auto()
     STORAGE = enum.auto()

@@ -75,8 +75,6 @@ class JSSEnv(gym.Env):
         self.builder_func = BUILDER_FUNCS[self.exp_type]
         self.sim_env, self.agent = self.builder_func(with_agent=True, seed=self.seed)
         self.sim_env.check_agent_feasibility = self.sim_check_agent_feasibility
-        # TODO check removal
-        # self.sim_env_last_termination: sim.SimulationEnvironment | None = None
         # action space for allocation agent is length of all associated
         # infrastructure objects
         n_machines = len(self.agent.assoc_proc_stations)
@@ -109,8 +107,7 @@ class JSSEnv(gym.Env):
 
         # process control
         self.gantt_chart_on_termination = gantt_chart_on_termination
-
-        # external properties to handle callbacks
+        # external properties to handle callbacks and termination actions
         self.last_gantt_chart: PlotlyFigure | None = None
         self.last_op_db: DataFrame | None = None
         self.cycle_time: Timedelta | None = None
@@ -128,6 +125,13 @@ class JSSEnv(gym.Env):
         # should not be needed any more, empty event list is checked below
         self.agent.set_decision(action=action)
 
+        # TODO place reward calculation here
+        # background: up to this point calculation of rewards always based on
+        # state s_(t+1) for action a_t, but reward should be calculated
+        # for state s_t --> r_t = R(s_t, a_t)
+        # ** Calculate Reward
+        reward = self.agent.calc_reward()
+
         # ** Run till next action is needed
         # execute with provided action till next decision should be made
         while not self.agent.dispatching_signal:
@@ -142,10 +146,10 @@ class JSSEnv(gym.Env):
 
             self.sim_env.step()
 
-        # ** Calculate Reward
+        # Calculate Reward
         # in agent class, not implemented yet
         # call from here
-        reward = self.agent.calc_reward()
+        # reward = self.agent.calc_reward()
         observation = self.agent.feat_vec
         if observation is None:
             raise ValueError('No Observation in step!')

@@ -407,14 +407,14 @@ class StorageMonitor(Monitor):
             self._current_fill_level,
         )
         # if ((self._current_fill_level != len(self)) and (duration > 0.0)) or is_finalise:
-        if self._current_fill_level != self._target_object.fill_level or is_finalise:
+        if self._current_fill_level != self.target_object.fill_level or is_finalise:
             temp1: Series = pd.Series(
                 index=['sim_time', 'duration', 'level'],
                 data=[current_time, duration, self._current_fill_level],
             )
             temp2: DataFrame = temp1.to_frame().T.astype(self._level_db_types)
             self._level_db = pd.concat([self._level_db, temp2], ignore_index=True)
-            self._current_fill_level = self._target_object.fill_level
+            self._current_fill_level = self.target_object.fill_level
             self._fill_level_starting_time = current_time
 
     @override
@@ -545,6 +545,10 @@ class InfStructMonitor(Monitor):
         self.WIP_load_num_jobs: int = 0
         self._WIP_load_num_jobs_last: int = 0
         self.WIP_load_time_remaining: Timedelta = Timedelta()
+        self.num_inputs: int = 0
+        self.num_outputs: int = 0
+        self.WIP_inflow: Timedelta = Timedelta()
+        self.WIP_outflow: Timedelta = Timedelta()
 
     @property
     def wei_avg_WIP_level_time(self) -> Timedelta | None:
@@ -651,6 +655,15 @@ class InfStructMonitor(Monitor):
                 self._WIP_load_num_jobs_last = self.WIP_load_num_jobs
                 self._WIP_num_starting_time = current_time
 
+    def change_WIP_num(
+        self,
+        remove: bool,
+    ) -> None:
+        if remove:
+            self.num_outputs += 1
+        else:
+            self.num_inputs += 1
+
     def change_WIP(
         self,
         job: Job,
@@ -663,12 +676,17 @@ class InfStructMonitor(Monitor):
                 raise ValueError(f'Last order time of job {job} is not set.')
             self.WIP_load_time -= job.last_order_time
             self.WIP_load_num_jobs -= 1
+            self.WIP_outflow += job.last_order_time
+            # self.num_outputs += 1
         else:
             if job.current_order_time is None:
                 raise ValueError(f'Current order time of job {job} is not set.')
             self.WIP_load_time += job.current_order_time
             self.WIP_load_num_jobs += 1
+            self.WIP_inflow += job.current_order_time
+            # self.num_inputs += 1
 
+        self.change_WIP_num(remove=remove)
         self._track_WIP_level()
 
     @override
