@@ -25,10 +25,10 @@ if TYPE_CHECKING:
     from pyforcesim.rl.agents import ValidateAllocationAgent
 
 
-USE_TRAIN_CONFIG: Final[bool] = False
+USE_TRAIN_CONFIG: Final[bool] = True
 NORMALISE_OBS: Final[bool] = True
 NUM_EPISODES: Final[int] = 1
-FILENAME_TARGET_MODEL: Final[str] = '2024-07-30--14-11-14_pyf_sim_PPO_mask_TS-102401'
+FILENAME_TARGET_MODEL: Final[str] = '2024-08-02--20-09-02_pyf_sim_PPO_mask_TS-999999'
 
 model_properties_pattern = re.compile(r'(?:pyf_sim_)([\w]+)_(TS-[\d]+)$')
 matches = model_properties_pattern.search(FILENAME_TARGET_MODEL)
