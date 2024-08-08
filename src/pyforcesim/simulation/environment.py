@@ -13,8 +13,10 @@ from operator import attrgetter
 from typing import (
     Any,
     Final,
+    Generic,
     Literal,
     Self,
+    TypeVar,
     cast,
     overload,
 )
@@ -78,6 +80,7 @@ from pyforcesim.types import (
 )
 
 # ** constants
+T = TypeVar('T', bound='System')
 # definition of routing system level
 EXEC_SYSTEM_TYPE: Final = SimSystemTypes.PRODUCTION_AREA
 # time after a store request is failed
@@ -432,7 +435,7 @@ class InfrastructureManager:
 
     def register_system(
         self,
-        supersystem: System | None,
+        supersystem: ContainerSystem[T] | None,
         system_type: SimSystemTypes,
         obj: System,
         custom_identifier: CustomID,
@@ -551,7 +554,7 @@ class InfrastructureManager:
 
     def set_contain_proc_station(
         self,
-        system: System,
+        system: ContainerSystem,
     ) -> None:
         match system.system_type:
             case SimSystemTypes.PRODUCTION_AREA:
@@ -1068,7 +1071,8 @@ class Dispatcher:
             raise ValueError(
                 'Can not update job info because current operation is not available.'
             )
-        elif preprocess:
+        job.calc_KPI()
+        if preprocess:
             # operation enters Processing Station
             # if first operation of given job add job's starting information
             if job.num_finished_ops == 0:
@@ -1109,7 +1113,7 @@ class Dispatcher:
         job.last_order_time = job.current_order_time
         # current operation information
         if job.open_operations:
-            op = job.open_operations.popleft()
+            op = job.open_operations[0]
             job.current_proc_time = op.proc_time
             job.current_setup_time = op.setup_time
             job.current_order_time = op.order_time
@@ -1119,16 +1123,16 @@ class Dispatcher:
                     raise ValueError(f'Operation {op} has no priority defined.')
                 job.prio = op.prio  # use setter function to catch possible errors
                 self.update_job_db(job=job, property='prio', val=job.prio)
-            if job.op_wise_starting_date:
-                job.time_planned_starting = op.time_planned_starting
-                self.update_job_db(
-                    job=job, property='planned_starting_date', val=job.time_planned_starting
-                )
-            if job.op_wise_ending_date:
-                job.time_planned_ending = op.time_planned_ending
-                self.update_job_db(
-                    job=job, property='planned_ending_date', val=job.time_planned_ending
-                )
+            # if job.op_wise_starting_date:
+            #     job.time_planned_starting = op.time_planned_starting
+            #     self.update_job_db(
+            #         job=job, property='planned_starting_date', val=job.time_planned_starting
+            #     )
+            # if job.op_wise_ending_date:
+            #     job.time_planned_ending = op.time_planned_ending
+            #     self.update_job_db(
+            #         job=job, property='planned_ending_date', val=job.time_planned_ending
+            #     )
         else:
             op = None
             job.current_proc_time = None
@@ -1337,16 +1341,10 @@ class Dispatcher:
         used to signal the finalisation of the given operation
         necessary for time statistics
         """
-        # current_time = self.env.now()
         current_time = self.env.t_as_dt()
-        # [STATE] finished
         op.is_finished = True
-        # [STATS] end + lead time
-        # op.time_exit = current_time
         op.time_actual_ending = current_time
-        # op.lead_time = op.time_exit - op.time_release
         op.lead_time = op.time_actual_ending - op.time_release
-
         # ending times
         if op.time_planned_ending is not None:
             op.ending_date_deviation = op.time_actual_ending - op.time_planned_ending
@@ -1371,6 +1369,8 @@ class Dispatcher:
 
         # [MONITOR] finalise stats
         op.stat_monitor.finalise_stats()
+        # remove from open operations
+        op.job.open_operations.popleft()
 
     ### PROPERTIES ###
     @property
@@ -1599,7 +1599,7 @@ class Dispatcher:
 
     def _choose_target_station_from_exec_system(
         self,
-        exec_system: System,
+        exec_system: ProductionArea,
         op: Operation,
         is_agent: bool,
         target_station_group: StationGroup | None = None,
@@ -1951,7 +1951,7 @@ class System(metaclass=ABCMeta):
     def __init__(
         self,
         env: SimulationEnvironment,
-        supersystem: System | None,
+        supersystem: ContainerSystem | None,
         system_type: SimSystemTypes,
         custom_identifier: CustomID,
         abstraction_level: int,
@@ -1966,22 +1966,22 @@ class System(metaclass=ABCMeta):
         self._system_type = system_type
         self._sim_get_prio = sim_get_prio
         self._sim_put_prio = sim_put_prio
-        # subsystem information
-        self.subsystems: dict[SystemID, System] = {}
-        self.subsystems_ids: set[SystemID] = set()
-        self.subsystems_custom_ids: set[CustomID] = set()
+        # # subsystem information
+        # self.subsystems: dict[SystemID, System] = {}
+        # self.subsystems_ids: set[SystemID] = set()
+        # self.subsystems_custom_ids: set[CustomID] = set()
         # supersystem information
-        self.supersystems: dict[SystemID, System] = {}
+        self.supersystems: dict[SystemID, ContainerSystem] = {}
         self.supersystems_ids: set[SystemID] = set()
         self.supersystems_custom_ids: set[CustomID] = set()
         # number of lower levels, how many levels of subsystems are possible
         self._abstraction_level = abstraction_level
         # collection of all associated ProcessingStations
-        self._assoc_proc_stations: tuple[ProcessingStation, ...] = ()
-        self._assoc_proc_stations_sys_ids: frozenset[SystemID]
-        self._num_assoc_proc_stations: int = 0
-        # indicator if the system contains processing stations
-        self._containing_proc_stations: bool = False
+        # self._assoc_proc_stations: tuple[ProcessingStation, ...] = ()
+        # self._assoc_proc_stations_sys_ids: frozenset[SystemID]
+        # self._num_assoc_proc_stations: int = 0
+        # # indicator if the system contains processing stations
+        # self._containing_proc_stations: bool = False
 
         infstruct_mgr = self.env.infstruct_mgr
         self._system_id, self._name = infstruct_mgr.register_system(
@@ -2011,18 +2011,6 @@ class System(metaclass=ABCMeta):
         return self._env
 
     @property
-    def assoc_proc_stations(self) -> tuple[ProcessingStation, ...]:
-        return self._assoc_proc_stations
-
-    @property
-    def assoc_proc_stations_sys_ids(self) -> frozenset[SystemID]:
-        return self._assoc_proc_stations_sys_ids
-
-    @property
-    def num_assoc_proc_station(self) -> int:
-        return self._num_assoc_proc_stations
-
-    @property
     def sim_get_prio(self) -> int:
         return self._sim_get_prio
 
@@ -2032,8 +2020,6 @@ class System(metaclass=ABCMeta):
         val: int,
     ) -> None:
         self._sim_get_prio = val
-        for subsystem in self.subsystems.values():
-            subsystem.sim_get_prio = val
 
     @property
     def sim_put_prio(self) -> int:
@@ -2045,8 +2031,6 @@ class System(metaclass=ABCMeta):
         val: int,
     ) -> None:
         self._sim_put_prio = val
-        for subsystem in self.subsystems.values():
-            subsystem.sim_put_prio = val
 
     ### REWORK
     def register_agent(
@@ -2150,24 +2134,10 @@ class System(metaclass=ABCMeta):
     def abstraction_level(self) -> int:
         return self._abstraction_level
 
-    @property
-    def containing_proc_stations(self) -> bool:
-        return self._containing_proc_stations
-
-    @containing_proc_stations.setter
-    def containing_proc_stations(
-        self,
-        val: bool,
-    ) -> None:
-        if not isinstance(val, bool):
-            raise TypeError(f'Type of {val} must be boolean, but is {type(val)}')
-
-        self._containing_proc_stations = val
-
     @staticmethod
     def order_systems(
-        systems: Iterable[System],
-    ) -> list[System]:
+        systems: Iterable[T],
+    ) -> list[T]:
         sys_sorted = sorted(list(systems), key=attrgetter('system_id'), reverse=False)
         return sys_sorted
 
@@ -2210,10 +2180,120 @@ class System(metaclass=ABCMeta):
         """
         return set(self.supersystems.values())
 
+    def add_supersystem(
+        self,
+        supersystem: ContainerSystem[T],
+    ) -> None:
+        if supersystem.system_id not in self.supersystems:
+            self.supersystems[supersystem.system_id] = supersystem
+            self.supersystems_ids.add(supersystem.system_id)
+            self.supersystems_custom_ids.add(supersystem.custom_identifier)
+
+    @abstractmethod
+    def initialise(self) -> None: ...
+
+    @abstractmethod
+    def finalise(self) -> None: ...
+
+
+class ContainerSystem(Generic[T], System):
+    def __init__(
+        self,
+        env: monitors.SimulationEnvironment,
+        supersystem: ContainerSystem | None,
+        system_type: SimSystemTypes,
+        custom_identifier: CustomID,
+        abstraction_level: int,
+        name: str | None = None,
+        state: SimStatesCommon | SimStatesStorage | None = None,
+        sim_get_prio: int = 0,
+        sim_put_prio: int = 0,
+    ) -> None:
+        # indicator if the system contains processing stations
+        self._containing_proc_stations: bool = False
+        # subsystem information
+        self.subsystems: dict[SystemID, T] = {}
+        self.subsystems_ids: set[SystemID] = set()
+        self.subsystems_custom_ids: set[CustomID] = set()
+        # collection of all associated ProcessingStations
+        self._assoc_proc_stations: tuple[ProcessingStation, ...] = ()
+        self._assoc_proc_stations_sys_ids: frozenset[SystemID]
+        self._num_assoc_proc_stations: int = 0
+        # workload distribution
+        self.load_distribution_ideal: LoadDistribution = {}
+
+        super().__init__(
+            env=env,
+            supersystem=supersystem,
+            system_type=system_type,
+            custom_identifier=custom_identifier,
+            abstraction_level=abstraction_level,
+            name=name,
+            state=state,
+            sim_get_prio=sim_get_prio,
+            sim_put_prio=sim_put_prio,
+        )
+
+    @property
+    @override
+    def sim_get_prio(self) -> int:
+        return self._sim_get_prio
+
+    @sim_get_prio.setter
+    @override
+    def sim_get_prio(
+        self,
+        val: int,
+    ) -> None:
+        self._sim_get_prio = val
+        for subsystem in self.subsystems.values():
+            subsystem.sim_get_prio = val
+
+    @property
+    @override
+    def sim_put_prio(self) -> int:
+        return self._sim_put_prio
+
+    @sim_put_prio.setter
+    @override
+    def sim_put_prio(
+        self,
+        val: int,
+    ) -> None:
+        self._sim_put_prio = val
+        for subsystem in self.subsystems.values():
+            subsystem.sim_put_prio = val
+
+    @property
+    def assoc_proc_stations(self) -> tuple[ProcessingStation, ...]:
+        return self._assoc_proc_stations
+
+    @property
+    def assoc_proc_stations_sys_ids(self) -> frozenset[SystemID]:
+        return self._assoc_proc_stations_sys_ids
+
+    @property
+    def num_assoc_proc_station(self) -> int:
+        return self._num_assoc_proc_stations
+
+    @property
+    def containing_proc_stations(self) -> bool:
+        return self._containing_proc_stations
+
+    @containing_proc_stations.setter
+    def containing_proc_stations(
+        self,
+        val: bool,
+    ) -> None:
+        if not isinstance(val, bool):
+            raise TypeError(f'Type of {val} must be boolean, but is {type(val)}')
+
+        self._containing_proc_stations = val
+
     def subsystems_as_list(
         self,
         ordered_sys_id: bool = True,
-    ) -> list[System]:
+    ) -> list[T]:
         """output the associated subsystems as list
 
         Returns
@@ -2229,7 +2309,7 @@ class System(metaclass=ABCMeta):
     def subsystems_as_tuple(
         self,
         ordered_sys_id: bool = True,
-    ) -> tuple[System, ...]:
+    ) -> tuple[T, ...]:
         """output the associated subsystems as tuple
 
         Returns
@@ -2239,7 +2319,7 @@ class System(metaclass=ABCMeta):
         """
         return tuple(self.subsystems_as_list(ordered_sys_id=ordered_sys_id))
 
-    def subsystems_as_set(self) -> set[System]:
+    def subsystems_as_set(self) -> set[T]:
         """output the associated subsystems as set
 
         Returns
@@ -2249,18 +2329,9 @@ class System(metaclass=ABCMeta):
         """
         return set(self.subsystems.values())
 
-    def add_supersystem(
-        self,
-        supersystem: System,
-    ) -> None:
-        if supersystem.system_id not in self.supersystems:
-            self.supersystems[supersystem.system_id] = supersystem
-            self.supersystems_ids.add(supersystem.system_id)
-            self.supersystems_custom_ids.add(supersystem.custom_identifier)
-
     def add_subsystem(
         self,
-        subsystem: System,
+        subsystem: T,
     ) -> None:
         """adding a subsystem to the given supersystem
 
@@ -2296,7 +2367,6 @@ class System(metaclass=ABCMeta):
 
         # register association in corresponding database
         infstruct_mgr = self.env.infstruct_mgr
-        # infstruct_mgr.register_system_association(supersystem=self, subsystem=subsystem)
 
         # check if a processing station was added
         if isinstance(subsystem, ProcessingStation):
@@ -2319,7 +2389,6 @@ class System(metaclass=ABCMeta):
         only_processing_stations: Literal[False] = ...,
     ) -> tuple[InfrastructureObject, ...]: ...
 
-    # @lru_cache(maxsize=3)
     def lowest_level_subsystems(
         self,
         only_processing_stations: bool = False,
@@ -2355,9 +2424,10 @@ class System(metaclass=ABCMeta):
         subsystems = self.subsystems_as_set()
 
         while remaining_abstraction_level > 0:
-            temp: set[System] = set()
+            temp: set[T] = set()
 
             for subsystem in subsystems:
+                subsystem = cast('ContainerSystem[T]', subsystem)
                 children = subsystem.subsystems_as_set()
                 temp |= children
 
@@ -2403,6 +2473,9 @@ class System(metaclass=ABCMeta):
         """
         return max(self.subsystems_ids)
 
+    def get_proc_station_availability(self) -> tuple[bool, ...]:
+        return tuple((s.stat_monitor.is_available for s in self.assoc_proc_stations))
+
     def _init_proc_station_properties(self) -> None:
         """initialise associated processing stations, their IDs and total number
         convenient to handle only processing stations within a container systems, e.g.,
@@ -2416,136 +2489,6 @@ class System(metaclass=ABCMeta):
             (s.system_id for s in self.assoc_proc_stations)
         )
         self._num_assoc_proc_stations = len(self._assoc_proc_stations)
-
-    @abstractmethod
-    def initialise(self) -> None: ...
-
-    @abstractmethod
-    def finalise(self) -> None: ...
-
-
-class ProductionArea(System):
-    def __init__(
-        self,
-        env: SimulationEnvironment,
-        custom_identifier: CustomID,
-        sim_get_prio: int,
-        sim_put_prio: int,
-        name: str | None = None,
-        state: SimStatesCommon | SimStatesStorage | None = None,
-    ) -> None:
-        """Group of processing stations which are considered parallel machines"""
-
-        # initialise base class
-        super().__init__(
-            env=env,
-            supersystem=None,
-            system_type=SimSystemTypes.PRODUCTION_AREA,
-            custom_identifier=custom_identifier,
-            abstraction_level=2,
-            name=name,
-            state=state,
-            sim_get_prio=sim_get_prio,
-            sim_put_prio=sim_put_prio,
-        )
-
-    @override
-    def add_subsystem(
-        self,
-        subsystem: System,
-    ) -> None:
-        """adding a subsystem to the given supersystem
-
-        Parameters
-        ----------
-        subsystem : System
-            subsystem object which shall be added to the supersystem
-
-        Raises
-        ------
-        TypeError
-            if a subsystem is not the type this system contains
-        """
-        # type check: only certain subsystems are allowed for each supersystem
-        if not isinstance(subsystem, StationGroup):
-            raise TypeError(
-                (
-                    f'The provided subsystem muste be of type >>StationGroup<<, '
-                    f'but it is {type(subsystem)}.'
-                )
-            )
-
-        super().add_subsystem(subsystem=subsystem)
-
-    @override
-    def initialise(self) -> None:
-        # assign associated ProcessingStations and corresponding info
-        # self._assoc_proc_stations = self.lowest_level_subsystems(
-        #     only_processing_stations=True
-        # )
-        # self._assoc_proc_stations_sys_ids = frozenset(
-        #     (s.system_id for s in self.assoc_proc_stations)
-        # )
-        # self._num_assoc_proc_stations = len(self._assoc_proc_stations)
-        self._init_proc_station_properties()
-
-    @override
-    def finalise(self) -> None:
-        pass
-
-
-class StationGroup(System):
-    def __init__(
-        self,
-        env: SimulationEnvironment,
-        supersystem: ProductionArea,
-        custom_identifier: CustomID,
-        name: str | None = None,
-        state: SimStatesCommon | SimStatesStorage | None = None,
-    ) -> None:
-        """Group of processing stations which are considered parallel machines"""
-
-        # initialise base class
-        super().__init__(
-            env=env,
-            supersystem=supersystem,
-            system_type=SimSystemTypes.STATION_GROUP,
-            custom_identifier=custom_identifier,
-            abstraction_level=1,
-            name=name,
-            state=state,
-        )
-        # workload distribution
-        self.load_distribution_ideal: LoadDistribution = {}
-        # self.proc_capa_perc_map_current: dict[SysIDResource, float] = {}
-
-    @override
-    def add_subsystem(
-        self,
-        subsystem: System,
-    ) -> None:
-        """adding a subsystem to the given supersystem
-
-        Parameters
-        ----------
-        subsystem : System
-            subsystem object which shall be added to the supersystem
-
-        Raises
-        ------
-        TypeError
-            if a subsystem is not the type this system contains
-        """
-        # type check: only certain subsystems are allowed for each supersystem
-        if not isinstance(subsystem, InfrastructureObject):
-            raise TypeError(
-                (
-                    f'The provided subsystem muste be of type >>InfrastructureObject<<, '
-                    f'but it is {type(subsystem)}.'
-                )
-            )
-
-        super().add_subsystem(subsystem=subsystem)
 
     def _workload_distribution_ideal(self) -> None:
         stations = self.assoc_proc_stations
@@ -2613,17 +2556,193 @@ class StationGroup(System):
 
     @override
     def initialise(self) -> None:
-        # assign associated ProcessingStations and corresponding info
-        # self._assoc_proc_stations = self.lowest_level_subsystems(
-        #     only_processing_stations=True
-        # )
-        # self._num_assoc_proc_stations = len(self._assoc_proc_stations)
         self._init_proc_station_properties()
         self._workload_distribution_ideal()
 
     @override
     def finalise(self) -> None:
         pass
+
+
+class ProductionArea(ContainerSystem['StationGroup']):
+    def __init__(
+        self,
+        env: SimulationEnvironment,
+        custom_identifier: CustomID,
+        sim_get_prio: int,
+        sim_put_prio: int,
+        name: str | None = None,
+        state: SimStatesCommon | SimStatesStorage | None = None,
+    ) -> None:
+        """Group of processing stations which are considered parallel machines"""
+
+        # initialise base class
+        super().__init__(
+            env=env,
+            supersystem=None,
+            system_type=SimSystemTypes.PRODUCTION_AREA,
+            custom_identifier=custom_identifier,
+            abstraction_level=2,
+            name=name,
+            state=state,
+            sim_get_prio=sim_get_prio,
+            sim_put_prio=sim_put_prio,
+        )
+
+    @override
+    def add_subsystem(
+        self,
+        subsystem: System,
+    ) -> None:
+        """adding a subsystem to the given supersystem
+
+        Parameters
+        ----------
+        subsystem : System
+            subsystem object which shall be added to the supersystem
+
+        Raises
+        ------
+        TypeError
+            if a subsystem is not the type this system contains
+        """
+        # type check: only certain subsystems are allowed for each supersystem
+        if not isinstance(subsystem, StationGroup):
+            raise TypeError(
+                (
+                    f'The provided subsystem muste be of type >>StationGroup<<, '
+                    f'but it is {type(subsystem)}.'
+                )
+            )
+
+        super().add_subsystem(subsystem=subsystem)
+
+
+class StationGroup(ContainerSystem['InfrastructureObject']):
+    def __init__(
+        self,
+        env: SimulationEnvironment,
+        supersystem: ProductionArea,
+        custom_identifier: CustomID,
+        name: str | None = None,
+        state: SimStatesCommon | SimStatesStorage | None = None,
+    ) -> None:
+        """Group of processing stations which are considered parallel machines"""
+
+        # initialise base class
+        super().__init__(
+            env=env,
+            supersystem=supersystem,
+            system_type=SimSystemTypes.STATION_GROUP,
+            custom_identifier=custom_identifier,
+            abstraction_level=1,
+            name=name,
+            state=state,
+        )
+        # # workload distribution
+        # self.load_distribution_ideal: LoadDistribution = {}
+        # self.proc_capa_perc_map_current: dict[SysIDResource, float] = {}
+
+    @override
+    def add_subsystem(
+        self,
+        subsystem: System,
+    ) -> None:
+        """adding a subsystem to the given supersystem
+
+        Parameters
+        ----------
+        subsystem : System
+            subsystem object which shall be added to the supersystem
+
+        Raises
+        ------
+        TypeError
+            if a subsystem is not the type this system contains
+        """
+        # type check: only certain subsystems are allowed for each supersystem
+        if not isinstance(subsystem, InfrastructureObject):
+            raise TypeError(
+                (
+                    f'The provided subsystem muste be of type >>InfrastructureObject<<, '
+                    f'but it is {type(subsystem)}.'
+                )
+            )
+
+        super().add_subsystem(subsystem=subsystem)
+
+    # def _workload_distribution_ideal(self) -> None:
+    #     stations = self.assoc_proc_stations
+    #     proc_capas = (s.processing_capacity for s in stations)
+    #     total_workload_capacity = sum(proc_capas, Timedelta())
+    #     for stat in stations:
+    #         self.load_distribution_ideal[stat.system_id] = (
+    #             stat.processing_capacity / total_workload_capacity
+    #         )
+
+    # def workload_distribution_current(
+    #     self,
+    # ) -> LoadDistribution:
+    #     proc_capa_perc_map_current: dict[SysIDResource, float] = {}
+    #     stations = self.assoc_proc_stations
+    #     workload_current = (s.stat_monitor.WIP_load_time_remaining for s in stations)
+    #     total_workload_current = sum(workload_current, Timedelta())
+    #     for s in stations:
+    #         if total_workload_current > Timedelta():
+    #             proc_capa_perc_map_current[s.system_id] = (
+    #                 s.stat_monitor.WIP_load_time_remaining / total_workload_current
+    #             )
+    #         else:
+    #             # no workload --> all machines optimal
+    #             proc_capa_perc_map_current[s.system_id] = self.load_distribution_ideal[
+    #                 s.system_id
+    #             ]
+
+    #     return proc_capa_perc_map_current
+
+    # def workload_distribution_future(
+    #     self,
+    #     target_system_id: SystemID,
+    #     new_load: Timedelta,
+    # ) -> LoadDistribution:
+    #     if target_system_id not in self.assoc_proc_stations_sys_ids:
+    #         raise ValueError(
+    #             (
+    #                 f'No processing station with SystemID '
+    #                 f'>>{target_system_id}<< associated with {self}.'
+    #             )
+    #         )
+
+    #     proc_capa_perc_map_future: dict[SysIDResource, float] = {}
+    #     stations = self.assoc_proc_stations
+    #     workload_current = (s.stat_monitor.WIP_load_time_remaining for s in stations)
+    #     total_workload_current = sum(workload_current, Timedelta())
+    #     total_workload_future = total_workload_current + new_load
+
+    #     for s in stations:
+    #         if total_workload_future > Timedelta():
+    #             load_time_remaining = s.stat_monitor.WIP_load_time_remaining
+    #             if s.system_id == target_system_id:
+    #                 load_time_remaining += new_load
+    #             proc_capa_perc_map_future[s.system_id] = (
+    #                 load_time_remaining / total_workload_future
+    #             )
+    #         else:
+    #             # no workload --> all machines optimal
+    #             proc_capa_perc_map_future[s.system_id] = self.load_distribution_ideal[
+    #                 s.system_id
+    #             ]
+
+    #     return proc_capa_perc_map_future
+
+    # @override
+    # def initialise(self) -> None:
+    #     super()._init_proc_station_properties()
+    #     self._workload_distribution_ideal()
+
+    # @override
+    # def finalise(self) -> None:
+    #     pass
 
 
 # TODO implement method to generate optimal distribution percentages for each
@@ -3638,12 +3757,12 @@ class Source(InfrastructureObject):
             # ** prio
             job_gen_info.prio = count
             # ** dates
-            start_date_init = Datetime(2023, 11, 20, hour=6, tzinfo=TIMEZONE_UTC)
-            end_date_init = Datetime(2023, 12, 1, hour=10, tzinfo=TIMEZONE_UTC)
-            order_dates = OrderDates(
-                starting_planned=start_date_init, ending_planned=end_date_init
-            )
-            job_gen_info.dates = order_dates
+            # start_date_init = Datetime(2023, 11, 20, hour=6, tzinfo=TIMEZONE_UTC)
+            # end_date_init = Datetime(2023, 12, 1, hour=10, tzinfo=TIMEZONE_UTC)
+            # order_dates = OrderDates(
+            #     starting_planned=start_date_init, ending_planned=end_date_init
+            # )
+            # job_gen_info.dates = order_dates
 
             job = Job(
                 dispatcher=dispatcher,
@@ -3801,15 +3920,16 @@ class Operation:
         self.proc_time = proc_time
         self.setup_time = setup_time
         self.order_time = self.proc_time + self.setup_time
+        self.remaining_order_time = self.order_time
         # inter-process time characteristics
         # time of release
         self.time_release = DEFAULT_DATETIME
         # time of first operation starting point
-        self.time_actual_starting = DEFAULT_DATETIME
+        self.time_actual_starting: Datetime | None = None
         # starting date deviation
         self.starting_date_deviation: Timedelta | None = None
         # time of last operation ending point
-        self.time_actual_ending = DEFAULT_DATETIME
+        self.time_actual_ending: Datetime | None = None
         # ending date deviation
         self.ending_date_deviation: Timedelta | None = None
         # lead time
@@ -3837,7 +3957,7 @@ class Operation:
         # registration: only return OpID, other properties directly
         # written by dispatcher method
         # add target station group by station group identifier
-        self.target_exec_system: System | None = None
+        self.target_exec_system: ProductionArea | None = None
         self.target_station_group: StationGroup | None = None
         self.time_creation: Datetime | None = None
 
@@ -3915,6 +4035,33 @@ class Operation:
             self._prio = new_prio
             # REWORK changing OP prio must change job prio but only if op is job's current one
 
+    def _calc_slack(self) -> None:
+        if self.time_planned_ending is not None:
+            env = self.dispatcher.env
+            curr_time = env.t_as_dt()
+            time_till_due = self.time_planned_ending - curr_time
+            self.slack = time_till_due - self.order_time
+
+            loggers.operations.debug('[%s] Calculated slack as %s', self, self.slack)
+
+    def _calc_remaining_order_time(self) -> None:
+        if self.time_actual_starting is not None:
+            env = self.dispatcher.env
+            curr_time = env.t_as_dt()
+            delta = curr_time - self.time_actual_starting
+            self.remaining_order_time = self.order_time - delta
+
+        loggers.operations.debug(
+            '[%s] Calculated remaining order time as %s, total: %s',
+            self,
+            self.remaining_order_time,
+            self.order_time,
+        )
+
+    def calc_KPI(self) -> None:
+        self._calc_slack()
+        self._calc_remaining_order_time()
+
 
 class Job(salabim.Component):
     def __init__(
@@ -3972,7 +4119,8 @@ class Job(salabim.Component):
             # operation-wise defined starting dates
             # datetime validation done in operation class
             op_starting_dates = planned_starting_date
-            self.time_planned_starting = None
+            # obtain info from first OP
+            self.time_planned_starting = planned_starting_date[0]
             # job starting date later set by 'get_next_operation' method
             self.op_wise_starting_date = True
         else:
@@ -3987,7 +4135,8 @@ class Job(salabim.Component):
             # operation-wise defined ending dates
             # datetime validation done in operation class
             op_ending_dates = planned_ending_date
-            self.time_planned_ending = None
+            # obtain info from last OP
+            self.time_planned_ending = planned_ending_date[-1]
             # job ending date later set by 'get_next_operation' method
             self.op_wise_ending_date = True
         else:
@@ -4052,6 +4201,8 @@ class Job(salabim.Component):
         self.total_proc_time = sum(proc_times, Timedelta())
         self.total_setup_time = sum(setup_times, Timedelta())
         self.total_order_time = self.total_proc_time + self.total_setup_time
+        self.remaining_order_time = self.total_order_time
+        self.slack: Timedelta = Timedelta()
 
         # inter-process job state parameters
         # first operation scheduled --> released job
@@ -4064,9 +4215,9 @@ class Job(salabim.Component):
 
         # inter-process time characteristics
         self.time_release = DEFAULT_DATETIME
-        self.time_actual_starting = DEFAULT_DATETIME
+        self.time_actual_starting: Datetime | None = None
         self.starting_date_deviation: Timedelta | None = None
-        self.time_actual_ending = DEFAULT_DATETIME
+        self.time_actual_ending: Datetime | None = None
         self.ending_date_deviation: Timedelta | None = None
         self.lead_time = Timedelta()
         self.time_creation = DEFAULT_DATETIME
@@ -4196,3 +4347,39 @@ class Job(salabim.Component):
             )
         else:
             self._current_resource = obj
+
+    def _calc_slack(self) -> None:
+        if self.time_planned_ending is not None:
+            env = self.dispatcher.env
+            curr_time = env.t_as_dt()
+            time_till_due = self.time_planned_ending - curr_time
+            self.slack = time_till_due - self.remaining_order_time
+
+            loggers.jobs.debug('[%s] Calculated slack as %s', self, self.slack)
+
+    def _calc_remaining_order_time(self) -> None:
+        remaining_order_time: Timedelta = Timedelta()
+        for op in self.open_operations:
+            remaining_order_time += op.remaining_order_time
+
+        self.remaining_order_time = remaining_order_time
+
+        # if self.time_actual_starting is not None and self.current_order_time is not None:
+        #     env = self.dispatcher.env
+        #     curr_time = env.t_as_dt()
+        #     delta = curr_time - self.time_actual_starting
+
+        #     self.remaining_order_time = remaining_order_time
+
+        loggers.operations.debug(
+            '[%s] Calculated remaining order time as %s, total: %s',
+            self,
+            self.remaining_order_time,
+            self.total_order_time,
+        )
+
+    def calc_KPI(self) -> None:
+        for op in self.open_operations:
+            op.calc_KPI()
+        self._calc_slack()
+        self._calc_remaining_order_time()

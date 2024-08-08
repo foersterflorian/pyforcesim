@@ -58,6 +58,8 @@ SalabimTimeUnits: TypeAlias = Literal[
     'milliseconds',
     'microseconds',
 ]
+TimeTillDue: TypeAlias = Timedelta
+DueDate: TypeAlias = Datetime
 
 
 @dataclass(kw_only=True, slots=True, eq=False, match_args=False)

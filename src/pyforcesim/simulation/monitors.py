@@ -21,6 +21,7 @@ from pyforcesim.constants import (
     SimStatesCommon,
     SimStatesStorage,
     TimeUnitsTimedelta,
+    EPSILON,
 )
 from pyforcesim.types import PlotlyFigure
 
@@ -75,7 +76,10 @@ class Monitor:
         self.state_durations: DataFrame | None = None
         # availability indicator
         self._availability_states = enum_str_values_as_frzset(SimStatesAvailability)
-        if self.state_current in self._availability_states:
+        if (
+            self.state_current in self._availability_states
+            or self.state_current == SimStatesCommon.INIT
+        ):
             self.is_available: bool = True
         else:
             self.is_available: bool = False
@@ -436,7 +440,9 @@ class StorageMonitor(Monitor):
         temp1['mul'] = temp1['duration_seconds'] * temp1['level']
         sums: Series = temp1.filter(items=['duration_seconds', 'mul']).sum(axis=0)
         # sums: Series = temp1.sum(axis=0)
-        self._wei_avg_fill_level = cast(float, sums['mul'] / sums['duration_seconds'])
+        self._wei_avg_fill_level = cast(
+            float, sums['mul'] / (sums['duration_seconds'] + EPSILON)
+        )
 
     ### ANALYSE AND CHARTS ###
     def draw_fill_level(
@@ -713,7 +719,7 @@ class InfStructMonitor(Monitor):
         temp1['duration_seconds'] = temp1['duration'].apply(func=lambda x: x.total_seconds())
         temp1['mul'] = temp1['duration_seconds'] * temp1['level_seconds']
         sums: Series = temp1.filter(items=['duration_seconds', 'mul']).sum(axis=0)
-        wei_avg_time_sec: float = sums['mul'] / sums['duration_seconds']
+        wei_avg_time_sec: float = sums['mul'] / (sums['duration_seconds'] + EPSILON)
         self._wei_avg_WIP_level_time = Timedelta(seconds=wei_avg_time_sec)
 
         # post-process WIP num level databases
@@ -729,7 +735,7 @@ class InfStructMonitor(Monitor):
         temp1['duration_seconds'] = temp1['duration'].apply(func=lambda x: x.total_seconds())
         temp1['mul'] = temp1['duration_seconds'] * temp1['level']
         sums: Series = temp1.filter(items=['duration_seconds', 'mul']).sum(axis=0)
-        self._wei_avg_WIP_level_num = sums['mul'] / sums['duration_seconds']
+        self._wei_avg_WIP_level_num = sums['mul'] / (sums['duration_seconds'] + EPSILON)
 
     ### ANALYSE AND CHARTS ###
     def draw_WIP_level(

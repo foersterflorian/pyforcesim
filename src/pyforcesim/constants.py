@@ -38,12 +38,12 @@ LOGGING_LEVEL_INFSTRCT: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_SINKS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_PRODSTATIONS: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_JOBS: Final[loglevel] = loglevel.ERROR
-LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.ERROR
+LOGGING_LEVEL_JOBS: Final[loglevel] = loglevel.DEBUG
+LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_BUFFERS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.DEBUG
+LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_POLICIES: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_DB: Final[loglevel] = loglevel.ERROR
@@ -53,6 +53,7 @@ LOGGING_LEVEL_DB: Final[loglevel] = loglevel.ERROR
 # infinity
 INF: Final[Infinite] = float('inf')
 DEFAULT_SEED: Final[int] = 42
+EPSILON: Final[float] = 1e-8
 
 
 # ** dates and times

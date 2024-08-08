@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
+from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
 from typing import TYPE_CHECKING, cast
 from typing_extensions import override
@@ -15,10 +16,12 @@ from pyforcesim import loggers
 from pyforcesim.constants import SimStatesCommon, SimSystemTypes, TimeUnitsTimedelta
 from pyforcesim.simulation.environment import SimulationEnvironment, SystemID
 from pyforcesim.types import (
+    DueDate,
     JobGenerationInfo,
     OrderDates,
     OrderPriority,
     OrderTimes,
+    TimeTillDue,
 )
 
 if TYPE_CHECKING:
@@ -26,9 +29,21 @@ if TYPE_CHECKING:
         ProductionArea,
         SimulationEnvironment,
         Source,
-        StationGroup,
         SystemID,
     )
+
+
+def calc_due_date(
+    starting_date: Datetime,
+    total_operational_time: Timedelta,
+    factor: float,
+) -> DueDate:
+    if factor < 0.0:
+        raise ValueError('Values smaller than 0 not allowed as factor.')
+    time_till_due = factor * total_operational_time
+    due_date = starting_date + time_till_due
+
+    return due_date
 
 
 # order time management
@@ -289,7 +304,7 @@ class ConstantSequenceSinglePA(SequenceSinglePA):
             job generation infos
         """
         # request StationGroupIDs by ProdAreaID in StationGroup database
-        stat_groups = cast(tuple['StationGroup'], self.prod_area.subsystems_as_tuple())
+        stat_groups = self.prod_area.subsystems_as_tuple()
 
         loggers.loads.debug('stat_groups: %s', stat_groups)
 
@@ -351,6 +366,7 @@ class VariableSequenceSinglePA(SequenceSinglePA):
         delta_percentage: float,
         delta_lower_bound: float = 0.1,
         delta_upper_bound: float = 0.5,
+        due_date_factor: float = 1.0,
     ) -> Iterator[JobGenerationInfo]:
         """Generates a variable sequence of job generation infos,
         evenly distributed within a given percentage range where the middle
@@ -391,8 +407,7 @@ class VariableSequenceSinglePA(SequenceSinglePA):
         lower_percentage = 1.0 - delta_percentage
         upper_percentage = 1.0 + delta_percentage
         # request StationGroupIDs by ProdAreaID in StationGroup database
-        stat_groups = cast(tuple['StationGroup'], self.prod_area.subsystems_as_tuple())
-
+        stat_groups = self.prod_area.subsystems_as_tuple()
         loggers.loads.debug('stat_groups: %s', stat_groups)
 
         # number of all processing stations in associated production area
@@ -432,6 +447,19 @@ class VariableSequenceSinglePA(SequenceSinglePA):
                         td=setup_time, round_to_next_seconds=60
                     )
                     proc_time = overall_time - setup_time
+                    # TODO add OrderDates
+                    # planned starting time = current time
+                    # planned ending = calculated due date
+                    curr_time = self.env.t_as_dt()
+                    due_date = calc_due_date(
+                        starting_date=curr_time,
+                        total_operational_time=overall_time,
+                        factor=due_date_factor,
+                    )
+                    order_dates = OrderDates(
+                        starting_planned=[curr_time],
+                        ending_planned=[due_date],
+                    )
                     # StationGroupID
                     stat_group_id = stat_group.system_id
                     job_gen_info = JobGenerationInfo(
@@ -439,7 +467,7 @@ class VariableSequenceSinglePA(SequenceSinglePA):
                         execution_systems=[self._prod_area_id],
                         station_groups=[stat_group_id],
                         order_time=OrderTimes(proc=[proc_time], setup=[setup_time]),
-                        dates=OrderDates(),
+                        dates=order_dates,
                         prio=None,
                         current_state=SimStatesCommon.INIT,
                     )
