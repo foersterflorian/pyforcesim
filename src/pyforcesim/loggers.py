@@ -1,6 +1,7 @@
 """provides logger objects for the pyforcesim package"""
 
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -14,12 +15,14 @@ from pyforcesim.constants import (
     LOGGING_LEVEL_DB,
     LOGGING_LEVEL_DISPATCHER,
     LOGGING_LEVEL_ENV,
+    LOGGING_LEVEL_ENV_BUILDER,
     LOGGING_LEVEL_GYM_ENV,
     LOGGING_LEVEL_INFSTRCT,
     LOGGING_LEVEL_JOBS,
     LOGGING_LEVEL_LOADS,
     LOGGING_LEVEL_MONITORS,
     LOGGING_LEVEL_OPERATIONS,
+    LOGGING_LEVEL_POLICIES,
     LOGGING_LEVEL_PRODSTATIONS,
     LOGGING_LEVEL_SINKS,
     LOGGING_LEVEL_SOURCES,
@@ -32,6 +35,11 @@ LOG_FMT: Final[str] = ' %(asctime)s | pyfsim:%(module)s:%(levelname)s | %(messag
 LOG_DATE_FMT: Final[str] = '%Y-%m-%d %H:%M:%S +0000'
 if LOGGING_TO_FILE:
     logging_pth = Path.cwd() / 'logs.txt'
+    if logging_pth.exists():
+        try:
+            os.remove(logging_pth)
+        except PermissionError:
+            pass
     logging.basicConfig(
         filename=logging_pth,
         filemode='a',
@@ -69,6 +77,8 @@ agents = logging.getLogger('pyforcesim.agents')
 agents.setLevel(LOGGING_LEVEL_AGENTS)
 conditions = logging.getLogger('pyforcesim.conditions')
 conditions.setLevel(LOGGING_LEVEL_CONDITIONS)
+policies = logging.getLogger('pyforcesim.policies')
+policies.setLevel(LOGGING_LEVEL_POLICIES)
 databases = logging.getLogger('pyforcesim.databases')
 databases.setLevel(LOGGING_LEVEL_DB)
 
@@ -79,3 +89,5 @@ operations.setLevel(LOGGING_LEVEL_OPERATIONS)
 
 gym_env = logging.getLogger('pyforcesime.gym_env')
 gym_env.setLevel(LOGGING_LEVEL_GYM_ENV)
+env_builder = logging.getLogger('pyforcesime.env_builder')
+env_builder.setLevel(LOGGING_LEVEL_ENV_BUILDER)

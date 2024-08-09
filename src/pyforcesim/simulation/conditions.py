@@ -12,6 +12,7 @@ from pyforcesim.errors import ViolationStartingConditionError
 from pyforcesim.simulation.base_components import SimulationComponent
 
 if TYPE_CHECKING:
+    from pyforcesim.rl.agents import Agent
     from pyforcesim.simulation.environment import (
         SimulationEnvironment,
         Source,
@@ -96,7 +97,7 @@ class TransientCondition(BaseCondition):
         loggers.conditions.debug(
             '[CONDITION %s]: Event list of env: %s', self, self.env._event_list
         )
-        self.env.is_transient_cond = False
+        self.env.set_end_transient_phase()
         loggers.conditions.info(
             (
                 '[CONDITION %s]: Transient Condition over. Set >>is_transient_cond<< '
@@ -175,10 +176,13 @@ class TriggerAgentCondition(BaseCondition):
     def __init__(
         self,
         env: SimulationEnvironment,
+        agent: Agent,
         name: str = 'TriggerAgentCondition',
     ) -> None:
         # initialise base class
         super().__init__(env=env, name=name)
+
+        self.agent = agent
 
     def pre_process(self) -> None:
         # if self.env.transient_cond_state.get():
@@ -201,6 +205,8 @@ class TriggerAgentCondition(BaseCondition):
         loggers.conditions.debug(
             '[CONDITION %s]: Event list of env: %s', self, self.env._event_list
         )
+        # activate agent (trigger needed preparation steps)
+        self.agent.activate()
 
     def post_process(self) -> None:
         pass

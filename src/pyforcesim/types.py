@@ -5,12 +5,22 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
-from typing import TYPE_CHECKING, Any, Literal, NewType, TypeAlias, TypedDict
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    NewType,
+    Protocol,
+    TypeAlias,
+    TypedDict,
+)
 
 from plotly.graph_objs._figure import Figure
 
 if TYPE_CHECKING:
     from pyforcesim.constants import SimStatesCommon
+    from pyforcesim.rl import agents
+    from pyforcesim.simulation import environment as sim
 
 
 # ** logging
@@ -35,9 +45,25 @@ FlattableObject: TypeAlias = (
 SystemID = NewType('SystemID', int)
 CustomID = NewType('CustomID', str)
 LoadID = NewType('LoadID', int)
+MonitorObjects: TypeAlias = (
+    'sim.InfrastructureObject | sim.StorageLike | sim.Job | sim.Operation'
+)
+LoadObjects: TypeAlias = 'sim.Job | sim.Operation'
 OrderPriority: TypeAlias = int
 Infinite: TypeAlias = float
 StateTimes: TypeAlias = dict[str, Timedelta]
+SalabimTimeUnits: TypeAlias = Literal[
+    'years',
+    'weeks',
+    'days',
+    'hours',
+    'minutes',
+    'seconds',
+    'milliseconds',
+    'microseconds',
+]
+TimeTillDue: TypeAlias = Timedelta
+DueDate: TypeAlias = Datetime
 
 
 @dataclass(kw_only=True, slots=True, eq=False, match_args=False)
@@ -63,6 +89,15 @@ class JobGenerationInfo:
     current_state: SimStatesCommon
 
 
+# ** simulation environments
+class EnvBuilderFunc(Protocol):
+    def __call__(
+        self,
+        with_agent: bool = ...,
+        seed: int | None = ...,
+    ) -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]: ...
+
+
 # ** agents
 AgentTasks: TypeAlias = Literal['SEQ', 'ALLOC']
 
@@ -71,6 +106,7 @@ AgentTasks: TypeAlias = Literal['SEQ', 'ALLOC']
 PandasDateColParseInfo: TypeAlias = dict[str, dict[str, bool]]
 PandasDatetimeCols: TypeAlias = list[str]
 PandasTimedeltaCols: TypeAlias = list[str]
+# TODO check removal
 DBColumnName: TypeAlias = str
 DBColumnType: TypeAlias = str
 DBColumnDeclaration: TypeAlias = dict[DBColumnName, DBColumnType]
@@ -88,3 +124,7 @@ class ForeignKeyInfo(TypedDict):
     column: str
     ref_table: str
     ref_column: str
+
+
+SysIDResource: TypeAlias = SystemID
+LoadDistribution: TypeAlias = dict[SysIDResource, float]

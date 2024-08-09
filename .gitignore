@@ -13,6 +13,7 @@ input/
 output/
 
 # results are user- and data-specific
+research/
 results/
 *.zip
 tensorboard/
@@ -21,6 +22,10 @@ models/
 # temp files and logs
 file_system_backend/
 logs*
+
+# prototyping
+prototypes/
+notebooks/
 
 # PDM files
 *.pdm-python

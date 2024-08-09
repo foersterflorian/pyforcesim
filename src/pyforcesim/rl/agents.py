@@ -1,54 +1,65 @@
 from __future__ import annotations
 
-import random
-import statistics
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from datetime import timedelta as Timedelta
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Generic, TypeVar, cast
 from typing_extensions import override
 
 import numpy as np
 import numpy.typing as npt
+from numpy.random._generator import Generator as NPRandomGenerator
 
 from pyforcesim import datetime as pyf_dt
 from pyforcesim import loggers
 from pyforcesim.constants import HELPER_STATES, UTIL_PROPERTIES, TimeUnitsTimedelta
-from pyforcesim.types import AgentTasks, StateTimes, SystemID
+from pyforcesim.types import (
+    AgentTasks,
+    LoadDistribution,
+    StateTimes,
+    SystemID,
+)
 
 if TYPE_CHECKING:
     from pyforcesim.simulation.environment import (
         Job,
         Operation,
         ProcessingStation,
+        ProductionArea,
         SimulationEnvironment,
         StationGroup,
         System,
     )
 
+S = TypeVar('S', bound='System')
 
-class Agent(ABC):
+
+class Agent(Generic[S], ABC):
     def __init__(
         self,
-        assoc_system: System,
+        assoc_system: S,
         agent_task: AgentTasks,
-        seed: int = 42,
+        seed: int | None = None,
     ) -> None:
-        # basic information
         self._agent_task = agent_task
-        # associated system
         self._assoc_system, self._env = assoc_system.register_agent(
             agent=self, agent_task=self._agent_task
         )
-        # dispatching signal: no matter if allocation or sequencing
-        self._dispatching_signal: bool = False
 
-        self._rng = random.Random(seed)
+        if seed is None and self.env.seed is not None:
+            seed = self.env.seed
+        self._seed = seed
+        self._rng = np.random.default_rng(seed=self.seed)
+
+        self._dispatching_signal: bool = False
+        self.num_decisions: int = 0
+        self.cum_reward: float = 0.0
 
     def __str__(self) -> str:
         return f'Agent(type={self._agent_task}, Assoc_Syst_ID={self._assoc_system.system_id})'
 
     @property
-    def assoc_system(self) -> System:
+    def assoc_system(self) -> S:
         return self._assoc_system
 
     @property
@@ -60,8 +71,12 @@ class Agent(ABC):
         return self._env
 
     @property
-    def rng(self) -> random.Random:
+    def rng(self) -> NPRandomGenerator:
         return self._rng
+
+    @property
+    def seed(self) -> int | None:
+        return self._seed
 
     @property
     def dispatching_signal(self) -> bool:
@@ -91,6 +106,9 @@ class Agent(ABC):
         )
 
     @abstractmethod
+    def activate(self) -> None: ...
+
+    @abstractmethod
     def request_decision(self) -> None: ...
 
     @abstractmethod
@@ -103,11 +121,11 @@ class Agent(ABC):
     def calc_reward(self) -> float: ...
 
 
-class AllocationAgent(Agent):
+class AllocationAgent(Agent['ProductionArea']):
     def __init__(
         self,
-        assoc_system: System,
-        seed: int = 42,
+        assoc_system: ProductionArea,
+        seed: int | None = None,
     ) -> None:
         # init base class
         super().__init__(assoc_system=assoc_system, agent_task='ALLOC', seed=seed)
@@ -131,13 +149,7 @@ class AllocationAgent(Agent):
         self.state_times_last: dict[SystemID, StateTimes] = {}
         self.state_times_current: dict[SystemID, StateTimes] = {}
         self.utilisations: dict[SystemID, float] = {}
-
-        for station in self.assoc_proc_stations:
-            self.state_times_last[station.system_id] = station.stat_monitor.state_times.copy()
-            self.state_times_current[station.system_id] = (
-                station.stat_monitor.state_times.copy()
-            )
-            self.utilisations[station.system_id] = 0.0
+        self.last_station_group: StationGroup | None = None
 
         # RL related properties
         self.feat_vec: npt.NDArray[np.float32] | None = None
@@ -148,6 +160,7 @@ class AllocationAgent(Agent):
         self._action: int | None = None
         self._action_feasible: bool = False
         self.past_action_feasible: bool = False
+        self._chosen_station: ProcessingStation | None = None
         # count number of consecutive non-feasible actions
         self.non_feasible_counter: int = 0
 
@@ -172,6 +185,10 @@ class AllocationAgent(Agent):
         return self._action
 
     @property
+    def chosen_station(self) -> ProcessingStation | None:
+        return self._chosen_station
+
+    @property
     def assoc_proc_stations(self) -> tuple[ProcessingStation, ...]:
         return self._assoc_proc_stations
 
@@ -188,6 +205,7 @@ class AllocationAgent(Agent):
             self.non_feasible_counter = 0
         else:
             self.non_feasible_counter += 1
+        self.past_action_feasible = self._action_feasible
         self._action_feasible = feasible
 
     @property
@@ -209,6 +227,15 @@ class AllocationAgent(Agent):
             only_processing_stations=True
         )
 
+    @override
+    def activate(self) -> None:
+        for station in self.assoc_proc_stations:
+            self.state_times_last[station.system_id] = station.stat_monitor.state_times.copy()
+            self.state_times_current[station.system_id] = (
+                station.stat_monitor.state_times.copy()
+            )
+            self.utilisations[station.system_id] = 0.0
+
     @staticmethod
     def calc_util_state_time_diff(
         state_times_last: StateTimes,
@@ -229,12 +256,58 @@ class AllocationAgent(Agent):
             if state in UTIL_PROPERTIES:
                 time_utilisation += time_diff
 
-        # if time_total.total_seconds() > 0:
         if time_non_helpers.total_seconds() > 0:
-            # utilisation = round(time_utilisation / time_total, 4)
             utilisation = round(time_utilisation / time_non_helpers, 4)
 
         return utilisation
+
+    def set_state_times_last(
+        self,
+        stations: Iterable[ProcessingStation],
+        set_current_as_last: bool = False,
+    ) -> None:
+        for station in stations:
+            sys_id = station.system_id
+            if set_current_as_last:
+                self.state_times_last[sys_id] = station.stat_monitor.state_times.copy()
+            else:
+                self.state_times_last[sys_id] = self.state_times_current[sys_id].copy()
+            loggers.agents.debug(
+                ('[AllocationAgent] State times for SystemID %d is - \n\tlast: %s'),
+                sys_id,
+                self.state_times_last[sys_id],
+            )
+
+    def set_state_times_current(
+        self,
+        stations: Iterable[ProcessingStation],
+    ) -> None:
+        for station in stations:
+            sys_id = station.system_id
+            self.state_times_current[sys_id] = station.stat_monitor.state_times.copy()
+            loggers.agents.debug(
+                ('[AllocationAgent] State times for SystemID %d is - \n\tcurrent: %s'),
+                sys_id,
+                self.state_times_current[sys_id],
+            )
+
+    def calc_utilisation(
+        self,
+    ) -> None:
+        for station in self.assoc_proc_stations:
+            sys_id = station.system_id
+            utilisation = self.calc_util_state_time_diff(
+                state_times_last=self.state_times_last[sys_id],
+                state_times_current=self.state_times_current[sys_id],
+            )
+            self.utilisations[sys_id] = utilisation
+            loggers.agents.debug(
+                '[AllocationAgent] Utilisation for SystemID %d is %.4f', sys_id, utilisation
+            )
+
+        loggers.agents.debug(
+            '[AllocationAgent] Utilisation dict for agent >>%s<<: %s', self, self.utilisations
+        )
 
     @override
     def request_decision(
@@ -253,20 +326,81 @@ class AllocationAgent(Agent):
             self._last_op = self._current_op
             self._current_op = op
 
+        loggers.agents.debug(
+            '[AllocationAgent] Current OP for agent >>%s<<: %s', self, self._current_op
+        )
+
+        # TODO change: only update relevant stations of station group
+        assert self.current_op is not None, 'Current OP must not be >>None<<'
+        relevant_stat_group = self.current_op.target_station_group
+        assert relevant_stat_group is not None
+        relevant_stations = relevant_stat_group.assoc_proc_stations
+        current_as_last: bool = False
+        if self.last_station_group is None or self.last_station_group != relevant_stat_group:
+            current_as_last = True
+            self.last_station_group = relevant_stat_group
+        self.set_state_times_last(
+            stations=relevant_stations,
+            set_current_as_last=current_as_last,
+        )
+        # self.calc_utilisation(stations=relevant_stations)
+
+        # build feature vector
+        self.feat_vec = self.build_feat_vec(job=job)
+
+        loggers.agents.debug(
+            '[REQUEST Agent %s]: built FeatVec at %s', self, self.env.t_as_dt()
+        )
+        loggers.agents.debug('[Agent %s]: Feature Vector: %s', self, self.feat_vec)
+
+    # @override
+    def request_decision_backup(
+        self,
+        job: Job,
+        op: Operation,
+    ) -> None:
+        # indicator that request is being made
+        self.set_dispatching_signal(reset=False)
+
+        # remember relevant jobs
+        if self.current_job is None or job != self.current_job:
+            self._last_job = self._current_job
+            self._current_job = job
+        if self.current_op is None or op != self._current_op:
+            self._last_op = self._current_op
+            self._current_op = op
+
+        loggers.agents.debug(
+            '[AllocationAgent] Current OP for agent >>%s<<: %s', self, self._current_op
+        )
+        # TODO change: only update relevant stations of station group
         for station in self.assoc_proc_stations:
             sys_id = station.system_id
             self.state_times_last[sys_id] = self.state_times_current[sys_id].copy()
             self.state_times_current[sys_id] = station.stat_monitor.state_times.copy()
             # calculate difference between last and current for each station
             # calculate utilisation (difference based) for each station
+            loggers.agents.debug(
+                (
+                    '[AllocationAgent] State times for SystemID %d is - \n\t  '
+                    ' last: %s, \n\tcurrent: %s'
+                ),
+                sys_id,
+                self.state_times_last[sys_id],
+                self.state_times_current[sys_id],
+            )
             utilisation = self.calc_util_state_time_diff(
                 state_times_last=self.state_times_last[sys_id],
                 state_times_current=self.state_times_current[sys_id],
             )
             self.utilisations[sys_id] = utilisation
-            loggers.agents.debug('Utilisation for SystemID %d is %.4f', sys_id, utilisation)
+            loggers.agents.debug(
+                '[AllocationAgent] Utilisation for SystemID %d is %.4f', sys_id, utilisation
+            )
 
-        loggers.agents.debug('Utilisation dict for agent >>%s<<: %s', self, self.utilisations)
+        loggers.agents.debug(
+            '[AllocationAgent] Utilisation dict for agent >>%s<<: %s', self, self.utilisations
+        )
 
         # build feature vector
         self.feat_vec = self.build_feat_vec(job=job)
@@ -281,13 +415,13 @@ class AllocationAgent(Agent):
         self,
         action: int,
     ) -> None:
-        # get action from RL agent
         self._action = action
-        # indicator that request was processed
-        # reset dispatching signal
+        self._chosen_station = self.assoc_proc_stations[action]
+        self.num_decisions += 1
+        # indicator that request was processed, reset dispatching signal
         self.set_dispatching_signal(reset=True)
 
-        loggers.agents.debug('[DECISION SET Agent %s]: Set %d', self, self._action)
+        loggers.agents.debug('[DECISION SET Agent %s]: Set to >>%d<<', self, self._action)
 
     @override
     def build_feat_vec(
@@ -297,8 +431,7 @@ class AllocationAgent(Agent):
         action_mask: list[bool] = []
         station_feasible: bool
         # job
-        # needed properties
-        # target station group ID, order time
+        # needed properties: target station group ID, order time
         if job.current_order_time is None:
             raise ValueError(f'Current order time of job {job} >>None<<')
         norm_td = pyf_dt.timedelta_from_val(1.0, TimeUnitsTimedelta.HOURS)
@@ -336,10 +469,12 @@ class AllocationAgent(Agent):
             # availability: boolean to integer
             avail = int(monitor.is_available)
             # WIP_time in hours
-            WIP_time = monitor.WIP_load_time / Timedelta(hours=1)
+            # WIP_time = monitor.WIP_load_time / Timedelta(hours=1)
+            WIP_time_remain = monitor.WIP_load_time_remaining / Timedelta(hours=1)
             # tuple: (System SGI of resource obj, availability status,
             # WIP calculated in time units)
-            res_info = (res_SGI, avail, WIP_time)
+            # res_info = (res_SGI, avail, WIP_time)
+            res_info = (res_SGI, avail, WIP_time_remain)
             res_info_arr_current = np.array(res_info, dtype=np.float32)
 
             if i == 0:
@@ -358,21 +493,124 @@ class AllocationAgent(Agent):
         """
         Generate random action based on associated objects
         """
-        return self.rng.randint(0, len(self._assoc_proc_stations) - 1)
+        return self.rng.integers(0, len(self._assoc_proc_stations))
+
+    @staticmethod
+    def load_distribution_diff(
+        ideal: LoadDistribution,
+        actual: LoadDistribution,
+        availabilities: tuple[bool, ...] | None = None,
+    ) -> float:
+        """load distribution score between [0;2] where 0 is best, 2 is worst"""
+        load_ideal = np.array(tuple(ideal.values()), dtype=np.float64)
+        load_actual = np.array(tuple(actual.values()), dtype=np.float64)
+        diff = cast(npt.NDArray[np.float64], np.abs(load_ideal - load_actual))
+
+        mask: npt.NDArray[np.bool_]
+        if availabilities is not None:
+            arr_availabilities = cast(npt.NDArray[np.bool_], np.array(availabilities))
+            mask = (np.logical_not(arr_availabilities) * load_actual) > 0
+        else:
+            mask = np.ones(shape=len(load_actual), dtype=np.bool_)
+
+        score = cast(float, np.sum(diff * mask))
+        loggers.agents.debug(
+            '[Agent Reward - Load] ideal: %s, actual: %s, score: %.6f',
+            load_ideal,
+            load_actual,
+            score,
+        )
+
+        return score
+
+    def reward_load_balancing(
+        self,
+        target_station_group: StationGroup,
+        chosen_station: ProcessingStation,
+        op_reward: Operation,
+        enable_masking: bool,
+    ) -> float:
+        load_distribution_ideal = target_station_group.load_distribution_ideal
+        load_distribution_action = target_station_group.workload_distribution_future(
+            target_system_id=chosen_station.system_id,
+            new_load=op_reward.order_time,
+        )
+        availabilities: tuple[bool, ...] | None = None
+        if enable_masking:
+            availabilities = target_station_group.get_proc_station_availability()
+
+        score = self.load_distribution_diff(
+            ideal=load_distribution_ideal,
+            actual=load_distribution_action,
+            availabilities=availabilities,
+        )
+        # load distribution score between [0;2]
+        # normalise in range [-1;1]
+        # reward = (-1) * score
+        reward = (score - 1) * (-1)
+
+        return reward
+
+    def reward_slack(self) -> float: ...
 
     @override
     def calc_reward(self) -> float:
+        op_rew = self.current_op
+        if op_rew is None:
+            raise ValueError('Tried to calculate reward based on a non-existent operation.')
+        # obtain target station (set during action setting)
+        chosen_station = self.chosen_station
+        if chosen_station is None:
+            raise ValueError(
+                "No station was chosen. Maybe the agent's action was not properly set."
+            )
+        # obtain target SG from respective operation
+        target_station_group = op_rew.target_station_group
+        if target_station_group is None:
+            raise ValueError(f'Operation >>{op_rew}<< has no associated station group.')
+
+        loggers.agents.debug('[Agent Reward] Target station group: %s', target_station_group)
+        loggers.agents.debug('[Agent Reward] Chosen station: %s', chosen_station)
+        # perform feasibility check + set flag
+        self.action_feasible = self.env.check_feasible_agent_alloc(
+            target_station=chosen_station, op=op_rew
+        )
+
+        reward: float
+        if self.action_feasible:
+            # load_distribution_current = target_station.workload_distribution_current()
+            reward = self.reward_load_balancing(
+                target_station_group=target_station_group,
+                chosen_station=chosen_station,
+                op_reward=op_rew,
+                enable_masking=False,
+            )
+
+        else:
+            # non-feasible actions
+            reward = -100.0
+
+        loggers.agents.debug('[AllocationAgent] reward: %.4f', reward)
+        self.cum_reward += reward
+        loggers.agents.debug('[Agent Reward] Num Decisions: %d', self.num_decisions)
+        loggers.agents.debug('[Agent Reward] Cum Reward: %.6f', self.cum_reward)
+
+        return reward
+
+    def calc_reward_backup(self) -> float:
+        # !! old way, using next state s_(t+1) to evaluate a_t instead of s_t
         # punishment for non-feasible-action ``past_action_feasible``
         reward: float = 0.0
 
         if not self.past_action_feasible:
             # non-feasible actions
+            # TODO check removal after using action masking
             reward = -100.0
         else:
-            # calc reward based on feasible action chosen and
-            # utilisation, but based on target station group
+            # calc reward based on feasible action chosen and utilisation,
+            # but based on target station group
             # use last OP because current one already set
-            op_rew = self._last_op
+            op_rew = self.last_op
 
             if op_rew is None:
                 raise ValueError(
@@ -385,33 +623,86 @@ class AllocationAgent(Agent):
             # obtain relevant ProcessingStations contained in
             # the corresponding StationGroup
             stations = op_rew.target_station_group.assoc_proc_stations
-            loggers.agents.debug('relevant stations: %s', stations)
-
-            # relevant_state_times: list[dict[str, Timedelta]] = []
-            # util_vals: list[float] = []
-            # for station in stations:
-            #     # self.state_times_current[station.system_id] = (
-            #     #     station.stat_monitor.state_times.copy()
-            #     # )
-            #     util_vals.append(self.utilisations[station.system_id])
-            #     # last state times
-            #     # current state times
+            loggers.agents.debug('[AllocationAgent] relevant stations: %s', stations)
+            self.set_state_times_current(stations=stations)
+            self.calc_utilisation()
 
             # calculate mean utilisation of all processing stations associated
             # with the corresponding operation and agent's action
             # util_vals: list[float] = [ps.stat_monitor.utilisation for ps in stations]
-            util_vals: list[float] = [
-                self.utilisations[station.system_id] for station in stations
+            util_vals = [self.utilisations[station.system_id] for station in stations]
+            loggers.agents.debug('[AllocationAgent] util_vals: %s', util_vals)
+            # !! new
+            complete_util_vals_all = [
+                station.stat_monitor.utilisation for station in self.assoc_proc_stations
             ]
-            loggers.agents.debug('util_vals: %s', util_vals)
-            util_mean = statistics.mean(util_vals)
-            loggers.agents.debug('util_mean: %.4f', util_mean)
+            complete_util_vals_stat_group = [
+                station.stat_monitor.utilisation for station in stations
+            ]
+            loggers.agents.debug(
+                '[AllocationAgent] util_vals all: %s', complete_util_vals_all
+            )
+            loggers.agents.debug(
+                '[AllocationAgent] util_vals stat group: %s', complete_util_vals_stat_group
+            )
+            util_mean = np.mean(util_vals).item()
+            complete_util_vals_all_mean = np.mean(complete_util_vals_all).item()
+            complete_util_vals_stat_group_mean = np.mean(complete_util_vals_stat_group).item()
+            loggers.agents.debug('[AllocationAgent] util_mean: %.4f', util_mean)
+            loggers.agents.debug(
+                '[AllocationAgent] util_mean_all: %.4f',
+                complete_util_vals_all_mean,
+            )
+            loggers.agents.debug(
+                '[AllocationAgent] util_mean_stat_group: %.4f',
+                complete_util_vals_stat_group_mean,
+            )
 
-            reward = util_mean - 1.0
+            # reward = util_mean - 1.0
+            # reward = complete_util_vals_all_mean - 1.0
+            reward = complete_util_vals_stat_group_mean - 1.0
 
-        loggers.agents.debug('reward: %.4f', reward)
+        loggers.agents.debug('[AllocationAgent] reward: %.4f', reward)
 
         return reward
+
+
+class ValidateAllocationAgent(AllocationAgent):
+    def __init__(
+        self,
+        assoc_system: ProductionArea,
+        seed: int | None = None,
+    ) -> None:
+        super().__init__(assoc_system=assoc_system, seed=seed)
+
+        alloc_policy = self.env.dispatcher.alloc_policy
+        if alloc_policy is None:
+            raise ValueError('Validation Agent could not retrieve allocation policy')
+        else:
+            self.alloc_policy = alloc_policy
+
+    def simulate_decision_making(self) -> int:
+        # sets decision based on allocation policy returns action index
+        # use current op
+        op = self._current_op
+        if op is None:
+            raise ValueError('[Validation Agent] Operation >>None<<')
+        target_stat_group = op.target_station_group
+        if target_stat_group is None:
+            raise ValueError('[Validation Agent] Target station group >>None<<')
+        # mimic approach of dispatcher
+        stations = target_stat_group.assoc_proc_stations
+        candidates = tuple(ps for ps in stations if ps.stat_monitor.is_available)
+        # if there are no available ones: use all stations
+        if candidates:
+            avail_stations = candidates
+        else:
+            avail_stations = stations
+
+        target_station = self.alloc_policy.apply(items=avail_stations)
+        action_idx = self.assoc_proc_stations.index(target_station)
+
+        return action_idx
 
 
 class SequencingAgent(Agent):

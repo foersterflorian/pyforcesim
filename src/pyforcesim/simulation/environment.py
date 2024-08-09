@@ -3,26 +3,25 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-import random
 from abc import ABCMeta, abstractmethod
 from collections import deque
 from collections.abc import Generator, Iterable, Iterator, Sequence
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
 from datetime import tzinfo as TZInfo
-from functools import lru_cache
 from operator import attrgetter
 from typing import (
     Any,
     Final,
+    Generic,
     Literal,
     Self,
+    TypeVar,
     cast,
     overload,
 )
 from typing_extensions import override
 
-import pandas as pd
 import plotly.express as px
 import plotly.io
 import salabim
@@ -34,7 +33,9 @@ from pyforcesim import common, loggers
 from pyforcesim import datetime as pyf_dt
 from pyforcesim.constants import (
     DEFAULT_DATETIME,
+    DEFAULT_SEED,
     INF,
+    MAX_PROCESSING_CAPACITY,
     POLICIES_ALLOC,
     POLICIES_SEQ,
     TIMEZONE_CEST,
@@ -68,22 +69,27 @@ from pyforcesim.types import (
     CustomID,
     Infinite,
     JobGenerationInfo,
+    LoadDistribution,
     LoadID,
     OrderDates,
     OrderTimes,
     PlotlyFigure,
+    SalabimTimeUnits,
+    SysIDResource,
     SystemID,
 )
 
 # ** constants
+T = TypeVar('T', bound='System')
 # definition of routing system level
 EXEC_SYSTEM_TYPE: Final = SimSystemTypes.PRODUCTION_AREA
 # time after a store request is failed
 FAIL_DELAY: Final[Timedelta] = pyf_dt.timedelta_from_val(
-    7, time_unit=TimeUnitsTimedelta.HOURS
+    24, time_unit=TimeUnitsTimedelta.HOURS
 )
 
 
+# ** functions
 def filter_processing_stations(
     infstruct_obj_collection: Iterable[InfrastructureObject],
 ) -> list[ProcessingStation]:
@@ -109,10 +115,12 @@ def filter_processing_stations(
 class SimulationEnvironment(salabim.Environment):
     def __init__(
         self,
-        time_unit: str = 'seconds',
+        time_unit: SalabimTimeUnits = 'seconds',
         starting_datetime: Datetime | None = None,
         local_timezone: TZInfo = TIMEZONE_CEST,
         debug_dashboard: bool = False,
+        seed: int | None = DEFAULT_SEED,
+        check_agent_feasibility: bool = True,
         **kwargs,
     ) -> None:
         """Simulation Environment:
@@ -132,6 +140,8 @@ class SimulationEnvironment(salabim.Environment):
         # time units and timezone
         self.time_unit = time_unit
         self.local_timezone = local_timezone
+        self.seed = seed
+        self.check_agent_feasibility = check_agent_feasibility
         # if starting datetime not provided use current time
         if starting_datetime is None:
             starting_datetime = pyf_dt.current_time_tz(cut_microseconds=True)
@@ -145,6 +155,8 @@ class SimulationEnvironment(salabim.Environment):
             trace=False,
             time_unit=self.time_unit,
             datetime0=self.starting_datetime,
+            random_seed=self.seed,
+            set_numpy_random_seed=False,
             yieldless=False,
             **kwargs,
         )
@@ -161,6 +173,7 @@ class SimulationEnvironment(salabim.Environment):
         # state allows direct waiting for flag changes
         self.is_transient_cond: bool = True
         self.duration_transient: Timedelta | None = None
+        self.transient_end_date: Datetime | None = None
         # ** databases
         self.db_engine = db.get_engine()
         # databases
@@ -175,7 +188,7 @@ class SimulationEnvironment(salabim.Environment):
         # ** simulation run
         self.FAIL_DELAY: Final[float] = self.td_to_simtime(timedelta=FAIL_DELAY)
 
-        loggers.pyf_env.warning('New Environment >>%s<< initialised.', self.name())
+        loggers.pyf_env.info('New Environment >>%s<< created.', self.name())
 
     def t_as_dt(self) -> Datetime:
         """return current simulation time as Datetime object
@@ -194,6 +207,10 @@ class SimulationEnvironment(salabim.Environment):
         """transform Timedelta to simulation time"""
         return self.timedelta_to_duration(timedelta=timedelta)
 
+    def set_end_transient_phase(self) -> None:
+        self.is_transient_cond = False
+        self.transient_end_date = self.t_as_dt()
+
     @property
     def infstruct_mgr(self) -> InfrastructureManager:
         """obtain the current registered Infrastructure Manager instance of the environment"""
@@ -210,7 +227,6 @@ class SimulationEnvironment(salabim.Environment):
         else:
             return self._dispatcher
 
-    # ?? adding to Dispatcher class?
     def check_feasible_agent_alloc(
         self,
         target_station: ProcessingStation,
@@ -220,20 +236,13 @@ class SimulationEnvironment(salabim.Environment):
         method which checks for feasibility of agent allocation decisions
         returning True if feasible, False otherwise
         """
-        # check if operation has station group identifier (SGI) (SystemID)
         op_SGI = op.target_station_group_identifier
-
-        # no station group assigned, chosen station is automatically feasible
         if op_SGI is None:
             return True
         else:
-            # lookup SGIs of the target station's station groups
-            # target_SGIs = target_station.supersystems_custom_ids
             target_SGIs = target_station.supersystems_ids
 
         if op_SGI in target_SGIs:
-            # operation SGI in associated station group IDs found,
-            # target station is feasible for given operation
             return True
         else:
             return False
@@ -250,9 +259,6 @@ class SimulationEnvironment(salabim.Environment):
         """
         if not self._infstruct_mgr.sink_registered:
             raise ValueError('No Sink instance registered.')
-        # check if all subsystems are associated to supersystems
-        # elif not self._infstruct_mgr.verify_system_association():
-        #     raise AssociationError('Non-associated subsystems detected!')
 
         loggers.pyf_env.info(
             'Integrity check for Environment >>%s<< successful.', self.name()
@@ -266,16 +272,12 @@ class SimulationEnvironment(salabim.Environment):
 
         # establish websocket connection
         if self.debug_dashboard and not self.servers_connected:
-            # start websocket server
             loggers.pyf_env.info('Starting websocket server...')
             self.ws_server_process.start()
-            # start dashboard server
             loggers.pyf_env.info('Starting dashboard server...')
             self.dashboard_server_process.start()
-            # establish websocket connection used for streaming of updates
             loggers.pyf_env.info('Establish websocket connection...')
             self.ws_con = create_connection(WS_URL)
-            # set internal flag indicating that servers are started
             self.servers_connected = True
 
         loggers.pyf_env.info('Initialisation for Environment >>%s<< successful.', self.name())
@@ -337,6 +339,7 @@ class InfrastructureManager:
         self._resources: dict[SystemID, InfrastructureObject] = {}
         self._res_counter = SystemID(0)
         self._res_custom_identifiers: set[CustomID] = set()
+        self.final_utilisations: list[float] = []
         # [RESOURCES] sink: pool of sinks possible to allow multiple sinks in one environment
         # [PERHAPS CHANGED LATER]
         # currently only one sink out of the pool is chosen because jobs do not contain
@@ -432,7 +435,7 @@ class InfrastructureManager:
 
     def register_system(
         self,
-        supersystem: System | None,
+        supersystem: ContainerSystem[T] | None,
         system_type: SimSystemTypes,
         obj: System,
         custom_identifier: CustomID,
@@ -551,7 +554,7 @@ class InfrastructureManager:
 
     def set_contain_proc_station(
         self,
-        system: System,
+        system: ContainerSystem,
     ) -> None:
         match system.system_type:
             case SimSystemTypes.PRODUCTION_AREA:
@@ -757,13 +760,14 @@ class InfrastructureManager:
             resource.initialise()
 
     def finalise(self) -> None:
-        # set end state for each resource object to calculate the right time amounts
         for prod_area in self.prod_areas.values():
             prod_area.finalise()
         for station_group in self.station_groups.values():
             station_group.finalise()
         for resource in self.resources.values():
             resource.finalise()
+            if isinstance(resource, ProcessingStation):
+                self.final_utilisations.append(resource.stat_monitor.utilisation)
         loggers.infstrct.info(
             'Successful finalisation of the state information for all resource objects.'
         )
@@ -783,123 +787,24 @@ class Dispatcher:
         - different functions to monitor all jobs in the environment
         - jobs report back their states to the dispatcher
         """
-
-        # job data base as simple Pandas DataFrame
+        ####################################
+        # job object mapping
         # column data types
         self._jobs: dict[LoadID, Job] = {}
         self._pd_date_parse_info_jobs, self._datetime_cols_job, self._timedelta_cols_jobs = (
             db.pandas_date_col_parser(db.jobs)
         )
         self._db_props_job: frozenset[str] = frozenset(db.jobs.c.keys())
-        # TODO remove
-        # self._job_prop: dict[str, type] = {
-        #     'job_id': int,
-        #     'custom_id': object,
-        #     #'job': object,
-        #     'job_type': str,
-        #     'prio': object,
-        #     'total_proc_time': object,
-        #     'creation_date': object,
-        #     'release_date': object,
-        #     'planned_starting_date': object,
-        #     'actual_starting_date': object,
-        #     'starting_date_deviation': object,
-        #     'planned_ending_date': object,
-        #     'actual_ending_date': object,
-        #     'ending_date_deviation': object,
-        #     'lead_time': object,
-        #     'state': str,
-        # }
-        # self._job_db: DataFrame = pd.DataFrame(columns=list(self._job_prop.keys()))
-        # self._job_db: DataFrame = self._job_db.astype(self._job_prop)
-        # self._job_db: DataFrame = self._job_db.set_index('job_id')
-        # # properties by which a object can be obtained from the job database
-        # self._job_lookup_props: set[str] = set(['job_id', 'custom_id', 'name'])
-        # properties which can be updated after creation
-        # self._job_update_props: set[str] = set(
-        #     [
-        #         'prio',
-        #         'creation_date',
-        #         'release_date',
-        #         'planned_starting_date',
-        #         'actual_starting_date',
-        #         'starting_date_deviation',
-        #         'planned_ending_date',
-        #         'actual_ending_date',
-        #         'ending_date_deviation',
-        #         'lead_time',
-        #         'state',
-        #     ]
-        # )
-        # date adjusted database for finalisation at the end of a simulation run
-        # self._job_db_date_adjusted = self._job_db.copy()
 
-        # operation data base as simple Pandas DataFrame
-        # column data types
+        ####################################
+        # operation object mapping
         self._ops: dict[LoadID, Operation] = {}
         self._pd_date_parse_info_ops, self._datetime_cols_ops, self._timedelta_cols_ops = (
             db.pandas_date_col_parser(db.operations)
         )
         self._db_props_op: frozenset[str] = frozenset(db.operations.c.keys())
-        # self._op_prop: dict[str, type] = {
-        #     'op_id': int,
-        #     'job_id': int,
-        #     'custom_id': object,
-        #     #'op': object,
-        #     'prio': object,
-        #     'execution_system': object,
-        #     'execution_system_custom_id': object,
-        #     'execution_system_name': str,
-        #     'execution_system_type': str,
-        #     'station_group': object,
-        #     'station_group_custom_id': object,
-        #     'station_group_name': str,
-        #     'station_group_type': str,
-        #     'target_station_custom_id': object,
-        #     'target_station_name': object,
-        #     'proc_time': object,
-        #     'setup_time': object,
-        #     'order_time': object,
-        #     'creation_date': object,
-        #     'release_date': object,
-        #     'planned_starting_date': object,
-        #     'actual_starting_date': object,
-        #     'starting_date_deviation': object,
-        #     'planned_ending_date': object,
-        #     'actual_ending_date': object,
-        #     'ending_date_deviation': object,
-        #     'lead_time': object,
-        #     'state': str,
-        # }
-        # self._op_db: DataFrame = pd.DataFrame(columns=list(self._op_prop.keys()))
-        # self._op_db: DataFrame = self._op_db.astype(self._op_prop)
-        # self._op_db: DataFrame = self._op_db.set_index('op_id')
-        # # properties by which a object can be obtained from the operation database
-        # self._op_lookup_props: set[str] = set(
-        #     ['op_id', 'job_id', 'custom_id', 'name', 'machine']
-        # )
-        # # properties which can be updated after creation
-        # self._op_update_props: set[str] = set(
-        #     [
-        #         'prio',
-        #         'target_station_custom_id',
-        #         'target_station_name',
-        #         'creation_date',
-        #         'release_date',
-        #         'actual_starting_date',
-        #         'starting_date_deviation',
-        #         'actual_ending_date',
-        #         'ending_date_deviation',
-        #         'lead_time',
-        #         'state',
-        #     ]
-        # )
-        # date adjusted database for finalisation at the end of a simulation run
-        # self._op_db_date_adjusted = self._op_db.copy()
 
-        # register in environment and get EnvID
         self._env = env
-        # self._env.register_dispatcher(self)
 
         ####################################
         # managing IDs
@@ -951,7 +856,7 @@ class Dispatcher:
             )
         else:
             self._seq_rule = rule
-            self.seq_policy = POLICIES_SEQ[rule]
+            self.seq_policy = POLICIES_SEQ[rule]()
             loggers.dispatcher.info('Changed priority rule to %s', rule)
 
     @property
@@ -969,7 +874,7 @@ class Dispatcher:
             )
         else:
             self._alloc_rule = rule
-            self.alloc_policy = POLICIES_ALLOC[rule]
+            self.alloc_policy = POLICIES_ALLOC[rule]()
             loggers.dispatcher.info('Changed allocation rule to >>%s<<', rule)
 
     def _obtain_load_obj_id(
@@ -1017,9 +922,7 @@ class Dispatcher:
         """
         # obtain id
         job_id = self._obtain_load_obj_id(load_type='job')
-
         # time of creation
-        # creation_date = self.env.now()
         creation_date = self.env.t_as_dt()
 
         if custom_identifier is None:
@@ -1032,9 +935,9 @@ class Dispatcher:
             'type': job.job_type,
             'prio': job.prio,
             'state': state,
-            'total_order_time': job.total_order_time,
-            'total_proc_time': job.total_proc_time,
-            'total_setup_time': job.total_setup_time,
+            'total_order_time': job.order_time,
+            'total_proc_time': job.proc_time,
+            'total_setup_time': job.setup_time,
             'creation_date': creation_date,
             'release_date': job.time_release,
             'planned_starting_date': job.time_planned_starting,
@@ -1050,38 +953,13 @@ class Dispatcher:
             conn.execute(sql.insert(db.jobs), entry)
             conn.commit()
 
-        # TODO remove
-        # new_entry: DataFrame = pd.DataFrame(
-        #     {
-        #         'job_id': [job_id],
-        #         'custom_id': [custom_identifier],
-        #         #'job': [job],
-        #         'job_type': [job.job_type],
-        #         'prio': [job.prio],
-        #         'total_proc_time': [job.total_proc_time],
-        #         'creation_date': [creation_date],
-        #         'release_date': [job.time_release],
-        #         'planned_starting_date': [job.time_planned_starting],
-        #         'actual_starting_date': [job.time_actual_starting],
-        #         'starting_date_deviation': [job.starting_date_deviation],
-        #         'planned_ending_date': [job.time_planned_ending],
-        #         'actual_ending_date': [job.time_actual_ending],
-        #         'ending_date_deviation': [job.ending_date_deviation],
-        #         'lead_time': [job.lead_time],
-        #         'state': [state],
-        #     }
-        # )
-        # new_entry = new_entry.astype(self._job_prop)
-        # new_entry = new_entry.set_index('job_id')
-        # self._job_db = pd.concat([self._job_db, new_entry])
         self._jobs[job_id] = job
 
         loggers.dispatcher.debug('Successfully registered job with JobID >>%s<<', job_id)
 
-        # write job information directly
+        # TODO check for explicit method to write information
         job.time_creation = creation_date
 
-        # return current env, job ID
         return self._env, job_id
 
     def update_job_db(
@@ -1093,18 +971,12 @@ class Dispatcher:
         """
         updates the information of a job for a given property
         """
-        # TODO remove
         # # check if property is a filter criterion
         if property not in self._db_props_job:
             raise IndexError(
                 f"Property '{property}' is not defined. Choose from {self._db_props_job}"
             )
-        # TODO remove
-        # # None type value can not be set
-        # if val is None:
-        #     raise TypeError('The set value can not be of type >>None<<.')
 
-        # self._job_db.at[job.job_id, property] = val
         entry = {property: val}
         stmt = sql.update(db.jobs).where(db.jobs.c.load_id == job.job_id)
         with self.env.db_engine.connect() as conn:
@@ -1158,30 +1030,23 @@ class Dispatcher:
         used to signal the exit of the given job
         necessary for time statistics
         """
-        # [STATS]
-        # current_time = self.env.now()
         current_time = self.env.t_as_dt()
-        # job.time_exit = current_time
         job.time_actual_ending = current_time
         job.is_finished = True
-        # job.lead_time = job.time_exit - job.time_release
         job.lead_time = job.time_actual_ending - job.time_release
 
-        # ending times
         if job.time_planned_ending is not None:
             job.ending_date_deviation = job.time_actual_ending - job.time_planned_ending
             self.update_job_db(
                 job=job, property='ending_date_deviation', val=job.ending_date_deviation
             )
 
-        # update databases
         self.update_job_state(job=job, state=SimStatesCommon.FINISH)
-        # self.update_job_db(job=job, property='exit_date', val=job.time_exit)
         self.update_job_db(job=job, property='actual_ending_date', val=job.time_actual_ending)
         self.update_job_db(job=job, property='lead_time', val=job.lead_time)
-        # [MONITOR] finalise stats
+
         job.stat_monitor.finalise_stats()
-        # delete job and operations from dispatcher
+        # explicitly delete job and operations from dispatcher
         # keep operations alive as long as the associated job is alive
         for op in job.operations:
             del self._ops[op.op_id]
@@ -1206,7 +1071,8 @@ class Dispatcher:
             raise ValueError(
                 'Can not update job info because current operation is not available.'
             )
-        elif preprocess:
+        # job.stat_monitor.calc_KPI()
+        if preprocess:
             # operation enters Processing Station
             # if first operation of given job add job's starting information
             if job.num_finished_ops == 0:
@@ -1221,18 +1087,26 @@ class Dispatcher:
         self,
         job: Job,
         state: SimStatesCommon,
+        reset_temp: bool = False,
     ) -> None:
         """method to update the state of a job in the job database"""
+        # check if 'TEMP' state should be reset
+        if reset_temp:
+            # special reset method, calls state setting to previous state
+            job.stat_monitor.reset_temp_state()
+            state = cast(SimStatesCommon, job.stat_monitor.state_current)
+        else:
+            job.stat_monitor.set_state(target_state=state)
+
         # update state tracking of the job instance
-        job.stat_monitor.set_state(target_state=state)
+        # job.stat_monitor.set_state(target_state=state)
         # update job database
         self.update_job_db(job=job, property='state', val=state)
         # only update operation state if it is not finished
         # operations are finished by post-process call to their 'finalise' method
-
         # update state of the corresponding operation
-        if job.current_op is not None:
-            self.update_operation_state(op=job.current_op, state=state)
+        for op in job.operations:
+            self.update_operation_state(op=op, state=state, reset_temp=reset_temp)
 
     def get_next_operation(
         self,
@@ -1248,7 +1122,7 @@ class Dispatcher:
         job.last_order_time = job.current_order_time
         # current operation information
         if job.open_operations:
-            op = job.open_operations.popleft()
+            op = job.open_operations[0]
             job.current_proc_time = op.proc_time
             job.current_setup_time = op.setup_time
             job.current_order_time = op.order_time
@@ -1258,16 +1132,16 @@ class Dispatcher:
                     raise ValueError(f'Operation {op} has no priority defined.')
                 job.prio = op.prio  # use setter function to catch possible errors
                 self.update_job_db(job=job, property='prio', val=job.prio)
-            if job.op_wise_starting_date:
-                job.time_planned_starting = op.time_planned_starting
-                self.update_job_db(
-                    job=job, property='planned_starting_date', val=job.time_planned_starting
-                )
-            if job.op_wise_ending_date:
-                job.time_planned_ending = op.time_planned_ending
-                self.update_job_db(
-                    job=job, property='planned_ending_date', val=job.time_planned_ending
-                )
+            # if job.op_wise_starting_date:
+            #     job.time_planned_starting = op.time_planned_starting
+            #     self.update_job_db(
+            #         job=job, property='planned_starting_date', val=job.time_planned_starting
+            #     )
+            # if job.op_wise_ending_date:
+            #     job.time_planned_ending = op.time_planned_ending
+            #     self.update_job_db(
+            #         job=job, property='planned_ending_date', val=job.time_planned_ending
+            #     )
         else:
             op = None
             job.current_proc_time = None
@@ -1374,46 +1248,12 @@ class Dispatcher:
             conn.execute(sql.insert(db.operations), entry)
             conn.commit()
 
-        # new_entry: DataFrame = pd.DataFrame(
-        #     {
-        #         'op_id': [op_id],
-        #         'job_id': [op.job_id],
-        #         'custom_id': [custom_identifier],
-        #         #'op': [op],
-        #         'prio': [op.prio],
-        #         'execution_system': [exec_system],
-        #         'execution_system_custom_id': [exec_system.custom_identifier],
-        #         'execution_system_name': [exec_system.name],
-        #         'execution_system_type': [exec_system.system_type],
-        #         'station_group': [target_station_group],
-        #         'station_group_custom_id': [target_station_group.custom_identifier],
-        #         'station_group_name': [target_station_group.name],
-        #         'station_group_type': [target_station_group.system_type],
-        #         'target_station_custom_id': [None],
-        #         'target_station_name': [None],
-        #         'proc_time': [op.proc_time],
-        #         'setup_time': [setup_time],
-        #         'order_time': [op.order_time],
-        #         'creation_date': [creation_date],
-        #         'release_date': [op.time_release],
-        #         'planned_starting_date': [op.time_planned_starting],
-        #         'actual_starting_date': [op.time_actual_starting],
-        #         'starting_date_deviation': [op.starting_date_deviation],
-        #         'planned_ending_date': [op.time_planned_ending],
-        #         'actual_ending_date': [op.time_actual_ending],
-        #         'ending_date_deviation': [op.ending_date_deviation],
-        #         'lead_time': [op.lead_time],
-        #         'state': [state],
-        #     }
-        # )
-        # new_entry: DataFrame = new_entry.astype(self._op_prop)
-        # new_entry = new_entry.set_index('op_id')
-        # self._op_db = pd.concat([self._op_db, new_entry])
         self._ops[op_id] = op
 
         loggers.dispatcher.debug('Successfully registered operation with OpID >>%s<<', op_id)
 
         # write operation information directly
+        # TODO check for explicit method
         op.target_exec_system = exec_system
         op.target_station_group = target_station_group
         op.time_creation = creation_date
@@ -1435,12 +1275,7 @@ class Dispatcher:
             raise IndexError(
                 f"Property '{property}' is not defined. Choose from {self._db_props_op}"
             )
-        # TODO remove
-        # # None type value can not be looked for
-        # if val is None:
-        #     raise TypeError("The lookup value can not be of type 'None'.")
 
-        # self._op_db.at[op.op_id, property] = val
         entry = {property: val}
         stmt = sql.update(db.operations).where(db.operations.c.load_id == op.op_id)
         with self.env.db_engine.connect() as conn:
@@ -1451,10 +1286,18 @@ class Dispatcher:
         self,
         op: Operation,
         state: SimStatesCommon,
+        reset_temp: bool = False,
     ) -> None:
         """method to update the state of a operation in the operation database"""
         # update state tracking of the operation instance
-        op.stat_monitor.set_state(target_state=state)
+        if reset_temp:
+            # special reset method, calls state setting to previous state
+            op.stat_monitor.reset_temp_state()
+            state = cast(SimStatesCommon, op.stat_monitor.state_current)
+        else:
+            op.stat_monitor.set_state(target_state=state)
+
+        # op.stat_monitor.set_state(target_state=state)
         # update operation database
         self.update_operation_db(op=op, property='state', val=state)
 
@@ -1479,10 +1322,6 @@ class Dispatcher:
         self.update_operation_db(
             op=op, property='target_station_sys_id', val=target_station.system_id
         )
-        # TODO remove
-        # self.update_operation_db(
-        #     op=op, property='target_station_name', val=target_station.name
-        # )
 
     def enter_operation(
         self,
@@ -1519,16 +1358,10 @@ class Dispatcher:
         used to signal the finalisation of the given operation
         necessary for time statistics
         """
-        # current_time = self.env.now()
         current_time = self.env.t_as_dt()
-        # [STATE] finished
         op.is_finished = True
-        # [STATS] end + lead time
-        # op.time_exit = current_time
         op.time_actual_ending = current_time
-        # op.lead_time = op.time_exit - op.time_release
         op.lead_time = op.time_actual_ending - op.time_release
-
         # ending times
         if op.time_planned_ending is not None:
             op.ending_date_deviation = op.time_actual_ending - op.time_planned_ending
@@ -1553,6 +1386,25 @@ class Dispatcher:
 
         # [MONITOR] finalise stats
         op.stat_monitor.finalise_stats()
+        # remove from open operations
+        op.job.open_operations.popleft()
+
+    def jobs_temp_state(
+        self,
+        jobs: Iterable[Job],
+        reset_temp: bool,
+    ) -> None:
+        """Sets/resets all jobs to/from the 'TEMP' state
+
+        Parameters
+        ----------
+        set_temp : bool
+            indicates if the temp state should be set or reset
+        """
+        for job in jobs:
+            self.update_job_state(job=job, state=SimStatesCommon.TEMP, reset_temp=reset_temp)
+            if not reset_temp:
+                job.stat_monitor.calc_KPI()  # also calculation of every OP
 
     ### PROPERTIES ###
     @property
@@ -1566,15 +1418,7 @@ class Dispatcher:
             datetime_parse_info=self._pd_date_parse_info_jobs,
             timedelta_cols=self._timedelta_cols_jobs,
         )
-        # TODO remove
-        # job_db = pd.read_sql_table(
-        #     db.jobs.name,
-        #     self.env.db_engine,
-        #     parse_dates=self._pd_date_parse_info_jobs,
-        # )
-        # job_db[self._timedelta_cols_jobs] = (
-        #     job_db.loc[:, self._timedelta_cols_jobs] - DEFAULT_DATETIME
-        # )
+
         return job_db
 
     @property
@@ -1584,10 +1428,6 @@ class Dispatcher:
         with adjusted timezone
         """
         job_db = self.job_db
-        # TODO remove
-        # job_db[self._datetime_cols_job] = job_db.loc[:, self._datetime_cols_job].apply(
-        #     lambda col: col.dt.tz_convert(self.env.local_timezone)
-        # )
         job_db = pyf_dt.df_convert_timezone(
             df=job_db,
             datetime_cols=self._datetime_cols_job,
@@ -1607,15 +1447,7 @@ class Dispatcher:
             datetime_parse_info=self._pd_date_parse_info_ops,
             timedelta_cols=self._timedelta_cols_ops,
         )
-        # TODO remove
-        # op_db = pd.read_sql_table(
-        #     db.operations.name,
-        #     self.env.db_engine,
-        #     parse_dates=self._pd_date_parse_info_ops,
-        # )
-        # op_db[self._timedelta_cols_ops] = (
-        #     op_db.loc[:, self._timedelta_cols_ops] - DEFAULT_DATETIME
-        # )
+
         return op_db
 
     @property
@@ -1625,10 +1457,7 @@ class Dispatcher:
         with adjusted timezone
         """
         op_db = self.op_db
-        # TODO remove
-        # op_db[self._datetime_cols_ops] = op_db.loc[:, self._datetime_cols_ops].apply(
-        #     lambda col: col.dt.tz_convert(self.env.local_timezone)
-        # )
+
         op_db = pyf_dt.df_convert_timezone(
             df=op_db,
             datetime_cols=self._datetime_cols_ops,
@@ -1637,22 +1466,12 @@ class Dispatcher:
 
         return op_db
 
-    # @lru_cache(maxsize=200)
     def lookup_job_obj_prop(
         self,
         lookup_val: LoadID | CustomID,
         target_property: str,
         use_load_id: bool = True,
     ) -> Any:
-        # # check if property is a filter criterion
-        # if property not in self._job_lookup_props:
-        #     raise IndexError(
-        #         f"Property '{property}' is not allowed. Choose from {self._job_lookup_props}"
-        #     )
-        # # None type value can not be looked for
-        # if lookup_val is None:
-        #     raise TypeError("The lookup value can not be of type 'None'.")
-
         lookup_property: str
         if use_load_id:
             lookup_property = 'sys_id'
@@ -1676,48 +1495,6 @@ class Dispatcher:
 
         return ret_value
 
-        # # filter resource database for prop-value pair
-        # if property == 'job_id':
-        #     # direct indexing for ID property; job_id always unique,
-        #     # no need for duplicate check
-        #     try:
-        #         idx_res: Any = self._job_db.at[lookup_val, target_property]
-        #         return idx_res
-        #     except KeyError:
-        #         raise IndexError(
-        #             (
-        #                 f'There were no jobs found for the '
-        #                 f'property >>{property}<< '
-        #                 f'with the value >>{lookup_val}<<'
-        #             )
-        #         )
-        # else:
-        #     multi_res = self._job_db.loc[self._job_db[property] == lookup_val, target_property]
-        #     # check for empty search result, at least one result necessary
-        #     if len(multi_res) == 0:
-        #         raise IndexError(
-        #             (
-        #                 f'There were no jobs found for the property >>{property}<< '
-        #                 f'with the value >>{lookup_val}<<'
-        #             )
-        #         )
-        #     # check for multiple entries with same prop-value pair
-        #     ########### PERHAPS CHANGE NECESSARY
-        #     ### multiple entries but only one returned --> prone to errors
-        #     elif len(multi_res) > 1:
-        #         # warn user
-        #         loggers.dispatcher.warning(
-        #             (
-        #                 'CAUTION: There are multiple jobs which share the '
-        #                 'same value >>%s<< for the property >>%s<<. '
-        #                 'Only the first entry is returned.'
-        #             ),
-        #             lookup_val,
-        #             property,
-        #         )
-
-        #     return multi_res.iat[0]
-
     ### ROUTING LOGIC ###
 
     def check_alloc_dispatch(
@@ -1728,6 +1505,7 @@ class Dispatcher:
         next_op = self.get_next_operation(job=job)
         is_agent: bool = False
         agent: AllocationAgent | None = None
+        # TODO: add checks for allocations on execution system level
         if self.alloc_rule == 'AGENT' and next_op is not None:
             if next_op.target_exec_system is None:
                 # should never happen as each operation is registered with
@@ -1767,11 +1545,9 @@ class Dispatcher:
             res_objs=agent.assoc_proc_stations,
             reset_temp=False,
         )
-
         # request decision from agent, sets internal flag
         agent.request_decision(job=job, op=op)
         loggers.dispatcher.debug('[DISPATCHER] Alloc Agent: Decision request made.')
-
         # reset TEMP state
         self.env.infstruct_mgr.res_objs_temp_state(
             res_objs=agent.assoc_proc_stations,
@@ -1857,7 +1633,7 @@ class Dispatcher:
 
     def _choose_target_station_from_exec_system(
         self,
-        exec_system: System,
+        exec_system: ProductionArea,
         op: Operation,
         is_agent: bool,
         target_station_group: StationGroup | None = None,
@@ -1865,7 +1641,7 @@ class Dispatcher:
         infstruct_mgr = self.env.infstruct_mgr
 
         if not is_agent:
-            if target_station_group:
+            if target_station_group is not None:
                 # preselection of station group only with allocation rules
                 # other than >>AGENT<<
                 # returned ProcessingStations automatically feasible
@@ -1910,16 +1686,29 @@ class Dispatcher:
             # agent can choose from all associated stations, not only available ones
             # availability of processing stations should be learned by the agent
             agent = exec_system.alloc_agent
-            avail_stations = agent.assoc_proc_stations
+
             # Feature vector already built when request done to agent
             # get chosen station by tuple index (agent's action)
-            station_idx = agent.action
-            if station_idx is None:
-                raise ValueError('No station index chosen')
-            target_station = avail_stations[station_idx]
-            agent.action_feasible = self._env.check_feasible_agent_alloc(
-                target_station=target_station, op=op
-            )
+
+            target_station = agent.chosen_station
+            if target_station is None:
+                raise ValueError(
+                    "No station was chosen. Maybe the agent's action was not properly set."
+                )
+
+            # TODO check removal
+            # avail_stations = agent.assoc_proc_stations
+            # station_idx = agent.action
+            # if station_idx is None:
+            #     raise ValueError('No station index chosen')
+
+            # target_station = avail_stations[station_idx]
+            # agent.action_feasible = self._env.check_feasible_agent_alloc(
+            #     target_station=target_station, op=op
+            # )
+
+            if self.env.check_agent_feasibility and not agent.action_feasible:
+                raise RuntimeError('action not feasible')
             loggers.agents.debug('Action feasibility status: %s', agent.action_feasible)
 
         return target_station
@@ -1975,8 +1764,12 @@ class Dispatcher:
         else:
             raise ValueError('No sequencing policy defined.')
 
-        job_collection = cast(list[Job], queue.as_list())
+        job_collection = cast(tuple[Job, ...], tuple(queue.as_list()))
+        loggers.dispatcher.debug('[DISPATCHER] Set relevant jobs in >>TEMP state<<')
+        self.jobs_temp_state(jobs=job_collection, reset_temp=False)
         job = policy.apply(items=job_collection)
+        loggers.dispatcher.debug('[DISPATCHER] Reset jobs from >>TEMP state<<')
+        self.jobs_temp_state(jobs=job_collection, reset_temp=True)
         queue.remove(job)
 
         return job
@@ -1991,6 +1784,7 @@ class Dispatcher:
         dates_to_local_tz: bool = False,
         save_img: bool = False,
         save_html: bool = False,
+        auto_open_html: bool = False,
         title: str | None = None,
         filename: str = 'gantt_chart',
         base_folder: str | None = None,
@@ -2026,9 +1820,14 @@ class Dispatcher:
                 db.station_groups.c.custom_id.label('station_group_custom_id'),
                 db.station_groups.c.name.label('station_group_name'),
             )
+            .select_from(db.operations)
             .join_from(db.operations, db.resources)
             .join_from(db.operations, db.production_areas)
-            .join_from(db.operations, db.station_groups)
+            .join_from(
+                db.operations,
+                db.station_groups,
+                db.operations.c.station_group_sys_id == db.station_groups.c.sys_id,
+            )
         )
         db_df = db.parse_sql_query_to_dataframe(
             query_select=stmt,
@@ -2082,12 +1881,7 @@ class Dispatcher:
         }
         # TODO: disable hover infos if some entries are None
 
-        # hover_template: str = 'proc_time: %{customdata[-3]|%d:%H:%M:%S}'
         if dates_to_local_tz:
-            # TODO remove
-            # self._job_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._job_db)
-            # self._op_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._op_db)
-            # db_df = self.op_db_local_tz
             db_df = pyf_dt.df_convert_timezone(
                 df=db_df,
                 datetime_cols=self._datetime_cols_ops,
@@ -2100,19 +1894,14 @@ class Dispatcher:
             db_df = db_df.iloc[-num_last_entries:, :]
 
         df = db_df.filter(items=filter_items)
-        # calculate delta time between start and end
-        # Timedelta
         df['delta'] = df['actual_ending_date'] - df['actual_starting_date']
 
-        # choose relevant processing station property
         proc_station_prop: str
         if use_custom_proc_station_id:
             proc_station_prop = 'res_custom_id'
         else:
             proc_station_prop = 'res_name'
 
-        # check if sorting by processing station is wanted and custom ID should be used or not
-        # sorting
         sort_key: str
         if sort_by_proc_station:
             sort_key = proc_station_prop
@@ -2122,14 +1911,12 @@ class Dispatcher:
         df['job_id'] = df['job_id'].astype(str)
         df = df.sort_values(by=sort_key, ascending=sort_ascending, kind='stable')
 
-        # group by value
         if group_by_exec_system:
             group_by_key = 'prod_area_custom_id'
         else:
             group_by_key = 'job_id'
 
-        # build Gantt chart with Plotly Timeline
-        fig: PlotlyFigure = px.timeline(
+        fig = px.timeline(
             df,
             x_start='actual_starting_date',
             x_end='actual_ending_date',
@@ -2141,15 +1928,21 @@ class Dispatcher:
         fig.update_yaxes(type='category', autorange='reversed')
         if title is not None:
             fig.update_layout(title=title, margin=dict(t=150))
+        start_date_agent = self.env.transient_end_date
+        if start_date_agent is not None:
+            fig.add_vline(
+                x=start_date_agent,
+                line_width=2,
+                line_dash='dash',
+                line_color='black',
+            )
 
         if self.env.debug_dashboard:
-            # send by websocket
             fig_json = cast(str | None, plotly.io.to_json(fig=fig))
             if fig_json is None:
                 raise ValueError('Could not convert figure to JSON. Returned >>None<<.')
             self.env.ws_con.send(fig_json)
-        else:
-            fig.show()
+
         if save_html:
             save_pth = common.prepare_save_paths(
                 base_folder=base_folder,
@@ -2157,7 +1950,7 @@ class Dispatcher:
                 filename=filename,
                 suffix='html',
             )
-            fig.write_html(save_pth, auto_open=False)
+            fig.write_html(save_pth, auto_open=auto_open_html)
 
         if save_img:
             save_pth = common.prepare_save_paths(
@@ -2180,9 +1973,6 @@ class Dispatcher:
         the environment's "finalise_sim" method
         """
         self._calc_cycle_time()
-        # TODO remove
-        # self._job_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._job_db)
-        # self._op_db_date_adjusted = pyf_dt.adjust_db_dates_local_tz(db=self._op_db)
 
     def dashboard_update(self) -> None:
         """
@@ -2199,7 +1989,7 @@ class System(metaclass=ABCMeta):
     def __init__(
         self,
         env: SimulationEnvironment,
-        supersystem: System | None,
+        supersystem: ContainerSystem | None,
         system_type: SimSystemTypes,
         custom_identifier: CustomID,
         abstraction_level: int,
@@ -2214,21 +2004,22 @@ class System(metaclass=ABCMeta):
         self._system_type = system_type
         self._sim_get_prio = sim_get_prio
         self._sim_put_prio = sim_put_prio
-        # subsystem information
-        self.subsystems: dict[SystemID, System] = {}
-        self.subsystems_ids: set[SystemID] = set()
-        self.subsystems_custom_ids: set[CustomID] = set()
+        # # subsystem information
+        # self.subsystems: dict[SystemID, System] = {}
+        # self.subsystems_ids: set[SystemID] = set()
+        # self.subsystems_custom_ids: set[CustomID] = set()
         # supersystem information
-        self.supersystems: dict[SystemID, System] = {}
+        self.supersystems: dict[SystemID, ContainerSystem] = {}
         self.supersystems_ids: set[SystemID] = set()
         self.supersystems_custom_ids: set[CustomID] = set()
         # number of lower levels, how many levels of subsystems are possible
         self._abstraction_level = abstraction_level
         # collection of all associated ProcessingStations
-        self._assoc_proc_stations: tuple[ProcessingStation, ...] = ()
-        self._num_assoc_proc_stations: int = 0
-        # indicator if the system contains processing stations
-        self._containing_proc_stations: bool = False
+        # self._assoc_proc_stations: tuple[ProcessingStation, ...] = ()
+        # self._assoc_proc_stations_sys_ids: frozenset[SystemID]
+        # self._num_assoc_proc_stations: int = 0
+        # # indicator if the system contains processing stations
+        # self._containing_proc_stations: bool = False
 
         infstruct_mgr = self.env.infstruct_mgr
         self._system_id, self._name = infstruct_mgr.register_system(
@@ -2258,14 +2049,6 @@ class System(metaclass=ABCMeta):
         return self._env
 
     @property
-    def assoc_proc_stations(self) -> tuple[ProcessingStation, ...]:
-        return self._assoc_proc_stations
-
-    @property
-    def num_assoc_proc_station(self) -> int:
-        return self._num_assoc_proc_stations
-
-    @property
     def sim_get_prio(self) -> int:
         return self._sim_get_prio
 
@@ -2275,8 +2058,6 @@ class System(metaclass=ABCMeta):
         val: int,
     ) -> None:
         self._sim_get_prio = val
-        for subsystem in self.subsystems.values():
-            subsystem.sim_get_prio = val
 
     @property
     def sim_put_prio(self) -> int:
@@ -2288,8 +2069,6 @@ class System(metaclass=ABCMeta):
         val: int,
     ) -> None:
         self._sim_put_prio = val
-        for subsystem in self.subsystems.values():
-            subsystem.sim_put_prio = val
 
     ### REWORK
     def register_agent(
@@ -2393,24 +2172,10 @@ class System(metaclass=ABCMeta):
     def abstraction_level(self) -> int:
         return self._abstraction_level
 
-    @property
-    def containing_proc_stations(self) -> bool:
-        return self._containing_proc_stations
-
-    @containing_proc_stations.setter
-    def containing_proc_stations(
-        self,
-        val: bool,
-    ) -> None:
-        if not isinstance(val, bool):
-            raise TypeError(f'Type of {val} must be boolean, but is {type(val)}')
-
-        self._containing_proc_stations = val
-
     @staticmethod
     def order_systems(
-        systems: Iterable[System],
-    ) -> list[System]:
+        systems: Iterable[T],
+    ) -> list[T]:
         sys_sorted = sorted(list(systems), key=attrgetter('system_id'), reverse=False)
         return sys_sorted
 
@@ -2453,10 +2218,120 @@ class System(metaclass=ABCMeta):
         """
         return set(self.supersystems.values())
 
+    def add_supersystem(
+        self,
+        supersystem: ContainerSystem[T],
+    ) -> None:
+        if supersystem.system_id not in self.supersystems:
+            self.supersystems[supersystem.system_id] = supersystem
+            self.supersystems_ids.add(supersystem.system_id)
+            self.supersystems_custom_ids.add(supersystem.custom_identifier)
+
+    @abstractmethod
+    def initialise(self) -> None: ...
+
+    @abstractmethod
+    def finalise(self) -> None: ...
+
+
+class ContainerSystem(Generic[T], System):
+    def __init__(
+        self,
+        env: monitors.SimulationEnvironment,
+        supersystem: ContainerSystem | None,
+        system_type: SimSystemTypes,
+        custom_identifier: CustomID,
+        abstraction_level: int,
+        name: str | None = None,
+        state: SimStatesCommon | SimStatesStorage | None = None,
+        sim_get_prio: int = 0,
+        sim_put_prio: int = 0,
+    ) -> None:
+        # indicator if the system contains processing stations
+        self._containing_proc_stations: bool = False
+        # subsystem information
+        self.subsystems: dict[SystemID, T] = {}
+        self.subsystems_ids: set[SystemID] = set()
+        self.subsystems_custom_ids: set[CustomID] = set()
+        # collection of all associated ProcessingStations
+        self._assoc_proc_stations: tuple[ProcessingStation, ...] = ()
+        self._assoc_proc_stations_sys_ids: frozenset[SystemID]
+        self._num_assoc_proc_stations: int = 0
+        # workload distribution
+        self.load_distribution_ideal: LoadDistribution = {}
+
+        super().__init__(
+            env=env,
+            supersystem=supersystem,
+            system_type=system_type,
+            custom_identifier=custom_identifier,
+            abstraction_level=abstraction_level,
+            name=name,
+            state=state,
+            sim_get_prio=sim_get_prio,
+            sim_put_prio=sim_put_prio,
+        )
+
+    @property
+    @override
+    def sim_get_prio(self) -> int:
+        return self._sim_get_prio
+
+    @sim_get_prio.setter
+    @override
+    def sim_get_prio(
+        self,
+        val: int,
+    ) -> None:
+        self._sim_get_prio = val
+        for subsystem in self.subsystems.values():
+            subsystem.sim_get_prio = val
+
+    @property
+    @override
+    def sim_put_prio(self) -> int:
+        return self._sim_put_prio
+
+    @sim_put_prio.setter
+    @override
+    def sim_put_prio(
+        self,
+        val: int,
+    ) -> None:
+        self._sim_put_prio = val
+        for subsystem in self.subsystems.values():
+            subsystem.sim_put_prio = val
+
+    @property
+    def assoc_proc_stations(self) -> tuple[ProcessingStation, ...]:
+        return self._assoc_proc_stations
+
+    @property
+    def assoc_proc_stations_sys_ids(self) -> frozenset[SystemID]:
+        return self._assoc_proc_stations_sys_ids
+
+    @property
+    def num_assoc_proc_station(self) -> int:
+        return self._num_assoc_proc_stations
+
+    @property
+    def containing_proc_stations(self) -> bool:
+        return self._containing_proc_stations
+
+    @containing_proc_stations.setter
+    def containing_proc_stations(
+        self,
+        val: bool,
+    ) -> None:
+        if not isinstance(val, bool):
+            raise TypeError(f'Type of {val} must be boolean, but is {type(val)}')
+
+        self._containing_proc_stations = val
+
     def subsystems_as_list(
         self,
         ordered_sys_id: bool = True,
-    ) -> list[System]:
+    ) -> list[T]:
         """output the associated subsystems as list
 
         Returns
@@ -2472,7 +2347,7 @@ class System(metaclass=ABCMeta):
     def subsystems_as_tuple(
         self,
         ordered_sys_id: bool = True,
-    ) -> tuple[System, ...]:
+    ) -> tuple[T, ...]:
         """output the associated subsystems as tuple
 
         Returns
@@ -2482,7 +2357,7 @@ class System(metaclass=ABCMeta):
         """
         return tuple(self.subsystems_as_list(ordered_sys_id=ordered_sys_id))
 
-    def subsystems_as_set(self) -> set[System]:
+    def subsystems_as_set(self) -> set[T]:
         """output the associated subsystems as set
 
         Returns
@@ -2492,18 +2367,9 @@ class System(metaclass=ABCMeta):
         """
         return set(self.subsystems.values())
 
-    def add_supersystem(
-        self,
-        supersystem: System,
-    ) -> None:
-        if supersystem.system_id not in self.supersystems:
-            self.supersystems[supersystem.system_id] = supersystem
-            self.supersystems_ids.add(supersystem.system_id)
-            self.supersystems_custom_ids.add(supersystem.custom_identifier)
-
     def add_subsystem(
         self,
-        subsystem: System,
+        subsystem: T,
     ) -> None:
         """adding a subsystem to the given supersystem
 
@@ -2539,7 +2405,6 @@ class System(metaclass=ABCMeta):
 
         # register association in corresponding database
         infstruct_mgr = self.env.infstruct_mgr
-        # infstruct_mgr.register_system_association(supersystem=self, subsystem=subsystem)
 
         # check if a processing station was added
         if isinstance(subsystem, ProcessingStation):
@@ -2562,7 +2427,6 @@ class System(metaclass=ABCMeta):
         only_processing_stations: Literal[False] = ...,
     ) -> tuple[InfrastructureObject, ...]: ...
 
-    # @lru_cache(maxsize=3)
     def lowest_level_subsystems(
         self,
         only_processing_stations: bool = False,
@@ -2598,9 +2462,10 @@ class System(metaclass=ABCMeta):
         subsystems = self.subsystems_as_set()
 
         while remaining_abstraction_level > 0:
-            temp: set[System] = set()
+            temp: set[T] = set()
 
             for subsystem in subsystems:
+                subsystem = cast('ContainerSystem[T]', subsystem)
                 children = subsystem.subsystems_as_set()
                 temp |= children
 
@@ -2646,14 +2511,98 @@ class System(metaclass=ABCMeta):
         """
         return max(self.subsystems_ids)
 
-    @abstractmethod
-    def initialise(self) -> None: ...
+    def get_proc_station_availability(self) -> tuple[bool, ...]:
+        return tuple((s.stat_monitor.is_available for s in self.assoc_proc_stations))
 
-    @abstractmethod
-    def finalise(self) -> None: ...
+    def _init_proc_station_properties(self) -> None:
+        """initialise associated processing stations, their IDs and total number
+        convenient to handle only processing stations within a container systems, e.g.,
+        ``ProductionArea`` or ``StationGroup``
+        only valid for container systems (``abstraction_level`` > 0)
+        """
+        self._assoc_proc_stations = self.lowest_level_subsystems(
+            only_processing_stations=True
+        )
+        self._assoc_proc_stations_sys_ids = frozenset(
+            (s.system_id for s in self.assoc_proc_stations)
+        )
+        self._num_assoc_proc_stations = len(self._assoc_proc_stations)
+
+    def _workload_distribution_ideal(self) -> None:
+        stations = self.assoc_proc_stations
+        proc_capas = (s.processing_capacity for s in stations)
+        total_workload_capacity = sum(proc_capas, Timedelta())
+        for stat in stations:
+            self.load_distribution_ideal[stat.system_id] = (
+                stat.processing_capacity / total_workload_capacity
+            )
+
+    def workload_distribution_current(
+        self,
+    ) -> LoadDistribution:
+        proc_capa_perc_map_current: dict[SysIDResource, float] = {}
+        stations = self.assoc_proc_stations
+        workload_current = (s.stat_monitor.WIP_load_time_remaining for s in stations)
+        total_workload_current = sum(workload_current, Timedelta())
+        for s in stations:
+            if total_workload_current > Timedelta():
+                proc_capa_perc_map_current[s.system_id] = (
+                    s.stat_monitor.WIP_load_time_remaining / total_workload_current
+                )
+            else:
+                # no workload --> all machines optimal
+                proc_capa_perc_map_current[s.system_id] = self.load_distribution_ideal[
+                    s.system_id
+                ]
+
+        return proc_capa_perc_map_current
+
+    def workload_distribution_future(
+        self,
+        target_system_id: SystemID,
+        new_load: Timedelta,
+    ) -> LoadDistribution:
+        if target_system_id not in self.assoc_proc_stations_sys_ids:
+            raise ValueError(
+                (
+                    f'No processing station with SystemID '
+                    f'>>{target_system_id}<< associated with {self}.'
+                )
+            )
+
+        proc_capa_perc_map_future: dict[SysIDResource, float] = {}
+        stations = self.assoc_proc_stations
+        workload_current = (s.stat_monitor.WIP_load_time_remaining for s in stations)
+        total_workload_current = sum(workload_current, Timedelta())
+        total_workload_future = total_workload_current + new_load
+
+        for s in stations:
+            if total_workload_future > Timedelta():
+                load_time_remaining = s.stat_monitor.WIP_load_time_remaining
+                if s.system_id == target_system_id:
+                    load_time_remaining += new_load
+                proc_capa_perc_map_future[s.system_id] = (
+                    load_time_remaining / total_workload_future
+                )
+            else:
+                # no workload --> all machines optimal
+                proc_capa_perc_map_future[s.system_id] = self.load_distribution_ideal[
+                    s.system_id
+                ]
+
+        return proc_capa_perc_map_future
+
+    @override
+    def initialise(self) -> None:
+        self._init_proc_station_properties()
+        self._workload_distribution_ideal()
+
+    @override
+    def finalise(self) -> None:
+        pass
 
 
-class ProductionArea(System):
+class ProductionArea(ContainerSystem['StationGroup']):
     def __init__(
         self,
         env: SimulationEnvironment,
@@ -2706,20 +2655,8 @@ class ProductionArea(System):
 
         super().add_subsystem(subsystem=subsystem)
 
-    @override
-    def initialise(self) -> None:
-        # assign associated ProcessingStations and corresponding info
-        self._assoc_proc_stations = self.lowest_level_subsystems(
-            only_processing_stations=True
-        )
-        self._num_assoc_proc_stations = len(self._assoc_proc_stations)
 
-    @override
-    def finalise(self) -> None:
-        pass
-
-
-class StationGroup(System):
+class StationGroup(ContainerSystem['InfrastructureObject']):
     def __init__(
         self,
         env: SimulationEnvironment,
@@ -2740,8 +2677,9 @@ class StationGroup(System):
             name=name,
             state=state,
         )
-
-        return None
+        # # workload distribution
+        # self.load_distribution_ideal: LoadDistribution = {}
+        # self.proc_capa_perc_map_current: dict[SysIDResource, float] = {}
 
     @override
     def add_subsystem(
@@ -2771,17 +2709,82 @@ class StationGroup(System):
 
         super().add_subsystem(subsystem=subsystem)
 
-    @override
-    def initialise(self) -> None:
-        # assign associated ProcessingStations and corresponding info
-        self._assoc_proc_stations = self.lowest_level_subsystems(
-            only_processing_stations=True
-        )
-        self._num_assoc_proc_stations = len(self._assoc_proc_stations)
+    # def _workload_distribution_ideal(self) -> None:
+    #     stations = self.assoc_proc_stations
+    #     proc_capas = (s.processing_capacity for s in stations)
+    #     total_workload_capacity = sum(proc_capas, Timedelta())
+    #     for stat in stations:
+    #         self.load_distribution_ideal[stat.system_id] = (
+    #             stat.processing_capacity / total_workload_capacity
+    #         )
 
-    @override
-    def finalise(self) -> None:
-        pass
+    # def workload_distribution_current(
+    #     self,
+    # ) -> LoadDistribution:
+    #     proc_capa_perc_map_current: dict[SysIDResource, float] = {}
+    #     stations = self.assoc_proc_stations
+    #     workload_current = (s.stat_monitor.WIP_load_time_remaining for s in stations)
+    #     total_workload_current = sum(workload_current, Timedelta())
+    #     for s in stations:
+    #         if total_workload_current > Timedelta():
+    #             proc_capa_perc_map_current[s.system_id] = (
+    #                 s.stat_monitor.WIP_load_time_remaining / total_workload_current
+    #             )
+    #         else:
+    #             # no workload --> all machines optimal
+    #             proc_capa_perc_map_current[s.system_id] = self.load_distribution_ideal[
+    #                 s.system_id
+    #             ]
+
+    #     return proc_capa_perc_map_current
+
+    # def workload_distribution_future(
+    #     self,
+    #     target_system_id: SystemID,
+    #     new_load: Timedelta,
+    # ) -> LoadDistribution:
+    #     if target_system_id not in self.assoc_proc_stations_sys_ids:
+    #         raise ValueError(
+    #             (
+    #                 f'No processing station with SystemID '
+    #                 f'>>{target_system_id}<< associated with {self}.'
+    #             )
+    #         )
+
+    #     proc_capa_perc_map_future: dict[SysIDResource, float] = {}
+    #     stations = self.assoc_proc_stations
+    #     workload_current = (s.stat_monitor.WIP_load_time_remaining for s in stations)
+    #     total_workload_current = sum(workload_current, Timedelta())
+    #     total_workload_future = total_workload_current + new_load
+
+    #     for s in stations:
+    #         if total_workload_future > Timedelta():
+    #             load_time_remaining = s.stat_monitor.WIP_load_time_remaining
+    #             if s.system_id == target_system_id:
+    #                 load_time_remaining += new_load
+    #             proc_capa_perc_map_future[s.system_id] = (
+    #                 load_time_remaining / total_workload_future
+    #             )
+    #         else:
+    #             # no workload --> all machines optimal
+    #             proc_capa_perc_map_future[s.system_id] = self.load_distribution_ideal[
+    #                 s.system_id
+    #             ]
+
+    #     return proc_capa_perc_map_future
+
+    # @override
+    # def initialise(self) -> None:
+    #     super()._init_proc_station_properties()
+    #     self._workload_distribution_ideal()
+
+    # @override
+    # def finalise(self) -> None:
+    #     pass
+
+
+# TODO implement method to generate optimal distribution percentages for each
+# TODO station within a station group
 
 
 # INFRASTRUCTURE COMPONENTS
@@ -2796,11 +2799,13 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         resource_type: SimResourceTypes,
         name: str | None = None,
         setup_time: Timedelta | None = None,
+        processing_capacity: Timedelta = MAX_PROCESSING_CAPACITY,
         capacity: float = INF,
         add_monitor: bool = True,
         current_state: SimStatesCommon | SimStatesStorage = SimStatesCommon.INIT,
     ) -> None:
         self.capacity = capacity
+        self.processing_capacity = self._verify_max_processing_capacity(processing_capacity)
         self._resource_type = resource_type
         # [HIERARCHICAL SYSTEM INFORMATION]
         # contrary to other system types no bucket because a processing station
@@ -2845,10 +2850,14 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         self.logic_queue = salabim.Queue(name=queue_name, env=self.env, monitor=False)
         # currently available jobs on that resource
         self.contents: dict[LoadID, Job] = {}
+        # currently processed job
+        self.current_job: Job | None = None
+        self.current_op: Operation | None = None
+        # TODO remove
         # [STATS] additional information
         # number of inputs/outputs
-        self.num_inputs: int = 0
-        self.num_outputs: int = 0
+        # self.num_inputs: int = 0
+        # self.num_outputs: int = 0
 
         # time characteristics
         self._proc_time: Timedelta = Timedelta.min
@@ -2924,6 +2933,21 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 )
             )
 
+    def _verify_max_processing_capacity(
+        self,
+        processing_capacity: Timedelta,
+    ) -> Timedelta:
+        if processing_capacity > MAX_PROCESSING_CAPACITY:
+            raise ValueError(
+                (
+                    f'Processing capacity of >>{self}<< exceeds '
+                    f'maximum value per 24 hours. Desired capacity: {processing_capacity}, '
+                    f'Maximum allowed: {MAX_PROCESSING_CAPACITY}'
+                )
+            )
+
+        return processing_capacity
+
     def add_content(
         self,
         job: Job,
@@ -2959,26 +2983,31 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # call dispatcher to check for allocation rule
         # resets current feasibility status
         yield self.sim_control.hold(0, priority=self.sim_put_prio)
+        dispatcher.jobs_temp_state(jobs=[job], reset_temp=False)
         loggers.agents.debug('[%s] Checking agent allocation at %s', self, self.env.t_as_dt())
         is_agent, alloc_agent = dispatcher.check_alloc_dispatch(job=job)
         target_station: InfrastructureObject
         if is_agent and alloc_agent is None:
-            raise ValueError('Agent is set, but no agent is provided.')
+            raise ValueError('Agent decision is set, but no agent is provided.')
         elif is_agent and alloc_agent is not None:
             # if agent is set, set flags and calculate feature vector
             # as long as there is no feasible action
+            # TODO check feasibility check procedure after changing
+            # TODO reward calculation to happen before next steps
             while not alloc_agent.action_feasible:
                 # ** SET external Gym flag, build feature vector
                 dispatcher.request_agent_alloc(job=job)
                 # ** Break external loop
-                # ** [only step] Calc reward in Gym-Env
+                # [only STEP] Calc reward in Gym-Env
                 loggers.agents.debug(
                     '--------------- DEBUG: call before hold(0) at %s, %s',
                     self.env.t(),
                     self.env.t_as_dt(),
                 )
                 yield self.sim_control.hold(0, priority=self.sim_put_prio)
-                # ** make and set decision in Gym-Env --> RESET external Gym flag
+                # ** make and set decision in Gym-Env
+                # ** [CHANGED] calculate reward
+                # ** RESET external Gym flag
                 loggers.agents.debug(
                     '--------------- DEBUG: call after hold(0) at %s, %s',
                     self.env.t(),
@@ -2989,17 +3018,18 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                     alloc_agent.action_feasible,
                     alloc_agent.past_action_feasible,
                 )
-
                 # obtain target station, check for feasibility
                 # --> SET ``agent.action_feasible``
                 target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
                 # historic value for reward calculation,
                 # prevent overwrite from ``check_alloc_dispatch``
-                alloc_agent.past_action_feasible = alloc_agent.action_feasible
+                # TODO check removal
+                # alloc_agent.past_action_feasible = alloc_agent.action_feasible
         else:
             # simply obtain target station if no agent decision is needed
             target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
 
+        dispatcher.jobs_temp_state(jobs=[job], reset_temp=True)
         # get logic queue
         logic_queue = target_station.logic_queue
         # check if the target is a sink
@@ -3038,8 +3068,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 buffer.sim_control.activate()
                 # [CONTENT:Buffer] add content
                 buffer.add_content(job=job)
-                # [STATS:Buffer] count number of inputs
-                buffer.num_inputs += 1
+
                 loggers.prod_stations.debug(
                     'obj = %s \t type of buffer >>%s<< = %s at %s',
                     self,
@@ -3069,8 +3098,10 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
         # [STATE:Job] successfully placed --> WAITING
         dispatcher.update_job_state(job=job, state=SimStatesCommon.IDLE)
-        # [STATS:InfrStructObj] count number of outputs
-        self.num_outputs += 1
+        # [CONTENT] remove content
+        self.remove_content(job=job)
+        self.current_job = None
+        self.current_op = None
 
         loggers.prod_stations.debug(
             'From [%s] Updated states and placed job at %s',
@@ -3098,6 +3129,8 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # request job and its time characteristics from associated queue
         yield self.sim_control.hold(0, priority=self.sim_get_prio)
         job = dispatcher.request_job_sequencing(req_obj=self)
+        self.current_job = job
+        self.current_op = job.current_op
         # update time characteristics of the infrastructure object
         # contains additional checks if the target values are allowed
         if job.current_proc_time is None:
@@ -3127,8 +3160,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             if salabim_store is None:
                 raise ValueError('No store object honoured.')
             buffer = self.buffer_by_store_name(salabim_store.name())
-            # [STATS:Buffer] count number of outputs
-            buffer.num_outputs += 1
             # [CONTENT:Buffer] remove content
             buffer.remove_content(job=job)
             # [STATE:Buffer] trigger state setting for target buffer
@@ -3136,8 +3167,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
 
         # RELEVANT INFORMATION BEFORE PROCESSING
         dispatcher.update_job_process_info(job=job, preprocess=True)
-        # [STATS] count number of inputs
-        self.num_inputs += 1
         # [CONTENT] add content
         self.add_content(job=job)
 
@@ -3432,7 +3461,7 @@ class ProcessingStation(InfrastructureObject):
             )
             _ = yield from self.put_job(job=job)
             # [CONTENT:ProdStation] remove content
-            self.remove_content(job=job)
+            # self.remove_content(job=job)
 
     @override
     def post_process(self) -> None:
@@ -3662,10 +3691,6 @@ class Source(InfrastructureObject):
             capacity=capacity,
             current_state=current_state,
         )
-        # TODO REWORK
-        # initialise component with necessary process function
-        self._rng = random.Random(seed)
-
         # parameters
         self.proc_time = proc_time
         if setup_time is not None:
@@ -3684,10 +3709,6 @@ class Source(InfrastructureObject):
 
         # job generator
         self._job_sequence: Iterator[JobGenerationInfo] | None = None
-
-    @property
-    def rng(self) -> random.Random:
-        return self._rng
 
     @property
     def job_sequence(self) -> Iterator[JobGenerationInfo] | None:
@@ -3776,12 +3797,12 @@ class Source(InfrastructureObject):
             # ** prio
             job_gen_info.prio = count
             # ** dates
-            start_date_init = Datetime(2023, 11, 20, hour=6, tzinfo=TIMEZONE_UTC)
-            end_date_init = Datetime(2023, 12, 1, hour=10, tzinfo=TIMEZONE_UTC)
-            order_dates = OrderDates(
-                starting_planned=start_date_init, ending_planned=end_date_init
-            )
-            job_gen_info.dates = order_dates
+            # start_date_init = Datetime(2023, 11, 20, hour=6, tzinfo=TIMEZONE_UTC)
+            # end_date_init = Datetime(2023, 12, 1, hour=10, tzinfo=TIMEZONE_UTC)
+            # order_dates = OrderDates(
+            #     starting_planned=start_date_init, ending_planned=end_date_init
+            # )
+            # job_gen_info.dates = order_dates
 
             job = Job(
                 dispatcher=dispatcher,
@@ -3795,6 +3816,7 @@ class Source(InfrastructureObject):
                 planned_ending_date=job_gen_info.dates.ending_planned,
                 current_state=job_gen_info.current_state,
             )
+            self.add_content(job=job)
 
             loggers.sources.debug(
                 '[SOURCE: %s] Job target station group: %s',
@@ -3803,10 +3825,9 @@ class Source(InfrastructureObject):
             )
             # [Call:DISPATCHER]
             dispatcher.release_job(job=job)
-            # [STATS:Source] count number of inputs
-            # (source: generation of jobs or entry in pipeline)
-            # implemented in 'get_job' method which is not executed by source objects
-            self.num_inputs += 1
+            # [STATS:Source] inputs
+            self.stat_monitor.change_WIP_num(remove=False)
+
             loggers.sources.debug(
                 '[SOURCE: %s] Generated %s at %s', self, job, self.env.t_as_dt()
             )
@@ -3817,6 +3838,8 @@ class Source(InfrastructureObject):
             loggers.sources.debug('Placing by source at %s', self.env.t_as_dt())
             target_proc_station = yield from self.put_job(job=job)
             loggers.sources.debug('[SOURCE] PUT JOB with ret = %s', target_proc_station)
+            # [STATS:Source] outputs
+            self.stat_monitor.change_WIP_num(remove=True)
             # [STATE:Source] put in 'WAITING' by 'put_job' method but still processing
             # only 'WAITING' if all jobs are generated
             infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
@@ -3924,28 +3947,21 @@ class Operation:
         self._target_station_group_identifier = target_station_group_identifier
         self.custom_identifier = custom_identifier
 
-        # [STATS] Monitoring
-        self._stat_monitor = monitors.Monitor(
-            env=self._dispatcher.env,
-            obj=self,
-            current_state=current_state,
-            states=SimStatesCommon,
-        )
-
         # process information
         # time characteristics
         self.proc_time = proc_time
         self.setup_time = setup_time
         self.order_time = self.proc_time + self.setup_time
+        # self.remaining_order_time = self.order_time
         # inter-process time characteristics
         # time of release
         self.time_release = DEFAULT_DATETIME
         # time of first operation starting point
-        self.time_actual_starting = DEFAULT_DATETIME
+        self.time_actual_starting: Datetime | None = None
         # starting date deviation
         self.starting_date_deviation: Timedelta | None = None
         # time of last operation ending point
-        self.time_actual_ending = DEFAULT_DATETIME
+        self.time_actual_ending: Datetime | None = None
         # ending date deviation
         self.ending_date_deviation: Timedelta | None = None
         # lead time
@@ -3969,13 +3985,11 @@ class Operation:
         # assignment of machine instance by dispatcher
         # from dispatcher: op_id, name, target_machine
         # register operation instance
-        # TODO remove
-        # current_state = cast(SimStatesCommon, self._stat_monitor.get_current_state())
 
         # registration: only return OpID, other properties directly
         # written by dispatcher method
         # add target station group by station group identifier
-        self.target_exec_system: System | None = None
+        self.target_exec_system: ProductionArea | None = None
         self.target_station_group: StationGroup | None = None
         self.time_creation: Datetime | None = None
 
@@ -3987,10 +4001,17 @@ class Operation:
             state=current_state,
         )
 
+        # [STATS] Monitoring
+        self._stat_monitor = monitors.OperationMonitor(
+            env=self._dispatcher.env,
+            obj=self,
+            current_state=current_state,
+        )
+
     def __repr__(self) -> str:
         return (
-            f'Operation(ProcTime: {self.proc_time}, '
-            f'ExecutionSystemID: {self._exec_system_identifier}, '
+            f'Operation(LoadID: {self.op_id}, OrderTime: {self.order_time}, '
+            f'ProcTime: {self.proc_time}, ExecutionSystemID: {self._exec_system_identifier}, '
             f'SGI: {self._target_station_group_identifier})'
         )
 
@@ -3999,7 +4020,7 @@ class Operation:
         return self._dispatcher
 
     @property
-    def stat_monitor(self) -> monitors.Monitor:
+    def stat_monitor(self) -> monitors.OperationMonitor:
         return self._stat_monitor
 
     @property
@@ -4052,6 +4073,36 @@ class Operation:
         else:
             self._prio = new_prio
             # REWORK changing OP prio must change job prio but only if op is job's current one
+
+    # def _calc_slack(self) -> None:
+    #     if self.time_planned_ending is not None:
+    #         env = self.dispatcher.env
+    #         curr_time = env.t_as_dt()
+    #         time_till_due = self.time_planned_ending - curr_time
+    #         self.slack = time_till_due - self.remaining_order_time
+
+    #         loggers.operations.debug('[%s] Calculated slack as %s', self, self.slack)
+
+    # def _calc_remaining_order_time(self) -> None:
+    #     if self.time_actual_starting is not None:
+    #         env = self.dispatcher.env
+    #         curr_time = env.t_as_dt()
+    #         delta = curr_time - self.time_actual_starting
+    #         if delta > self.order_time:
+    #             self.remaining_order_time = Timedelta()
+    #         else:
+    #             self.remaining_order_time = self.order_time - delta
+
+    #     loggers.operations.debug(
+    #         '[%s] Calculated remaining order time as %s, total: %s',
+    #         self,
+    #         self.remaining_order_time,
+    #         self.order_time,
+    #     )
+
+    # def calc_KPI(self) -> None:
+    #     self._calc_remaining_order_time()
+    #     self._calc_slack()
 
 
 class Job(salabim.Component):
@@ -4110,7 +4161,8 @@ class Job(salabim.Component):
             # operation-wise defined starting dates
             # datetime validation done in operation class
             op_starting_dates = planned_starting_date
-            self.time_planned_starting = None
+            # obtain info from first OP
+            self.time_planned_starting = planned_starting_date[0]
             # job starting date later set by 'get_next_operation' method
             self.op_wise_starting_date = True
         else:
@@ -4125,7 +4177,8 @@ class Job(salabim.Component):
             # operation-wise defined ending dates
             # datetime validation done in operation class
             op_ending_dates = planned_ending_date
-            self.time_planned_ending = None
+            # obtain info from last OP
+            self.time_planned_ending = planned_ending_date[-1]
             # job ending date later set by 'get_next_operation' method
             self.op_wise_ending_date = True
         else:
@@ -4187,9 +4240,11 @@ class Job(salabim.Component):
         self.job_type: str = 'Job'
         self._dispatcher = dispatcher
         # sum of the proc times of each operation
-        self.total_proc_time = sum(proc_times, Timedelta())
-        self.total_setup_time = sum(setup_times, Timedelta())
-        self.total_order_time = self.total_proc_time + self.total_setup_time
+        self.proc_time = sum(proc_times, Timedelta())
+        self.setup_time = sum(setup_times, Timedelta())
+        self.order_time = self.proc_time + self.setup_time
+        # self.remaining_order_time = self.total_order_time
+        # self.slack: Timedelta = Timedelta()
 
         # inter-process job state parameters
         # first operation scheduled --> released job
@@ -4202,9 +4257,9 @@ class Job(salabim.Component):
 
         # inter-process time characteristics
         self.time_release = DEFAULT_DATETIME
-        self.time_actual_starting = DEFAULT_DATETIME
+        self.time_actual_starting: Datetime | None = None
         self.starting_date_deviation: Timedelta | None = None
-        self.time_actual_ending = DEFAULT_DATETIME
+        self.time_actual_ending: Datetime | None = None
         self.ending_date_deviation: Timedelta | None = None
         self.lead_time = Timedelta()
         self.time_creation = DEFAULT_DATETIME
@@ -4212,17 +4267,7 @@ class Job(salabim.Component):
         # current resource location
         self._current_resource: InfrastructureObject | None = None
 
-        # [STATS] Monitoring
-        self._stat_monitor = monitors.Monitor(
-            env=self._dispatcher.env,
-            obj=self,
-            current_state=current_state,
-            states=SimStatesCommon,
-        )
-
         # register job instance
-        current_state = cast(SimStatesCommon, self._stat_monitor.get_current_state())
-
         env, self._job_id = self._dispatcher.register_job(
             job=self, custom_identifier=self.custom_identifier, state=current_state
         )
@@ -4269,12 +4314,25 @@ class Job(salabim.Component):
         ### ADDITIONAL INFORMATION ###
         self.additional_info = additional_info
 
+        # [STATS] Monitoring
+        self._stat_monitor = monitors.JobMonitor(
+            env=self._dispatcher.env,
+            obj=self,
+            current_state=current_state,
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f'Job(LoadID: {self.job_id}, OrderTime: {self.order_time}, '
+            f'ProcTime: {self.proc_time}, Finished OPs: {self.num_finished_ops})'
+        )
+
     @property
     def dispatcher(self) -> Dispatcher:
         return self._dispatcher
 
     @property
-    def stat_monitor(self) -> monitors.Monitor:
+    def stat_monitor(self) -> monitors.JobMonitor:
         return self._stat_monitor
 
     @property
@@ -4334,3 +4392,32 @@ class Job(salabim.Component):
             )
         else:
             self._current_resource = obj
+
+    # def _calc_slack(self) -> None:
+    #     if self.time_planned_ending is not None:
+    #         env = self.dispatcher.env
+    #         curr_time = env.t_as_dt()
+    #         time_till_due = self.time_planned_ending - curr_time
+    #         self.slack = time_till_due - self.remaining_order_time
+
+    #         loggers.jobs.debug('[%s] Calculated slack as %s', self, self.slack)
+
+    # def _calc_remaining_order_time(self) -> None:
+    #     remaining_order_time: Timedelta = Timedelta()
+    #     for op in self.open_operations:
+    #         remaining_order_time += op.remaining_order_time
+
+    #     self.remaining_order_time = remaining_order_time
+
+    #     loggers.operations.debug(
+    #         '[%s] Calculated remaining order time as %s, total: %s',
+    #         self,
+    #         self.remaining_order_time,
+    #         self.order_time,
+    #     )
+
+    # def calc_KPI(self) -> None:
+    #     for op in self.open_operations:
+    #         op.calc_KPI()
+    #     self._calc_remaining_order_time()
+    #     self._calc_slack()
