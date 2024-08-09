@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Generic, TypeVar, cast
 from typing_extensions import override
 
 import pandas as pd
@@ -14,16 +14,24 @@ from pyforcesim import datetime as pyf_dt
 from pyforcesim import loggers
 from pyforcesim.common import enum_str_values_as_frzset
 from pyforcesim.constants import (
+    EPSILON,
     HELPER_STATES,
     INF,
+    PROCESSING_PROPERTIES,
     UTIL_PROPERTIES,
     SimStatesAvailability,
     SimStatesCommon,
     SimStatesStorage,
     TimeUnitsTimedelta,
-    EPSILON,
 )
-from pyforcesim.types import PlotlyFigure
+
+# from pyforcesim.simulation.environment import (
+#     InfrastructureObject,
+#     Job,
+#     Operation,
+#     SimulationEnvironment,
+# )
+from pyforcesim.types import LoadObjects, MonitorObjects, PlotlyFigure
 
 if TYPE_CHECKING:
     from pyforcesim.simulation.environment import (
@@ -34,12 +42,15 @@ if TYPE_CHECKING:
         StorageLike,
     )
 
+T = TypeVar('T', bound=MonitorObjects)
+L = TypeVar('L', bound=LoadObjects)
 
-class Monitor:
+
+class Monitor(Generic[T]):
     def __init__(
         self,
         env: SimulationEnvironment,
-        obj: InfrastructureObject | Job | Operation,
+        obj: T,
         current_state: SimStatesCommon | SimStatesStorage = SimStatesCommon.INIT,
         states: type[SimStatesCommon | SimStatesStorage] = SimStatesCommon,
     ) -> None:
@@ -92,6 +103,8 @@ class Monitor:
         # time components
         self.time_total: Timedelta = Timedelta()
         self.time_non_helpers: Timedelta = Timedelta()
+        self.time_utilisation: Timedelta = Timedelta()
+        self.time_processing: Timedelta = Timedelta()
 
         # time handling
         # loggers.monitors.debug('Monitor states: %s', self.states_possible)
@@ -105,7 +118,7 @@ class Monitor:
         return self._env
 
     @property
-    def target_object(self) -> InfrastructureObject | Job | Operation:
+    def target_object(self) -> T:
         return self._target_object
 
     def get_current_state(self) -> SimStatesCommon | SimStatesStorage:
@@ -199,7 +212,7 @@ class Monitor:
                 )
             )
 
-    def calc_time_proportions(
+    def _KPI_time_proportions(
         self,
     ) -> None:
         calc_utilisation: bool = False
@@ -209,35 +222,27 @@ class Monitor:
         time_total = Timedelta()
         time_non_helpers = Timedelta()
         time_utilisation = Timedelta()
+        time_processing = Timedelta()
 
         for state, duration in self.state_times.items():
             time_total += duration
             if state not in HELPER_STATES:
                 time_non_helpers += duration
+            if state in PROCESSING_PROPERTIES:
+                time_processing += duration
             if calc_utilisation and state in UTIL_PROPERTIES:
                 time_utilisation += duration
 
         self.time_total = time_total
         self.time_non_helpers = time_non_helpers
+        self.time_processing = time_processing
         if calc_utilisation:
             self.time_utilisation = time_utilisation
 
     def calc_KPI(self) -> None:
         """calculates different KPIs at any point in time"""
         # state durations for analysis
-        self.calc_time_proportions()
-
-        # Utilisation
-        # if hasattr(self, 'utilisation') and self.time_total.total_seconds() > 0:
-        # if hasattr(self, 'utilisation') and self.time_non_helpers.total_seconds() > 0:
-        #     # self.utilisation = self.time_utilisation / self.time_total
-        #     self.utilisation = self.time_utilisation / self.time_non_helpers
-        #     loggers.monitors.debug(
-        #         'Utilisation of %s: %.3f at %s',
-        #         self.target_object,
-        #         self.utilisation,
-        #         self.env.t_as_dt(),
-        #     )
+        self._KPI_time_proportions()
 
     def state_durations_as_df(self) -> DataFrame:
         """Calculates absolute and relative state durations at the current time
@@ -332,7 +337,139 @@ class Monitor:
         return fig
 
 
-class StorageMonitor(Monitor):
+class LoadMonitor(Monitor[L]):
+    def __init__(
+        self,
+        env: SimulationEnvironment,
+        obj: L,
+        current_state: SimStatesCommon = SimStatesCommon.INIT,
+    ) -> None:
+        super().__init__(
+            env=env,
+            obj=obj,
+            current_state=current_state,
+            states=SimStatesCommon,
+        )
+        self.remaining_order_time = self.target_object.order_time
+        self.slack: Timedelta = Timedelta()
+
+    def slack_time_units(
+        self,
+        time_unit: TimeUnitsTimedelta,
+    ) -> float:
+        return self.slack / pyf_dt.timedelta_from_val(1.0, time_unit)
+
+    @property
+    def slack_hours(self) -> float:
+        return self.slack_time_units(TimeUnitsTimedelta.HOURS)
+
+
+class JobMonitor(LoadMonitor['Job']):
+    def __init__(
+        self,
+        env: SimulationEnvironment,
+        obj: Job,
+        current_state: SimStatesCommon = SimStatesCommon.INIT,
+    ) -> None:
+        super().__init__(
+            env=env,
+            obj=obj,
+            current_state=current_state,
+        )
+
+    def _KPI_remaining_order_time(self) -> None:
+        # !! make sure that all open operations' KPIs are calculated
+        remaining_order_time: Timedelta = Timedelta()
+        for op in self.target_object.open_operations:
+            remaining_order_time += op.stat_monitor.remaining_order_time
+        # !! make sure that time proportions are calculated
+        self.remaining_order_time = remaining_order_time
+
+        loggers.operations.debug(
+            '[%s] Calculated remaining order time as %s, total: %s at %s',
+            self,
+            self.remaining_order_time,
+            self.target_object.order_time,
+            self.env.t_as_dt(),
+        )
+
+    def _KPI_slack(self) -> None:
+        time_planned_ending = self.target_object.time_planned_ending
+        if time_planned_ending is not None:
+            curr_time = self.env.t_as_dt()
+            time_till_due = time_planned_ending - curr_time
+            # !! make sure that remaining order time is calculated
+            self.slack = time_till_due - self.remaining_order_time
+
+            loggers.jobs.debug(
+                '[%s] Calculated slack as %.4f h at %s. Planned ending date: %s',
+                self,
+                self.slack_hours,
+                curr_time,
+                time_planned_ending,
+            )
+
+    @override
+    def calc_KPI(self) -> None:
+        super().calc_KPI()  # especially time proportions
+        for op in self.target_object.open_operations:
+            op.stat_monitor.calc_KPI()
+        self._KPI_remaining_order_time()
+        self._KPI_slack()
+
+
+class OperationMonitor(LoadMonitor['Operation']):
+    def __init__(
+        self,
+        env: SimulationEnvironment,
+        obj: Operation,
+        current_state: SimStatesCommon = SimStatesCommon.INIT,
+    ) -> None:
+        super().__init__(
+            env=env,
+            obj=obj,
+            current_state=current_state,
+        )
+
+    def _KPI_remaining_order_time(self) -> None:
+        time_actual_starting = self.target_object.time_actual_starting
+        total_order_time = self.target_object.order_time
+        if time_actual_starting is not None:
+            # !! make sure that time proportions are calculated
+            self.remaining_order_time = total_order_time - self.time_processing
+
+        loggers.operations.debug(
+            '[%s] Calculated remaining order time as %s, total: %s at %s',
+            self,
+            self.remaining_order_time,
+            self.target_object.order_time,
+            self.env.t_as_dt(),
+        )
+
+    def _KPI_slack(self) -> None:
+        time_planned_ending = self.target_object.time_planned_ending
+        if time_planned_ending is not None:
+            curr_time = self.env.t_as_dt()
+            time_till_due = time_planned_ending - curr_time
+            # !! make sure that remaining order time is calculated
+            self.slack = time_till_due - self.remaining_order_time
+
+            loggers.operations.debug(
+                '[%s] Calculated slack as %.4f h at %s. Planned ending date: %s',
+                self,
+                self.slack_hours,
+                curr_time,
+                time_planned_ending,
+            )
+
+    @override
+    def calc_KPI(self) -> None:
+        super().calc_KPI()  # especially time proportions
+        self._KPI_remaining_order_time()  # needed fo slack
+        self._KPI_slack()
+
+
+class StorageMonitor(Monitor['StorageLike']):
     def __init__(
         self,
         env: SimulationEnvironment,
@@ -363,14 +500,6 @@ class StorageMonitor(Monitor):
         # self._fill_level_starting_time: float = self.env.now()
         self._fill_level_starting_time: Datetime = self.env.t_as_dt()
         self._wei_avg_fill_level: float | None = None
-
-        # overwrite
-        self._target_object = obj
-
-    @property
-    @override
-    def target_object(self) -> StorageLike:
-        return self._target_object
 
     @property
     def wei_avg_fill_level(self) -> float | None:
@@ -491,7 +620,7 @@ class StorageMonitor(Monitor):
         return fig
 
 
-class InfStructMonitor(Monitor):
+class InfStructMonitor(Monitor['InfrastructureObject']):
     def __init__(
         self,
         env: SimulationEnvironment,
@@ -505,7 +634,6 @@ class InfStructMonitor(Monitor):
             current_state=current_state,
             states=SimStatesCommon,
         )
-
         # WIP tracking time load
         self._WIP_time_db_types = {
             'sim_time': object,
@@ -591,6 +719,9 @@ class InfStructMonitor(Monitor):
         if current_op is None:
             self.time_op_processed = Timedelta()
             self.time_op_remaining = Timedelta()
+        elif current_op.time_actual_starting is None:
+            self.time_op_processed = Timedelta()
+            self.time_op_remaining = current_op.order_time
         else:
             current_sim_time = self.env.t_as_dt()
             time_op_processed = current_sim_time - current_op.time_actual_starting

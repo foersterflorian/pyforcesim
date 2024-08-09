@@ -935,9 +935,9 @@ class Dispatcher:
             'type': job.job_type,
             'prio': job.prio,
             'state': state,
-            'total_order_time': job.total_order_time,
-            'total_proc_time': job.total_proc_time,
-            'total_setup_time': job.total_setup_time,
+            'total_order_time': job.order_time,
+            'total_proc_time': job.proc_time,
+            'total_setup_time': job.setup_time,
             'creation_date': creation_date,
             'release_date': job.time_release,
             'planned_starting_date': job.time_planned_starting,
@@ -1071,7 +1071,7 @@ class Dispatcher:
             raise ValueError(
                 'Can not update job info because current operation is not available.'
             )
-        job.calc_KPI()
+        # job.stat_monitor.calc_KPI()
         if preprocess:
             # operation enters Processing Station
             # if first operation of given job add job's starting information
@@ -1087,17 +1087,26 @@ class Dispatcher:
         self,
         job: Job,
         state: SimStatesCommon,
+        reset_temp: bool = False,
     ) -> None:
         """method to update the state of a job in the job database"""
+        # check if 'TEMP' state should be reset
+        if reset_temp:
+            # special reset method, calls state setting to previous state
+            job.stat_monitor.reset_temp_state()
+            state = cast(SimStatesCommon, job.stat_monitor.state_current)
+        else:
+            job.stat_monitor.set_state(target_state=state)
+
         # update state tracking of the job instance
-        job.stat_monitor.set_state(target_state=state)
+        # job.stat_monitor.set_state(target_state=state)
         # update job database
         self.update_job_db(job=job, property='state', val=state)
         # only update operation state if it is not finished
         # operations are finished by post-process call to their 'finalise' method
         # update state of the corresponding operation
-        if job.current_op is not None:
-            self.update_operation_state(op=job.current_op, state=state)
+        for op in job.operations:
+            self.update_operation_state(op=op, state=state, reset_temp=reset_temp)
 
     def get_next_operation(
         self,
@@ -1277,10 +1286,18 @@ class Dispatcher:
         self,
         op: Operation,
         state: SimStatesCommon,
+        reset_temp: bool = False,
     ) -> None:
         """method to update the state of a operation in the operation database"""
         # update state tracking of the operation instance
-        op.stat_monitor.set_state(target_state=state)
+        if reset_temp:
+            # special reset method, calls state setting to previous state
+            op.stat_monitor.reset_temp_state()
+            state = cast(SimStatesCommon, op.stat_monitor.state_current)
+        else:
+            op.stat_monitor.set_state(target_state=state)
+
+        # op.stat_monitor.set_state(target_state=state)
         # update operation database
         self.update_operation_db(op=op, property='state', val=state)
 
@@ -1371,6 +1388,23 @@ class Dispatcher:
         op.stat_monitor.finalise_stats()
         # remove from open operations
         op.job.open_operations.popleft()
+
+    def jobs_temp_state(
+        self,
+        jobs: Iterable[Job],
+        reset_temp: bool,
+    ) -> None:
+        """Sets/resets all jobs to/from the 'TEMP' state
+
+        Parameters
+        ----------
+        set_temp : bool
+            indicates if the temp state should be set or reset
+        """
+        for job in jobs:
+            self.update_job_state(job=job, state=SimStatesCommon.TEMP, reset_temp=reset_temp)
+            if not reset_temp:
+                job.stat_monitor.calc_KPI()  # also calculation of every OP
 
     ### PROPERTIES ###
     @property
@@ -1730,8 +1764,12 @@ class Dispatcher:
         else:
             raise ValueError('No sequencing policy defined.')
 
-        job_collection = cast(list[Job], queue.as_list())
+        job_collection = cast(tuple[Job, ...], tuple(queue.as_list()))
+        loggers.dispatcher.debug('[DISPATCHER] Set relevant jobs in >>TEMP state<<')
+        self.jobs_temp_state(jobs=job_collection, reset_temp=False)
         job = policy.apply(items=job_collection)
+        loggers.dispatcher.debug('[DISPATCHER] Reset jobs from >>TEMP state<<')
+        self.jobs_temp_state(jobs=job_collection, reset_temp=True)
         queue.remove(job)
 
         return job
@@ -2945,6 +2983,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # call dispatcher to check for allocation rule
         # resets current feasibility status
         yield self.sim_control.hold(0, priority=self.sim_put_prio)
+        dispatcher.jobs_temp_state(jobs=[job], reset_temp=False)
         loggers.agents.debug('[%s] Checking agent allocation at %s', self, self.env.t_as_dt())
         is_agent, alloc_agent = dispatcher.check_alloc_dispatch(job=job)
         target_station: InfrastructureObject
@@ -2990,6 +3029,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             # simply obtain target station if no agent decision is needed
             target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
 
+        dispatcher.jobs_temp_state(jobs=[job], reset_temp=True)
         # get logic queue
         logic_queue = target_station.logic_queue
         # check if the target is a sink
@@ -3907,20 +3947,12 @@ class Operation:
         self._target_station_group_identifier = target_station_group_identifier
         self.custom_identifier = custom_identifier
 
-        # [STATS] Monitoring
-        self._stat_monitor = monitors.Monitor(
-            env=self._dispatcher.env,
-            obj=self,
-            current_state=current_state,
-            states=SimStatesCommon,
-        )
-
         # process information
         # time characteristics
         self.proc_time = proc_time
         self.setup_time = setup_time
         self.order_time = self.proc_time + self.setup_time
-        self.remaining_order_time = self.order_time
+        # self.remaining_order_time = self.order_time
         # inter-process time characteristics
         # time of release
         self.time_release = DEFAULT_DATETIME
@@ -3969,10 +4001,17 @@ class Operation:
             state=current_state,
         )
 
+        # [STATS] Monitoring
+        self._stat_monitor = monitors.OperationMonitor(
+            env=self._dispatcher.env,
+            obj=self,
+            current_state=current_state,
+        )
+
     def __repr__(self) -> str:
         return (
-            f'Operation(OrderTime: {self.order_time}, ProcTime: {self.proc_time}, '
-            f'ExecutionSystemID: {self._exec_system_identifier}, '
+            f'Operation(LoadID: {self.op_id}, OrderTime: {self.order_time}, '
+            f'ProcTime: {self.proc_time}, ExecutionSystemID: {self._exec_system_identifier}, '
             f'SGI: {self._target_station_group_identifier})'
         )
 
@@ -3981,7 +4020,7 @@ class Operation:
         return self._dispatcher
 
     @property
-    def stat_monitor(self) -> monitors.Monitor:
+    def stat_monitor(self) -> monitors.OperationMonitor:
         return self._stat_monitor
 
     @property
@@ -4035,32 +4074,35 @@ class Operation:
             self._prio = new_prio
             # REWORK changing OP prio must change job prio but only if op is job's current one
 
-    def _calc_slack(self) -> None:
-        if self.time_planned_ending is not None:
-            env = self.dispatcher.env
-            curr_time = env.t_as_dt()
-            time_till_due = self.time_planned_ending - curr_time
-            self.slack = time_till_due - self.order_time
+    # def _calc_slack(self) -> None:
+    #     if self.time_planned_ending is not None:
+    #         env = self.dispatcher.env
+    #         curr_time = env.t_as_dt()
+    #         time_till_due = self.time_planned_ending - curr_time
+    #         self.slack = time_till_due - self.remaining_order_time
 
-            loggers.operations.debug('[%s] Calculated slack as %s', self, self.slack)
+    #         loggers.operations.debug('[%s] Calculated slack as %s', self, self.slack)
 
-    def _calc_remaining_order_time(self) -> None:
-        if self.time_actual_starting is not None:
-            env = self.dispatcher.env
-            curr_time = env.t_as_dt()
-            delta = curr_time - self.time_actual_starting
-            self.remaining_order_time = self.order_time - delta
+    # def _calc_remaining_order_time(self) -> None:
+    #     if self.time_actual_starting is not None:
+    #         env = self.dispatcher.env
+    #         curr_time = env.t_as_dt()
+    #         delta = curr_time - self.time_actual_starting
+    #         if delta > self.order_time:
+    #             self.remaining_order_time = Timedelta()
+    #         else:
+    #             self.remaining_order_time = self.order_time - delta
 
-        loggers.operations.debug(
-            '[%s] Calculated remaining order time as %s, total: %s',
-            self,
-            self.remaining_order_time,
-            self.order_time,
-        )
+    #     loggers.operations.debug(
+    #         '[%s] Calculated remaining order time as %s, total: %s',
+    #         self,
+    #         self.remaining_order_time,
+    #         self.order_time,
+    #     )
 
-    def calc_KPI(self) -> None:
-        self._calc_slack()
-        self._calc_remaining_order_time()
+    # def calc_KPI(self) -> None:
+    #     self._calc_remaining_order_time()
+    #     self._calc_slack()
 
 
 class Job(salabim.Component):
@@ -4198,11 +4240,11 @@ class Job(salabim.Component):
         self.job_type: str = 'Job'
         self._dispatcher = dispatcher
         # sum of the proc times of each operation
-        self.total_proc_time = sum(proc_times, Timedelta())
-        self.total_setup_time = sum(setup_times, Timedelta())
-        self.total_order_time = self.total_proc_time + self.total_setup_time
-        self.remaining_order_time = self.total_order_time
-        self.slack: Timedelta = Timedelta()
+        self.proc_time = sum(proc_times, Timedelta())
+        self.setup_time = sum(setup_times, Timedelta())
+        self.order_time = self.proc_time + self.setup_time
+        # self.remaining_order_time = self.total_order_time
+        # self.slack: Timedelta = Timedelta()
 
         # inter-process job state parameters
         # first operation scheduled --> released job
@@ -4225,17 +4267,7 @@ class Job(salabim.Component):
         # current resource location
         self._current_resource: InfrastructureObject | None = None
 
-        # [STATS] Monitoring
-        self._stat_monitor = monitors.Monitor(
-            env=self._dispatcher.env,
-            obj=self,
-            current_state=current_state,
-            states=SimStatesCommon,
-        )
-
         # register job instance
-        current_state = cast(SimStatesCommon, self._stat_monitor.get_current_state())
-
         env, self._job_id = self._dispatcher.register_job(
             job=self, custom_identifier=self.custom_identifier, state=current_state
         )
@@ -4282,12 +4314,25 @@ class Job(salabim.Component):
         ### ADDITIONAL INFORMATION ###
         self.additional_info = additional_info
 
+        # [STATS] Monitoring
+        self._stat_monitor = monitors.JobMonitor(
+            env=self._dispatcher.env,
+            obj=self,
+            current_state=current_state,
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f'Job(LoadID: {self.job_id}, OrderTime: {self.order_time}, '
+            f'ProcTime: {self.proc_time}, Finished OPs: {self.num_finished_ops})'
+        )
+
     @property
     def dispatcher(self) -> Dispatcher:
         return self._dispatcher
 
     @property
-    def stat_monitor(self) -> monitors.Monitor:
+    def stat_monitor(self) -> monitors.JobMonitor:
         return self._stat_monitor
 
     @property
@@ -4348,38 +4393,31 @@ class Job(salabim.Component):
         else:
             self._current_resource = obj
 
-    def _calc_slack(self) -> None:
-        if self.time_planned_ending is not None:
-            env = self.dispatcher.env
-            curr_time = env.t_as_dt()
-            time_till_due = self.time_planned_ending - curr_time
-            self.slack = time_till_due - self.remaining_order_time
+    # def _calc_slack(self) -> None:
+    #     if self.time_planned_ending is not None:
+    #         env = self.dispatcher.env
+    #         curr_time = env.t_as_dt()
+    #         time_till_due = self.time_planned_ending - curr_time
+    #         self.slack = time_till_due - self.remaining_order_time
 
-            loggers.jobs.debug('[%s] Calculated slack as %s', self, self.slack)
+    #         loggers.jobs.debug('[%s] Calculated slack as %s', self, self.slack)
 
-    def _calc_remaining_order_time(self) -> None:
-        remaining_order_time: Timedelta = Timedelta()
-        for op in self.open_operations:
-            remaining_order_time += op.remaining_order_time
+    # def _calc_remaining_order_time(self) -> None:
+    #     remaining_order_time: Timedelta = Timedelta()
+    #     for op in self.open_operations:
+    #         remaining_order_time += op.remaining_order_time
 
-        self.remaining_order_time = remaining_order_time
+    #     self.remaining_order_time = remaining_order_time
 
-        # if self.time_actual_starting is not None and self.current_order_time is not None:
-        #     env = self.dispatcher.env
-        #     curr_time = env.t_as_dt()
-        #     delta = curr_time - self.time_actual_starting
+    #     loggers.operations.debug(
+    #         '[%s] Calculated remaining order time as %s, total: %s',
+    #         self,
+    #         self.remaining_order_time,
+    #         self.order_time,
+    #     )
 
-        #     self.remaining_order_time = remaining_order_time
-
-        loggers.operations.debug(
-            '[%s] Calculated remaining order time as %s, total: %s',
-            self,
-            self.remaining_order_time,
-            self.total_order_time,
-        )
-
-    def calc_KPI(self) -> None:
-        for op in self.open_operations:
-            op.calc_KPI()
-        self._calc_slack()
-        self._calc_remaining_order_time()
+    # def calc_KPI(self) -> None:
+    #     for op in self.open_operations:
+    #         op.calc_KPI()
+    #     self._calc_remaining_order_time()
+    #     self._calc_slack()

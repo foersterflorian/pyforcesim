@@ -45,6 +45,10 @@ FlattableObject: TypeAlias = (
 SystemID = NewType('SystemID', int)
 CustomID = NewType('CustomID', str)
 LoadID = NewType('LoadID', int)
+MonitorObjects: TypeAlias = (
+    'sim.InfrastructureObject | sim.StorageLike | sim.Job | sim.Operation'
+)
+LoadObjects: TypeAlias = 'sim.Job | sim.Operation'
 OrderPriority: TypeAlias = int
 Infinite: TypeAlias = float
 StateTimes: TypeAlias = dict[str, Timedelta]

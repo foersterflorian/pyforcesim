@@ -161,6 +161,12 @@ UTIL_PROPERTIES: Final[frozenset[SimStatesCommon]] = frozenset(
         SimStatesCommon.PAUSED,
     ]
 )
+PROCESSING_PROPERTIES: Final[frozenset[SimStatesCommon]] = frozenset(
+    [
+        SimStatesCommon.PROCESSING,
+        SimStatesCommon.SETUP,
+    ]
+)
 HELPER_STATES: Final[frozenset[SimStatesCommon]] = frozenset(
     [
         SimStatesCommon.INIT,
