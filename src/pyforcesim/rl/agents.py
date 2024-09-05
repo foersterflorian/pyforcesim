@@ -436,6 +436,7 @@ class AllocationAgent(Agent['ProductionArea']):
             raise ValueError(f'Current order time of job {job} >>None<<')
         norm_td = pyf_dt.timedelta_from_val(1.0, TimeUnitsTimedelta.HOURS)
         order_time = job.current_order_time / norm_td
+        slack = job.stat_monitor.slack_hours
         # current op: obtain StationGroupID
         current_op = job.current_op
         if current_op is not None:
@@ -446,7 +447,7 @@ class AllocationAgent(Agent['ProductionArea']):
             )
         if job_SGI is None:
             raise ValueError('Station Group ID of current operation is None.')
-        job_info = (job_SGI, order_time)
+        job_info = (job_SGI, order_time, slack)
         job_info_arr = np.array(job_info, dtype=np.float32)
         # resources
         # needed properties
@@ -551,7 +552,39 @@ class AllocationAgent(Agent['ProductionArea']):
 
         return reward
 
-    def reward_slack(self) -> float: ...
+    @staticmethod
+    def _reward_sigmoid(
+        x: float,
+        beta: float = 1.0,
+    ) -> float:
+        return x / (abs(x) + beta)
+
+    def reward_slack(
+        self,
+        target_station_group: StationGroup,
+        chosen_station: ProcessingStation,
+        op_reward: Operation,
+        beta_sigmoid: float = 1.0,
+    ) -> float:
+        # current slack
+        job = op_reward.job
+        current_slack = job.stat_monitor.slack_hours
+        # calc average slack
+        workload_total = target_station_group.workload_current(total=True)
+        workload_capacity_total = target_station_group.processing_capacities(total=True)
+        t_till_work_done = workload_total / workload_capacity_total
+        slack_average = current_slack - t_till_work_done
+        # calc actual slack (only applicable if FIFO is chosen -> deterministic behaviour)
+        workload_station = chosen_station.stat_monitor.WIP_load_time_remaining
+        workload_capacity_station = chosen_station.processing_capacity
+        t_till_work_done_station = workload_station / workload_capacity_station
+        slack_actual = current_slack - t_till_work_done_station
+        # calc reward as difference between average and actual slack
+        slack_delta = slack_actual - slack_average
+        # use sigmoid curvature: increased slack positive, decreased negative
+        reward = self._reward_sigmoid(slack_delta, beta=beta_sigmoid)
+
+        return reward
 
     @override
     def calc_reward(self) -> float:
@@ -579,11 +612,16 @@ class AllocationAgent(Agent['ProductionArea']):
         reward: float
         if self.action_feasible:
             # load_distribution_current = target_station.workload_distribution_current()
-            reward = self.reward_load_balancing(
+            # reward = self.reward_load_balancing(
+            #     target_station_group=target_station_group,
+            #     chosen_station=chosen_station,
+            #     op_reward=op_rew,
+            #     enable_masking=False,
+            # )
+            reward = self.reward_slack(
                 target_station_group=target_station_group,
                 chosen_station=chosen_station,
                 op_reward=op_rew,
-                enable_masking=False,
             )
 
         else:

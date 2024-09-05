@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 USE_TRAIN_CONFIG: Final[bool] = False
 NORMALISE_OBS: Final[bool] = True
 NUM_EPISODES: Final[int] = 1
-FILENAME_TARGET_MODEL: Final[str] = '2024-08-02--22-05-29_pyf_sim_PPO_mask_TS-999999'
+FILENAME_TARGET_MODEL: Final[str] = '2024-09-05--19-47-42_pyf_sim_PPO_mask_TS-999999'
 
 model_properties_pattern = re.compile(r'(?:pyf_sim_)([\w]+)_(TS-[\d]+)$')
 matches = model_properties_pattern.search(FILENAME_TARGET_MODEL)
@@ -40,7 +40,7 @@ ALGO_TYPE: Final[str] = matches.group(1)
 TIMESTEPS: Final[str] = matches.group(2)
 
 # USER_TARGET_FOLDER: Final[str] = '2024-06-24-01__1-3-7__ConstIdeal__Util'
-USER_TARGET_FOLDER: Final[str] = '2024-08-02-01__1-3-7__VarIdeal__Util'
+USER_TARGET_FOLDER: Final[str] = '2024-09-05-01__1-3-7__VarIdeal__Util'
 USER_FOLDER: Final[str] = f'results/{USER_TARGET_FOLDER}'
 user_exp_type_pattern = re.compile(
     r'^([\d\-]*)(?:[_]*)([\d\-]*)(?:[_]*)([a-zA-Z]*)(?:[_]*)([a-zA-Z]*)$'
@@ -50,7 +50,7 @@ if matches is None:
     raise ValueError(f'Experiment type could not be extracted out of: {USER_TARGET_FOLDER}')
 
 USER_EXP_TYPE: Final[str] = f'{matches.group(2)}_{matches.group(3)}'
-USER_RNG_SEED: Final[int] = 42
+USER_RNG_SEED: Final[int] = 41
 
 ROOT_FOLDER = USER_FOLDER
 ROOT_EXP_TYPE = USER_EXP_TYPE

@@ -86,9 +86,9 @@ class JSSEnv(gym.Env):
         # observation: N_machines * (res_sys_SGI, avail, WIP_time)
         machine_low = np.array([min_SGI, 0, 0])
         machine_high = np.array([max_SGI, 1, MAX_WIP_TIME])
-        # observation jobs: (job_SGI, order_time)
-        job_low = np.array([0, 0])
-        job_high = np.array([max_SGI, 100])
+        # observation jobs: (job_SGI, order_time, slack_current)
+        job_low = np.array([0, 0, -1000])
+        job_high = np.array([max_SGI, 100, 1000])
 
         low = np.tile(machine_low, n_machines)
         high = np.tile(machine_high, n_machines)

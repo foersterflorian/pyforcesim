@@ -2530,20 +2530,64 @@ class ContainerSystem(Generic[T], System):
 
     def _workload_distribution_ideal(self) -> None:
         stations = self.assoc_proc_stations
-        proc_capas = (s.processing_capacity for s in stations)
-        total_workload_capacity = sum(proc_capas, Timedelta())
+        total_workload_capacity = self.processing_capacities(total=True)
         for stat in stations:
             self.load_distribution_ideal[stat.system_id] = (
                 stat.processing_capacity / total_workload_capacity
             )
+
+    @overload
+    def processing_capacities(
+        self,
+        total: Literal[True],
+    ) -> Timedelta: ...
+
+    @overload
+    def processing_capacities(
+        self,
+        total: Literal[False] = ...,
+    ) -> tuple[Timedelta, ...]: ...
+
+    def processing_capacities(
+        self,
+        total: bool = False,
+    ) -> tuple[Timedelta, ...] | Timedelta:
+        stations = self.assoc_proc_stations
+        proc_capas = tuple((s.processing_capacity for s in stations))
+        if total:
+            proc_capas = sum(proc_capas, Timedelta())
+
+        return proc_capas
+
+    @overload
+    def workload_current(
+        self,
+        total: Literal[True],
+    ) -> Timedelta: ...
+
+    @overload
+    def workload_current(
+        self,
+        total: Literal[False] = ...,
+    ) -> tuple[Timedelta, ...]: ...
+
+    def workload_current(
+        self,
+        total: bool = False,
+    ) -> tuple[Timedelta, ...] | Timedelta:
+        stations = self.assoc_proc_stations
+        workload_current = tuple((s.stat_monitor.WIP_load_time_remaining for s in stations))
+        if total:
+            workload_current = sum(workload_current, Timedelta())
+
+        return workload_current
 
     def workload_distribution_current(
         self,
     ) -> LoadDistribution:
         proc_capa_perc_map_current: dict[SysIDResource, float] = {}
         stations = self.assoc_proc_stations
-        workload_current = (s.stat_monitor.WIP_load_time_remaining for s in stations)
-        total_workload_current = sum(workload_current, Timedelta())
+        total_workload_current = self.workload_current(total=True)
         for s in stations:
             if total_workload_current > Timedelta():
                 proc_capa_perc_map_current[s.system_id] = (
@@ -2572,8 +2616,7 @@ class ContainerSystem(Generic[T], System):
 
         proc_capa_perc_map_future: dict[SysIDResource, float] = {}
         stations = self.assoc_proc_stations
-        workload_current = (s.stat_monitor.WIP_load_time_remaining for s in stations)
-        total_workload_current = sum(workload_current, Timedelta())
+        total_workload_current = self.workload_current(total=True)
         total_workload_future = total_workload_current + new_load
 
         for s in stations:

@@ -559,7 +559,7 @@ def standard_env_1_3_7_VarIdeal(
         supersystem=group_source,
         custom_identifier=CustomID('source'),
         proc_time=order_time_source,
-        job_generation_limit=28,  # 1400
+        job_generation_limit=1400,  # 1400
     )
     # sink
     area_sink = sim.ProductionArea(
@@ -678,7 +678,7 @@ def standard_env_1_3_7_VarIdeal_validate(
         supersystem=group_source,
         custom_identifier=CustomID('source'),
         proc_time=order_time_source,
-        job_generation_limit=1800,  # 1400
+        job_generation_limit=1400,  # 1400
     )
     # sink
     area_sink = sim.ProductionArea(
