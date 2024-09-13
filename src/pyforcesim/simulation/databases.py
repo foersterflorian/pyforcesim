@@ -93,8 +93,12 @@ operations = Table(
 )
 
 
-def get_engine() -> sql.Engine:
-    engine = sql.create_engine(DB_HANDLE, echo=DB_ECHO)
+def get_engine(
+    db_handle: str | None,
+) -> sql.Engine:
+    if db_handle is None:
+        db_handle = DB_HANDLE
+    engine = sql.create_engine(db_handle, echo=DB_ECHO)
     return engine
 
 

@@ -109,6 +109,7 @@ class JSSEnv(gym.Env):
         self.gantt_chart_on_termination = gantt_chart_on_termination
         # external properties to handle callbacks and termination actions
         self.last_gantt_chart: PlotlyFigure | None = None
+        self.last_job_db: DataFrame | None = None
         self.last_op_db: DataFrame | None = None
         self.cycle_time: Timedelta | None = None
         self.sim_utilisation: float | None = None
@@ -237,6 +238,7 @@ class JSSEnv(gym.Env):
         self.sim_env.finalise()
         if gantt_chart:
             self.last_gantt_chart = self.draw_gantt_chart(sort_by_proc_station=True)
+        self.last_job_db = self.sim_env.dispatcher.job_db
         self.last_op_db = self.sim_env.dispatcher.op_db
         self.cycle_time = self.sim_env.dispatcher.cycle_time
         mean_util = np.mean(self.sim_env.infstruct_mgr.final_utilisations)

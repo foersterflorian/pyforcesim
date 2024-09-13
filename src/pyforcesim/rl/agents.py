@@ -559,7 +559,38 @@ class AllocationAgent(Agent['ProductionArea']):
     ) -> float:
         return x / (abs(x) + beta)
 
-    def reward_slack(
+    @staticmethod
+    def _reward_gaussian(
+        x: float,
+        b: float = 0.0,
+        c: float = 1.0,
+    ) -> float:
+        return 2 * np.exp(-np.power((x - b), 2) / (2 * np.power(c, 2))) - 1
+
+    def reward_slack_delta_current(
+        self,
+        chosen_station: ProcessingStation,
+        c_gaussian: float = 2.5,
+    ) -> float:
+        # current slack
+        # job = op_reward.job
+        # slack_current = job.stat_monitor.slack_hours
+        # calc average slack
+        # workload_total = target_station_group.workload_current(total=True)
+        # workload_capacity_total = target_station_group.processing_capacities(total=True)
+        # t_till_work_done = workload_total / workload_capacity_total
+        # slack_average = current_slack - t_till_work_done
+        # calc actual slack (only applicable if FIFO is chosen -> deterministic behaviour)
+        workload_station = chosen_station.stat_monitor.WIP_load_time_remaining
+        workload_capacity_station = chosen_station.processing_capacity
+        t_till_work_done_station = workload_station / workload_capacity_station
+        slack_delta = -t_till_work_done_station
+
+        reward = self._reward_gaussian(slack_delta, c=c_gaussian)
+
+        return reward
+
+    def reward_slack_estimate(
         self,
         target_station_group: StationGroup,
         chosen_station: ProcessingStation,
@@ -618,10 +649,13 @@ class AllocationAgent(Agent['ProductionArea']):
             #     op_reward=op_rew,
             #     enable_masking=False,
             # )
-            reward = self.reward_slack(
-                target_station_group=target_station_group,
+            # reward = self.reward_slack_estimate(
+            #     target_station_group=target_station_group,
+            #     chosen_station=chosen_station,
+            #     op_reward=op_rew,
+            # )
+            reward = self.reward_slack_delta_current(
                 chosen_station=chosen_station,
-                op_reward=op_rew,
             )
 
         else:

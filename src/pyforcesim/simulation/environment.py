@@ -39,7 +39,6 @@ from pyforcesim.constants import (
     POLICIES_ALLOC,
     POLICIES_SEQ,
     TIMEZONE_CEST,
-    TIMEZONE_UTC,
     SimResourceTypes,
     SimStatesCommon,
     SimStatesStorage,
@@ -71,8 +70,6 @@ from pyforcesim.types import (
     JobGenerationInfo,
     LoadDistribution,
     LoadID,
-    OrderDates,
-    OrderTimes,
     PlotlyFigure,
     SalabimTimeUnits,
     SysIDResource,
@@ -118,6 +115,7 @@ class SimulationEnvironment(salabim.Environment):
         time_unit: SalabimTimeUnits = 'seconds',
         starting_datetime: Datetime | None = None,
         local_timezone: TZInfo = TIMEZONE_CEST,
+        db_handle: str | None = None,
         debug_dashboard: bool = False,
         seed: int | None = DEFAULT_SEED,
         check_agent_feasibility: bool = True,
@@ -175,7 +173,7 @@ class SimulationEnvironment(salabim.Environment):
         self.duration_transient: Timedelta | None = None
         self.transient_end_date: Datetime | None = None
         # ** databases
-        self.db_engine = db.get_engine()
+        self.db_engine = db.get_engine(db_handle)
         # databases
         db.metadata_obj.create_all(self.db_engine)
         # ** debug dashboard
@@ -3946,7 +3944,6 @@ class Sink(InfrastructureObject):
                 yield self.sim_control.passivate()
             loggers.sinks.debug('[SINK: %s] is getting job from queue', self)
             job = cast(Job, self.logic_queue.pop())
-            # [Call:DISPATCHER] data collection: finalise job
             dispatcher.finish_job(job=job)
             # TODO write finalised job information to database (disk)
 

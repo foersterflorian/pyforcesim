@@ -100,7 +100,7 @@ def export_gantt_chart(
     episode_num: int,
     cum_reward: float,
     auto_open_html: bool = False,
-):
+) -> None:
     gantt_chart = env.last_gantt_chart
     if gantt_chart is None:
         raise ValueError('Gantt chart is >>None<<')
@@ -142,6 +142,39 @@ def export_gantt_chart(
     gantt_chart.write_html(save_pth, auto_open=auto_open_html)
 
 
+def export_dbs(
+    env: JSSEnv,
+    is_benchmark: bool,
+    episode_num: int,
+) -> None:
+    filename_base = f'{ALGO_TYPE}_{TIMESTEPS}_Episode_{episode_num}'
+    filename_job_db = f'{filename_base}-job-db'
+    filename_op_db = f'{filename_base}-op-db'
+    if is_benchmark:
+        filename_job_db = f'Benchmark_Episode_{episode_num}_job-db'
+        filename_op_db = f'Benchmark_Episode_{episode_num}_op-db'
+
+    save_pth_job_db = common.prepare_save_paths(
+        base_folder=ROOT_FOLDER,
+        target_folder=None,
+        filename=filename_job_db,
+        suffix='pkl',
+    )
+    save_pth_op_db = common.prepare_save_paths(
+        base_folder=ROOT_FOLDER,
+        target_folder=None,
+        filename=filename_op_db,
+        suffix='pkl',
+    )
+    job_db = env.last_job_db
+    op_db = env.last_op_db
+    if job_db is not None and op_db is not None:
+        job_db.to_pickle(save_pth_job_db)
+        op_db.to_pickle(save_pth_op_db)
+    else:
+        raise ValueError('Either job DB or operation DB >>None<<')
+
+
 def callback(locals, *_):
     done = cast(bool, locals['done'])
 
@@ -170,6 +203,11 @@ def callback(locals, *_):
         episode_num=(episode_num + 1),
         cum_reward=cum_reward,
         auto_open_html=True,
+    )
+    export_dbs(
+        env=env,
+        is_benchmark=False,
+        episode_num=(episode_num + 1),
     )
 
 
@@ -252,6 +290,11 @@ def eval_agent_benchmark(
             episode_num=(episode_num + 1),
             cum_reward=cum_reward,
             auto_open_html=True,
+        )
+        export_dbs(
+            env=env,
+            is_benchmark=True,
+            episode_num=(episode_num + 1),
         )
 
     mean_episode_reward = np.mean(episodes_cum_rewards)
