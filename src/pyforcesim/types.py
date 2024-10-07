@@ -13,6 +13,7 @@ from typing import (
     Protocol,
     TypeAlias,
     TypedDict,
+    TypeVar,
 )
 
 from plotly.graph_objs._figure import Figure
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
     from pyforcesim.constants import SimStatesCommon
     from pyforcesim.rl import agents
     from pyforcesim.simulation import environment as sim
+
+T = TypeVar('T')
 
 
 # ** logging
@@ -64,6 +67,18 @@ SalabimTimeUnits: TypeAlias = Literal[
 ]
 TimeTillDue: TypeAlias = Timedelta
 DueDate: TypeAlias = Datetime
+
+
+class QueueLike(Protocol[T]):
+    def env(self) -> sim.SimulationEnvironment: ...
+    def custom_identifier(self) -> CustomID: ...
+    def name(self) -> str: ...
+    def pop(self, index: int | None = None) -> T: ...
+    def append(self, item: T) -> None: ...
+    def remove(self, item: Any) -> None: ...
+    def as_list(self) -> list[T]: ...
+    def __getitem__(self, index: int) -> T: ...
+    def __len__(self) -> int: ...
 
 
 @dataclass(kw_only=True, slots=True, eq=False, match_args=False)

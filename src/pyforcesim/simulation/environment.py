@@ -71,6 +71,7 @@ from pyforcesim.types import (
     LoadDistribution,
     LoadID,
     PlotlyFigure,
+    QueueLike,
     SalabimTimeUnits,
     SysIDResource,
     SystemID,
@@ -78,6 +79,7 @@ from pyforcesim.types import (
 
 # ** constants
 T = TypeVar('T', bound='System')
+J = TypeVar('J')
 # definition of routing system level
 EXEC_SYSTEM_TYPE: Final = SimSystemTypes.PRODUCTION_AREA
 # time after a store request is failed
@@ -327,17 +329,19 @@ class InfrastructureManager:
         self._prod_areas: dict[SystemID, ProductionArea] = {}
         self._prod_area_counter = SystemID(0)
         self._prod_area_custom_identifiers: set[CustomID] = set()
-
-        # [STATION GROUPS]
+        # STATION GROUPS
         self._station_groups: dict[SystemID, StationGroup] = {}
         self._station_group_counter = SystemID(0)
         self._station_groups_custom_identifiers: set[CustomID] = set()
-
-        # [RESOURCES]
+        # RESOURCES
         self._resources: dict[SystemID, InfrastructureObject] = {}
         self._res_counter = SystemID(0)
         self._res_custom_identifiers: set[CustomID] = set()
         self.final_utilisations: list[float] = []
+        # LOGICAL QUEUES
+        self._logical_queues: dict[SystemID, LogicalQueue[Job]] = {}
+        self._logical_queue_counter = SystemID(0)
+        self._logical_queue_custom_identifiers: set[CustomID] = set()
         # [RESOURCES] sink: pool of sinks possible to allow multiple sinks in one environment
         # [PERHAPS CHANGED LATER]
         # currently only one sink out of the pool is chosen because jobs do not contain
@@ -364,6 +368,10 @@ class InfrastructureManager:
     def resources(self) -> dict[SystemID, InfrastructureObject]:
         return self._resources
 
+    @property
+    def logical_queues(self) -> dict[SystemID, LogicalQueue[Job]]:
+        return self._logical_queues
+
     def get_total_per_system_type(
         self,
         system_type: SimSystemTypes,
@@ -388,6 +396,8 @@ class InfrastructureManager:
                 return self._station_group_counter
             case SimSystemTypes.RESOURCE:
                 return self._res_counter
+            case SimSystemTypes.LOGICAL_QUEUE:
+                return self._logical_queue_counter
 
     ####################################################################################
     ## REWORK TO WORK WITH DIFFERENT SUBSYSTEMS
@@ -428,8 +438,37 @@ class InfrastructureManager:
             case SimSystemTypes.RESOURCE:
                 system_id = self._res_counter
                 self._res_counter += 1
+            case SimSystemTypes.LOGICAL_QUEUE:
+                system_id = self._logical_queue_counter
+                self._logical_queue_counter += 1
 
         return system_id
+
+    def register_logical_queue(
+        self,
+        queue: LogicalQueue[Job],
+        custom_identifier: CustomID,
+        name: str | None,
+    ) -> tuple[SystemID, str]:
+        # obtain system ID
+        system_id = self._obtain_system_id(system_type=SimSystemTypes.LOGICAL_QUEUE)
+        # custom name
+        if name is None:
+            name = f'{type(queue).__name__}_env_{system_id}'
+        # add to database
+        entry = {
+            'sys_id': system_id,
+            'custom_id': custom_identifier,
+            'name': name,
+        }
+        # execute insertion
+        with self.env.db_engine.connect() as conn:
+            conn.execute(sql.insert(db.logical_queues), entry)
+            conn.commit()
+        # add to object lookup
+        self.logical_queues[system_id] = queue
+
+        return system_id, name
 
     def register_system(
         self,
@@ -438,6 +477,7 @@ class InfrastructureManager:
         obj: System,
         custom_identifier: CustomID,
         name: str | None,
+        logical_queue: LogicalQueue[Job] | None = None,
         state: SimStatesCommon | SimStatesStorage | None = None,
     ) -> tuple[SystemID, str]:
         if system_type not in self._system_types:
@@ -523,6 +563,13 @@ class InfrastructureManager:
                             f'must be of type >>StationGroup<<'
                         )
                     )
+                elif logical_queue is None:
+                    raise ValueError(
+                        (
+                            f'Logical queue must be provided for '
+                            f'>>{SimSystemTypes.RESOURCE}<< objects'
+                        )
+                    )
                 if state is None:
                     raise ValueError('State can not be >>None<<.')
                 obj = cast('InfrastructureObject', obj)
@@ -530,6 +577,7 @@ class InfrastructureManager:
                 entry = {
                     'sys_id': system_id,
                     'stat_group_id': supersystem.system_id,
+                    'logical_queue_id': logical_queue.system_id,
                     'custom_id': custom_identifier,
                     'name': name,
                     'type': obj.resource_type,
@@ -598,11 +646,18 @@ class InfrastructureManager:
         system_id: SystemID,
     ) -> InfrastructureObject: ...
 
+    @overload
+    def get_system_by_id(
+        self,
+        system_type: Literal[SimSystemTypes.LOGICAL_QUEUE],
+        system_id: SystemID,
+    ) -> LogicalQueue[Job]: ...
+
     def get_system_by_id(
         self,
         system_type: SimSystemTypes,
         system_id: SystemID,
-    ) -> ProductionArea | StationGroup | InfrastructureObject:
+    ) -> ProductionArea | StationGroup | InfrastructureObject | LogicalQueue[Job]:
         match system_type:
             case SimSystemTypes.PRODUCTION_AREA:
                 return self.prod_areas[system_id]
@@ -610,6 +665,8 @@ class InfrastructureManager:
                 return self.station_groups[system_id]
             case SimSystemTypes.RESOURCE:
                 return self.resources[system_id]
+            case SimSystemTypes.LOGICAL_QUEUE:
+                return self.logical_queues[system_id]
 
     def lookup_subsystem_info(
         self,
@@ -633,6 +690,8 @@ class InfrastructureManager:
                 lookup_db = db.station_groups
             case SimSystemTypes.RESOURCE:
                 lookup_db = db.resources
+            case SimSystemTypes.LOGICAL_QUEUE:
+                lookup_db = db.logical_queues
 
         lookup_property: str
         if use_sys_id:
@@ -1711,6 +1770,7 @@ class Dispatcher:
 
         return target_station
 
+    # TODO add agent
     def request_job_sequencing(
         self,
         req_obj: InfrastructureObject,
@@ -1735,24 +1795,23 @@ class Dispatcher:
 
         # get logic queue of requesting object
         # contains all feasible jobs for this resource
-        logic_queue = req_obj.logic_queue
+        logical_queue = req_obj.logical_queue
         # get job from logic queue with currently defined priority rule
-        job = self._seq_priority_rule(req_obj=req_obj, queue=logic_queue)
+        job = self._seq_priority_rule(req_obj=req_obj, queue=logical_queue)
         # reset environment signal for SEQUENCING
         if job.current_proc_time is None:
             raise ValueError(f'No processing time defined for job {job}.')
 
         return job
 
-    # TODO policy-based decision making
     def _seq_priority_rule(
         self,
         req_obj: InfrastructureObject,
-        queue: salabim.Queue,
+        queue: LogicalQueue[Job],
     ) -> Job:
         """apply priority rules to a pool of jobs"""
 
-        # ** Allocation Rules
+        # ** Sequencing Rules
         # first use requesting object, then Dispatcher (global)
         policy: GeneralPolicy | SequencingPolicy
         if req_obj.seq_policy is not None:
@@ -1762,7 +1821,7 @@ class Dispatcher:
         else:
             raise ValueError('No sequencing policy defined.')
 
-        job_collection = cast(tuple[Job, ...], tuple(queue.as_list()))
+        job_collection = tuple(queue.as_list())
         loggers.dispatcher.debug('[DISPATCHER] Set relevant jobs in >>TEMP state<<')
         self.jobs_temp_state(jobs=job_collection, reset_temp=False)
         job = policy.apply(items=job_collection)
@@ -1993,6 +2052,7 @@ class System(metaclass=ABCMeta):
         abstraction_level: int,
         name: str | None = None,
         state: SimStatesCommon | SimStatesStorage | None = None,
+        logical_queue: LogicalQueue[Job] | None = None,
         sim_get_prio: int = 0,
         sim_put_prio: int = 0,
     ) -> None:
@@ -2002,22 +2062,12 @@ class System(metaclass=ABCMeta):
         self._system_type = system_type
         self._sim_get_prio = sim_get_prio
         self._sim_put_prio = sim_put_prio
-        # # subsystem information
-        # self.subsystems: dict[SystemID, System] = {}
-        # self.subsystems_ids: set[SystemID] = set()
-        # self.subsystems_custom_ids: set[CustomID] = set()
         # supersystem information
         self.supersystems: dict[SystemID, ContainerSystem] = {}
         self.supersystems_ids: set[SystemID] = set()
         self.supersystems_custom_ids: set[CustomID] = set()
         # number of lower levels, how many levels of subsystems are possible
         self._abstraction_level = abstraction_level
-        # collection of all associated ProcessingStations
-        # self._assoc_proc_stations: tuple[ProcessingStation, ...] = ()
-        # self._assoc_proc_stations_sys_ids: frozenset[SystemID]
-        # self._num_assoc_proc_stations: int = 0
-        # # indicator if the system contains processing stations
-        # self._containing_proc_stations: bool = False
 
         infstruct_mgr = self.env.infstruct_mgr
         self._system_id, self._name = infstruct_mgr.register_system(
@@ -2027,6 +2077,7 @@ class System(metaclass=ABCMeta):
             custom_identifier=custom_identifier,
             name=name,
             state=state,
+            logical_queue=logical_queue,
         )
         self._custom_identifier = custom_identifier
 
@@ -2037,7 +2088,7 @@ class System(metaclass=ABCMeta):
         self.alloc_policy: GeneralPolicy | AllocationPolicy | None = None
 
         # [AGENT] decision agent
-        self._agent_types: set[str] = set(['SEQ', 'ALLOC'])
+        self._agent_types: frozenset[AgentTasks] = frozenset(['SEQ', 'ALLOC'])
         self._alloc_agent_registered: bool = False
         # assignment
         self._alloc_agent: AllocationAgent | None = None
@@ -2235,7 +2286,7 @@ class System(metaclass=ABCMeta):
 class ContainerSystem(Generic[T], System):
     def __init__(
         self,
-        env: monitors.SimulationEnvironment,
+        env: SimulationEnvironment,
         supersystem: ContainerSystem | None,
         system_type: SimSystemTypes,
         custom_identifier: CustomID,
@@ -2643,6 +2694,58 @@ class ContainerSystem(Generic[T], System):
         pass
 
 
+class LogicalQueue(System, QueueLike[J]):
+    def __init__(
+        self,
+        env: monitors.SimulationEnvironment,
+        custom_identifier: CustomID,
+        name: str | None = None,
+    ) -> None:
+        super().__init__(
+            env=env,
+            supersystem=None,
+            system_type=SimSystemTypes.LOGICAL_QUEUE,
+            custom_identifier=custom_identifier,
+            abstraction_level=100,
+            name=name,
+            state=None,
+        )
+
+        self._sim_queue = salabim.Queue(env=env, name=self.name, monitor=False)
+
+    @property
+    def sim_queue(self) -> salabim.Queue:
+        return self._sim_queue
+
+    def __getitem__(self, index: int) -> J:
+        return self.sim_queue[index]  # type: ignore
+
+    def __len__(self) -> int:
+        return len(self.sim_queue)
+
+    def append(self, item: J) -> None:
+        self.sim_queue.append(item)  # type: ignore
+
+    def pop(self, index: int | None = None) -> J:
+        if index is None:
+            index = 0
+        return self.sim_queue.pop(index)  # type: ignore
+
+    def remove(self, item: Any) -> None:
+        self.sim_queue.remove(item)  # type: ignore
+
+    def as_list(self) -> list[J]:
+        return self.sim_queue.as_list()
+
+    @override
+    def initialise(self) -> None:
+        pass
+
+    @override
+    def finalise(self) -> None:
+        pass
+
+
 class ProductionArea(ContainerSystem['StationGroup']):
     def __init__(
         self,
@@ -2718,9 +2821,6 @@ class StationGroup(ContainerSystem['InfrastructureObject']):
             name=name,
             state=state,
         )
-        # # workload distribution
-        # self.load_distribution_ideal: LoadDistribution = {}
-        # self.proc_capa_perc_map_current: dict[SysIDResource, float] = {}
 
     @override
     def add_subsystem(
@@ -2750,83 +2850,6 @@ class StationGroup(ContainerSystem['InfrastructureObject']):
 
         super().add_subsystem(subsystem=subsystem)
 
-    # def _workload_distribution_ideal(self) -> None:
-    #     stations = self.assoc_proc_stations
-    #     proc_capas = (s.processing_capacity for s in stations)
-    #     total_workload_capacity = sum(proc_capas, Timedelta())
-    #     for stat in stations:
-    #         self.load_distribution_ideal[stat.system_id] = (
-    #             stat.processing_capacity / total_workload_capacity
-    #         )
-
-    # def workload_distribution_current(
-    #     self,
-    # ) -> LoadDistribution:
-    #     proc_capa_perc_map_current: dict[SysIDResource, float] = {}
-    #     stations = self.assoc_proc_stations
-    #     workload_current = (s.stat_monitor.WIP_load_time_remaining for s in stations)
-    #     total_workload_current = sum(workload_current, Timedelta())
-    #     for s in stations:
-    #         if total_workload_current > Timedelta():
-    #             proc_capa_perc_map_current[s.system_id] = (
-    #                 s.stat_monitor.WIP_load_time_remaining / total_workload_current
-    #             )
-    #         else:
-    #             # no workload --> all machines optimal
-    #             proc_capa_perc_map_current[s.system_id] = self.load_distribution_ideal[
-    #                 s.system_id
-    #             ]
-
-    #     return proc_capa_perc_map_current
-
-    # def workload_distribution_future(
-    #     self,
-    #     target_system_id: SystemID,
-    #     new_load: Timedelta,
-    # ) -> LoadDistribution:
-    #     if target_system_id not in self.assoc_proc_stations_sys_ids:
-    #         raise ValueError(
-    #             (
-    #                 f'No processing station with SystemID '
-    #                 f'>>{target_system_id}<< associated with {self}.'
-    #             )
-    #         )
-
-    #     proc_capa_perc_map_future: dict[SysIDResource, float] = {}
-    #     stations = self.assoc_proc_stations
-    #     workload_current = (s.stat_monitor.WIP_load_time_remaining for s in stations)
-    #     total_workload_current = sum(workload_current, Timedelta())
-    #     total_workload_future = total_workload_current + new_load
-
-    #     for s in stations:
-    #         if total_workload_future > Timedelta():
-    #             load_time_remaining = s.stat_monitor.WIP_load_time_remaining
-    #             if s.system_id == target_system_id:
-    #                 load_time_remaining += new_load
-    #             proc_capa_perc_map_future[s.system_id] = (
-    #                 load_time_remaining / total_workload_future
-    #             )
-    #         else:
-    #             # no workload --> all machines optimal
-    #             proc_capa_perc_map_future[s.system_id] = self.load_distribution_ideal[
-    #                 s.system_id
-    #             ]
-
-    #     return proc_capa_perc_map_future
-
-    # @override
-    # def initialise(self) -> None:
-    #     super()._init_proc_station_properties()
-    #     self._workload_distribution_ideal()
-
-    # @override
-    # def finalise(self) -> None:
-    #     pass
-
-
-# TODO implement method to generate optimal distribution percentages for each
-# TODO station within a station group
-
 
 # INFRASTRUCTURE COMPONENTS
 
@@ -2838,6 +2861,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         supersystem: StationGroup,
         custom_identifier: CustomID,
         resource_type: SimResourceTypes,
+        logical_queue: LogicalQueue[Job] | None = None,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         processing_capacity: Timedelta = MAX_PROCESSING_CAPACITY,
@@ -2853,6 +2877,11 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # is the smallest unit in the system view/analysis
         # initialise base class >>System<<
         # calls to Infrastructure Manager to register object
+        log_queue: LogicalQueue[Job] | None = logical_queue
+        if log_queue is None:
+            custom_id_log_queue = CustomID(custom_identifier + '_logical_queue')
+            log_queue = LogicalQueue(env=env, custom_identifier=custom_id_log_queue)
+
         super().__init__(
             env=env,
             supersystem=supersystem,
@@ -2861,7 +2890,9 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             abstraction_level=0,
             name=name,
             state=current_state,
+            logical_queue=log_queue,
         )
+        self._logical_queue = log_queue
         # [STATS] Monitoring
         if add_monitor:
             if not isinstance(current_state, SimStatesCommon):
@@ -2884,11 +2915,12 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             sim_logic=self.sim_logic,
             post_process=self.post_process,
         )
+        # TODO check removal old logical queue
         # [LOGIC] logic queue
         # each resource uses one associated logic queue, logic queues are not
         # physically available
-        queue_name: str = f'queue_{self.name}'
-        self.logic_queue = salabim.Queue(name=queue_name, env=self.env, monitor=False)
+        # queue_name: str = f'queue_{self.name}'
+        # self.logic_queue = salabim.Queue(name=queue_name, env=self.env, monitor=False)
         # currently available jobs on that resource
         self.contents: dict[LoadID, Job] = {}
         # currently processed job
@@ -2923,6 +2955,10 @@ class InfrastructureObject(System, metaclass=ABCMeta):
     @property
     def sim_control(self) -> SimulationComponent:
         return self._sim_control
+
+    @property
+    def logical_queue(self) -> LogicalQueue[Job]:
+        return self._logical_queue
 
     @property
     def use_const_setup_time(self) -> bool:
@@ -3033,8 +3069,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         elif is_agent and alloc_agent is not None:
             # if agent is set, set flags and calculate feature vector
             # as long as there is no feasible action
-            # TODO check feasibility check procedure after changing
-            # TODO reward calculation to happen before next steps
             while not alloc_agent.action_feasible:
                 # ** SET external Gym flag, build feature vector
                 dispatcher.request_agent_alloc(job=job)
@@ -3062,17 +3096,13 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 # obtain target station, check for feasibility
                 # --> SET ``agent.action_feasible``
                 target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
-                # historic value for reward calculation,
-                # prevent overwrite from ``check_alloc_dispatch``
-                # TODO check removal
-                # alloc_agent.past_action_feasible = alloc_agent.action_feasible
         else:
             # simply obtain target station if no agent decision is needed
             target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
 
         dispatcher.jobs_temp_state(jobs=[job], reset_temp=True)
         # get logic queue
-        logic_queue = target_station.logic_queue
+        logical_queue = target_station.logical_queue
         # check if the target is a sink
         if isinstance(target_station, Sink):
             loggers.prod_stations.debug('Placing in sink at %s', self.env.t_as_dt())
@@ -3119,7 +3149,9 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 )
 
         # [Job] enter logic queue after physical placement
-        job.enter(logic_queue)
+        logical_queue.append(job)
+        # TODO check removal
+        # job.enter(logical_queue)
         # [STATS:WIP] REMOVING WIP FROM CURRENT STATION
         # remove only if it was added before, only case if the last operation exists
         if job.last_op is not None:
@@ -3133,7 +3165,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         if target_station.sim_control.ispassive():
             target_station.sim_control.activate()
 
-        loggers.prod_stations.debug('[%s] Put Job %s in queue %s', self, job, logic_queue)
+        loggers.prod_stations.debug('[%s] Put Job %s in queue %s', self, job, logical_queue)
 
         # [STATE:InfrStructObj] WAITING
         infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
@@ -3276,6 +3308,7 @@ class StorageLike(InfrastructureObject):
         supersystem: StationGroup,
         custom_identifier: CustomID,
         resource_type: SimResourceTypes,
+        logical_queue: LogicalQueue[Job] | None = None,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: int | Infinite = INF,
@@ -3287,6 +3320,7 @@ class StorageLike(InfrastructureObject):
             supersystem=supersystem,
             custom_identifier=custom_identifier,
             resource_type=resource_type,
+            logical_queue=logical_queue,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
@@ -3339,6 +3373,7 @@ class ProcessingStation(InfrastructureObject):
         supersystem: StationGroup,
         custom_identifier: CustomID,
         resource_type: SimResourceTypes,
+        logical_queue: LogicalQueue[Job] | None = None,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
@@ -3356,6 +3391,7 @@ class ProcessingStation(InfrastructureObject):
             supersystem=supersystem,
             custom_identifier=custom_identifier,
             resource_type=resource_type,
+            logical_queue=logical_queue,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
@@ -3473,7 +3509,7 @@ class ProcessingStation(InfrastructureObject):
         while True:
             # initialise state by passivating machines
             # resources are activated by other resources
-            if len(self.logic_queue) == 0:
+            if len(self.logical_queue) == 0:
                 yield self.sim_control.passivate()
             loggers.prod_stations.debug('[MACHINE: %s] is getting job from queue', self)
 
@@ -3524,6 +3560,7 @@ class Machine(ProcessingStation):
         env: SimulationEnvironment,
         supersystem: StationGroup,
         custom_identifier: CustomID,
+        logical_queue: LogicalQueue[Job] | None = None,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
@@ -3542,6 +3579,7 @@ class Machine(ProcessingStation):
             supersystem=supersystem,
             custom_identifier=custom_identifier,
             resource_type=resource_type,
+            logical_queue=logical_queue,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
@@ -3556,6 +3594,7 @@ class Buffer(StorageLike):
         env: SimulationEnvironment,
         supersystem: StationGroup,
         custom_identifier: CustomID,
+        logical_queue: LogicalQueue[Job] | None = None,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: int | Infinite = INF,
@@ -3571,6 +3610,7 @@ class Buffer(StorageLike):
             supersystem=supersystem,
             custom_identifier=custom_identifier,
             resource_type=resource_type,
+            logical_queue=logical_queue,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
@@ -3695,15 +3735,6 @@ class Buffer(StorageLike):
     def post_process(self) -> None:
         pass
 
-    # def finalise(self) -> None:
-    #     """
-    #     method to be called at the end of the simulation run by
-    #     the environment's "finalise_sim" method
-    #     """
-    #     # each resource object class has dedicated finalise methods which
-    #     # must be called by children
-    #     super().finalise()
-
 
 class Source(InfrastructureObject):
     def __init__(
@@ -3712,6 +3743,7 @@ class Source(InfrastructureObject):
         supersystem: StationGroup,
         custom_identifier: CustomID,
         proc_time: Timedelta,
+        logical_queue: LogicalQueue[Job] | None = None,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
@@ -3727,6 +3759,7 @@ class Source(InfrastructureObject):
             supersystem=supersystem,
             custom_identifier=custom_identifier,
             resource_type=resource_type,
+            logical_queue=logical_queue,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
@@ -3910,6 +3943,7 @@ class Sink(InfrastructureObject):
         env: SimulationEnvironment,
         supersystem: StationGroup,
         custom_identifier: CustomID,
+        logical_queue: LogicalQueue[Job] | None = None,
         name: str | None = None,
         setup_time: Timedelta | None = None,
         capacity: float = INF,
@@ -3924,6 +3958,7 @@ class Sink(InfrastructureObject):
             supersystem=supersystem,
             custom_identifier=custom_identifier,
             resource_type=resource_type,
+            logical_queue=logical_queue,
             name=name,
             setup_time=setup_time,
             capacity=capacity,
@@ -3940,10 +3975,10 @@ class Sink(InfrastructureObject):
     def sim_logic(self) -> Generator[None, None, None]:
         dispatcher = self.env.dispatcher
         while True:
-            if len(self.logic_queue) == 0:
+            if len(self.logical_queue) == 0:
                 yield self.sim_control.passivate()
             loggers.sinks.debug('[SINK: %s] is getting job from queue', self)
-            job = cast(Job, self.logic_queue.pop())
+            job = self.logical_queue.pop()
             dispatcher.finish_job(job=job)
             # TODO write finalised job information to database (disk)
 

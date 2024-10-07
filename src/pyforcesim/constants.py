@@ -180,6 +180,7 @@ class SimSystemTypes(enum.StrEnum):
     PRODUCTION_AREA = enum.auto()
     STATION_GROUP = enum.auto()
     RESOURCE = enum.auto()
+    LOGICAL_QUEUE = enum.auto()
 
 
 class JobGeneration(enum.StrEnum):
