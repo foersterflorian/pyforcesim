@@ -223,7 +223,7 @@ class AllocationAgent(Agent['ProductionArea']):
 
     def update_assoc_proc_stations(self) -> None:
         # get associated systems
-        self._assoc_proc_stations = self._assoc_system.lowest_level_subsystems(
+        self._assoc_proc_stations = self.assoc_system.lowest_level_subsystems(
             only_processing_stations=True
         )
 

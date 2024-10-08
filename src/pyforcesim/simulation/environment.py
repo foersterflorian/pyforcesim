@@ -178,6 +178,8 @@ class SimulationEnvironment(salabim.Environment):
         self.db_engine = db.get_engine(db_handle)
         # databases
         db.metadata_obj.create_all(self.db_engine)
+        # ** systems
+        self._system_id_counter = SystemID(0)
         # ** debug dashboard
         self.debug_dashboard = debug_dashboard
         self.servers_connected: bool = False
@@ -189,6 +191,11 @@ class SimulationEnvironment(salabim.Environment):
         self.FAIL_DELAY: Final[float] = self.td_to_simtime(timedelta=FAIL_DELAY)
 
         loggers.pyf_env.info('New Environment >>%s<< created.', self.name())
+
+    def get_system_id(self) -> SystemID:
+        system_id = self._system_id_counter
+        self._system_id_counter += 1
+        return system_id
 
     def t_as_dt(self) -> Datetime:
         """return current simulation time as Datetime object
@@ -327,20 +334,24 @@ class InfrastructureManager:
         self._system_types = common.enum_str_values_as_frzset(SimSystemTypes)
         # PRODUCTION AREAS
         self._prod_areas: dict[SystemID, ProductionArea] = {}
-        self._prod_area_counter = SystemID(0)
+        # self._prod_area_counter = SystemID(0)
+        self._prod_area_counter: int = 0
         self._prod_area_custom_identifiers: set[CustomID] = set()
         # STATION GROUPS
         self._station_groups: dict[SystemID, StationGroup] = {}
-        self._station_group_counter = SystemID(0)
+        self._station_group_counter: int = 0
+        # self._station_group_counter = SystemID(0)
         self._station_groups_custom_identifiers: set[CustomID] = set()
         # RESOURCES
         self._resources: dict[SystemID, InfrastructureObject] = {}
-        self._res_counter = SystemID(0)
+        # self._res_counter = SystemID(0)
+        self._res_counter: int = 0
         self._res_custom_identifiers: set[CustomID] = set()
         self.final_utilisations: list[float] = []
         # LOGICAL QUEUES
         self._logical_queues: dict[SystemID, LogicalQueue[Job]] = {}
-        self._logical_queue_counter = SystemID(0)
+        self._logical_queue_counter: int = 0
+        # self._logical_queue_counter = SystemID(0)
         self._logical_queue_custom_identifiers: set[CustomID] = set()
         # [RESOURCES] sink: pool of sinks possible to allow multiple sinks in one environment
         # [PERHAPS CHANGED LATER]
@@ -375,9 +386,8 @@ class InfrastructureManager:
     def get_total_per_system_type(
         self,
         system_type: SimSystemTypes,
-    ) -> SystemID:
-        """returns the maximum assigned SystemID for a given system type
-        (total number = max ID + 1)
+    ) -> int:
+        """returns the maximum number of elements for a given system type
 
         Parameters
         ----------
@@ -399,15 +409,6 @@ class InfrastructureManager:
             case SimSystemTypes.LOGICAL_QUEUE:
                 return self._logical_queue_counter
 
-    ####################################################################################
-    ## REWORK TO WORK WITH DIFFERENT SUBSYSTEMS
-    # only one register method by analogy with 'lookup_subsystem_info'
-    # currently checking for existence and registration implemented,
-    # split into different methods
-    # one to check whether such a subsystem already exists
-    # another one registers a new subsystem
-    # if check positive: return subsystem by 'lookup_subsystem_info'
-    ### REWORK TO MULTIPLE SUBSYSTEMS
     def _obtain_system_id(
         self,
         system_type: SimSystemTypes,
@@ -427,19 +428,19 @@ class InfrastructureManager:
                 )
             )
 
-        system_id: SystemID
+        # system_id: SystemID
+        system_id = self.env.get_system_id()
         match system_type:
             case SimSystemTypes.PRODUCTION_AREA:
-                system_id = self._prod_area_counter
                 self._prod_area_counter += 1
             case SimSystemTypes.STATION_GROUP:
-                system_id = self._station_group_counter
+                # system_id = self._station_group_counter
                 self._station_group_counter += 1
             case SimSystemTypes.RESOURCE:
-                system_id = self._res_counter
+                # system_id = self._res_counter
                 self._res_counter += 1
             case SimSystemTypes.LOGICAL_QUEUE:
-                system_id = self._logical_queue_counter
+                # system_id = self._logical_queue_counter
                 self._logical_queue_counter += 1
 
         return system_id
@@ -589,6 +590,7 @@ class InfrastructureManager:
                     conn.commit()
                 # add to object lookup
                 self.resources[system_id] = obj
+                logical_queue.add_resource(obj=obj)
 
         loggers.infstrct.info(
             'Successfully registered object with SystemID >>%s<< and name >>%s<<',
@@ -1184,21 +1186,13 @@ class Dispatcher:
             job.current_setup_time = op.setup_time
             job.current_order_time = op.order_time
             # only reset job prio if there are OP-wise defined priorities
+            # TODO check if change between job and operation still necessary
+            # TODO usually information access only for operation instances
             if job.op_wise_prio:
                 if op.prio is None:
                     raise ValueError(f'Operation {op} has no priority defined.')
                 job.prio = op.prio  # use setter function to catch possible errors
                 self.update_job_db(job=job, property='prio', val=job.prio)
-            # if job.op_wise_starting_date:
-            #     job.time_planned_starting = op.time_planned_starting
-            #     self.update_job_db(
-            #         job=job, property='planned_starting_date', val=job.time_planned_starting
-            #     )
-            # if job.op_wise_ending_date:
-            #     job.time_planned_ending = op.time_planned_ending
-            #     self.update_job_db(
-            #         job=job, property='planned_ending_date', val=job.time_planned_ending
-            #     )
         else:
             op = None
             job.current_proc_time = None
@@ -1214,7 +1208,7 @@ class Dispatcher:
         self,
         op: Operation,
         exec_system_identifier: SystemID,
-        target_station_group_identifier: SystemID | None,
+        target_station_group_identifier: SystemID,
         custom_identifier: CustomID | None,
         state: SimStatesCommon,
     ) -> LoadID:
@@ -1253,26 +1247,19 @@ class Dispatcher:
         # no pre-determined assignment of processing stations
         exec_system = infstruct_mgr.get_system_by_id(EXEC_SYSTEM_TYPE, exec_system_identifier)
         # if target station group is specified, get instance
-        target_station_group: StationGroup | None
-        if target_station_group_identifier is not None:
-            target_station_group = infstruct_mgr.get_system_by_id(
-                SimSystemTypes.STATION_GROUP, target_station_group_identifier
-            )
-
-            # validity check: only target stations allowed which are
-            # part of the current execution system
-            if target_station_group.system_id not in exec_system.subsystems:
-                raise AssociationError(
-                    (
-                        f'Station Group >>{target_station_group}<< is not part of execution '
-                        f'system >>{exec_system}<<. Mismatch between execution '
-                        f'system and associated station groups.'
-                    )
+        target_station_group = infstruct_mgr.get_system_by_id(
+            SimSystemTypes.STATION_GROUP, target_station_group_identifier
+        )
+        # validity check: only target stations allowed which are
+        # part of the current execution system
+        if target_station_group.system_id not in exec_system.subsystems:
+            raise AssociationError(
+                (
+                    f'Station Group >>{target_station_group}<< is not part of execution '
+                    f'system >>{exec_system}<<. Mismatch between execution '
+                    f'system and associated station groups.'
                 )
-        else:
-            # !! temporarily raising error, no target station should usually be allowed
-            # target_station_group = None
-            raise ValueError('Station Group is None')
+            )
 
         if custom_identifier is None:
             custom_identifier = CustomID(f'Op_gen_{op_id}')
@@ -1564,20 +1551,13 @@ class Dispatcher:
         agent: AllocationAgent | None = None
         # TODO: add checks for allocations on execution system level
         if self.alloc_rule == 'AGENT' and next_op is not None:
-            if next_op.target_exec_system is None:
-                # should never happen as each operation is registered with
-                # a system instance
-                raise ValueError('No target execution system assigned.')
+            # check agent availability
+            is_agent = next_op.target_exec_system.check_alloc_agent()
+            if is_agent:
+                agent = next_op.target_exec_system.alloc_agent
+                agent.action_feasible = False
             else:
-                # check agent availability
-                is_agent = next_op.target_exec_system.check_alloc_agent()
-                if is_agent:
-                    agent = next_op.target_exec_system.alloc_agent
-                    agent.action_feasible = False
-                else:
-                    raise ValueError(
-                        'Allocation rule set to agent, but no agent instance found.'
-                    )
+                raise ValueError('Allocation rule set to agent, but no agent instance found.')
 
         return is_agent, agent
 
@@ -1636,48 +1616,28 @@ class Dispatcher:
         # routing in Production Areas --> Station Groups --> Processing Stations
         # so each job must contain information about the production areas and
         # the corresponding station groups
-
-        ## choice from station group stays as method
-        # routing essentially depending on production areas --> JOB FROM AREA TO AREA
-        # NOW DIFFERENTIATE:
-        ### ~~(1) choice between station groups of the current area~~
-        #           placement on machines outside the station group not possible
-        ### (2) choice between processing stations of the current area
-        #           placement on machines outside the station group possible,
-        #           but the stations could be filtered by their station group IDs
-        ### --> (2) as implemented solution
-
-        # get the target operation of the job
-        # next_op = self.get_next_operation(job=job)
+        # -----------------------------------------------------------------------
+        # choice between processing stations of the current area
+        # placement on machines outside the station group possible,
+        # but the stations could be filtered by their station group IDs
         op = job.current_op
         if op is not None:
-            # get target execution system ((sub)system type)
-            # (defined by the global variable EXEC_SYSTEM_TYPE)
             target_exec_system = op.target_exec_system
-            if target_exec_system is None:
-                raise ValueError('No target execution system assigned.')
-            # get target station group
             target_station_group = op.target_station_group
-            if target_station_group is None:
-                raise ValueError('No target station group assigned.')
-
             loggers.dispatcher.debug('[DISPATCHER] Next operation %s', op)
-            # obtain target station (InfrastructureObject)
             target_station = self._choose_target_station_from_exec_system(
                 exec_system=target_exec_system,
-                op=op,
                 is_agent=is_agent,
                 target_station_group=target_station_group,
             )
-
             # with allocation request operation is released
             self.release_operation(op=op, target_station=target_station)
-        # all operations done, look for sinks
         else:
+            # ?? [PERHAPS CHANGE IN FUTURE]
+            # all operations done, look for sinks
             infstruct_mgr = self.env.infstruct_mgr
             sinks = infstruct_mgr.sinks
-            # ?? [PERHAPS CHANGE IN FUTURE]
-            # use first sink of the registered ones
+
             target_station = sinks[0]
 
         loggers.dispatcher.debug(
@@ -1691,22 +1651,13 @@ class Dispatcher:
     def _choose_target_station_from_exec_system(
         self,
         exec_system: ProductionArea,
-        op: Operation,
+        target_station_group: StationGroup,
         is_agent: bool,
-        target_station_group: StationGroup | None = None,
     ) -> ProcessingStation:
         infstruct_mgr = self.env.infstruct_mgr
 
         if not is_agent:
-            if target_station_group is not None:
-                # preselection of station group only with allocation rules
-                # other than >>AGENT<<
-                # returned ProcessingStations automatically feasible
-                # regarding their StationGroup
-                stations = target_station_group.assoc_proc_stations
-            else:
-                stations = exec_system.assoc_proc_stations
-
+            stations = target_station_group.assoc_proc_stations
             # [KPIs] calculate necessary information for decision making
             # put all associated processing stations of that group in 'TEMP' state
             infstruct_mgr.res_objs_temp_state(res_objs=stations, reset_temp=False)
@@ -1716,14 +1667,10 @@ class Dispatcher:
                 avail_stations = candidates
             else:
                 avail_stations = stations
-
             # ** Allocation Rules
             # first use StationGroup, then ExecutionSystem, then Dispatcher (global)
             policy: GeneralPolicy | AllocationPolicy
-            if (
-                target_station_group is not None
-                and target_station_group.alloc_policy is not None
-            ):
+            if target_station_group.alloc_policy is not None:
                 policy = target_station_group.alloc_policy
             elif exec_system.alloc_policy is not None:
                 policy = exec_system.alloc_policy
@@ -1739,30 +1686,14 @@ class Dispatcher:
             infstruct_mgr.res_objs_temp_state(res_objs=stations, reset_temp=True)
         else:
             # ** AGENT decision
-            # available stations
-            # agent can choose from all associated stations, not only available ones
-            # availability of processing stations should be learned by the agent
             agent = exec_system.alloc_agent
-
             # Feature vector already built when request done to agent
             # get chosen station by tuple index (agent's action)
-
             target_station = agent.chosen_station
             if target_station is None:
                 raise ValueError(
                     "No station was chosen. Maybe the agent's action was not properly set."
                 )
-
-            # TODO check removal
-            # avail_stations = agent.assoc_proc_stations
-            # station_idx = agent.action
-            # if station_idx is None:
-            #     raise ValueError('No station index chosen')
-
-            # target_station = avail_stations[station_idx]
-            # agent.action_feasible = self._env.check_feasible_agent_alloc(
-            #     target_station=target_station, op=op
-            # )
 
             if self.env.check_agent_feasibility and not agent.action_feasible:
                 raise RuntimeError('action not feasible')
@@ -2321,6 +2252,12 @@ class ContainerSystem(Generic[T], System):
             sim_put_prio=sim_put_prio,
         )
 
+    def __contains__(
+        self,
+        subsystem: System,
+    ) -> bool:
+        return subsystem.system_id in self.subsystems_ids
+
     @property
     @override
     def sim_get_prio(self) -> int:
@@ -2694,6 +2631,7 @@ class ContainerSystem(Generic[T], System):
         pass
 
 
+# TODO add sequencing agents to logical queues
 class LogicalQueue(System, QueueLike[J]):
     def __init__(
         self,
@@ -2712,30 +2650,85 @@ class LogicalQueue(System, QueueLike[J]):
         )
 
         self._sim_queue = salabim.Queue(env=env, name=self.name, monitor=False)
+        self.assoc_resources: set[InfrastructureObject] = set()
 
     @property
     def sim_queue(self) -> salabim.Queue:
         return self._sim_queue
 
-    def __getitem__(self, index: int) -> J:
+    def __getitem__(
+        self,
+        index: int,
+    ) -> J:
         return self.sim_queue[index]  # type: ignore
+
+    def __iter__(self) -> Iterator[J]:
+        yield from self.sim_queue
 
     def __len__(self) -> int:
         return len(self.sim_queue)
 
-    def append(self, item: J) -> None:
+    def append(
+        self,
+        item: J,
+    ) -> None:
         self.sim_queue.append(item)  # type: ignore
 
-    def pop(self, index: int | None = None) -> J:
+    def pop(
+        self,
+        index: int | None = None,
+    ) -> J:
         if index is None:
             index = 0
         return self.sim_queue.pop(index)  # type: ignore
 
-    def remove(self, item: Any) -> None:
+    def remove(
+        self,
+        item: Any,
+    ) -> None:
         self.sim_queue.remove(item)  # type: ignore
 
     def as_list(self) -> list[J]:
         return self.sim_queue.as_list()
+
+    def add_resource(
+        self,
+        obj: InfrastructureObject,
+    ):
+        """adds an `InfrastructureObject` as associated resource
+
+        Parameters
+        ----------
+        obj : InfrastructureObject
+            resource object which should be associated with the queue
+        """
+        if obj not in self.assoc_resources:
+            self.assoc_resources.add(obj)
+
+    def filter_resources_by_station_group(
+        self,
+        target_station_group: StationGroup,
+    ) -> tuple[ProcessingStation, ...]:
+        def filter_stat_group(subsystem: InfrastructureObject) -> bool:
+            is_in = subsystem in target_station_group
+            is_proc_station = isinstance(subsystem, ProcessingStation)
+            return is_in and is_proc_station
+
+        assoc_stat_group_stations = cast(
+            Iterator['ProcessingStation'], filter(filter_stat_group, self.assoc_resources)
+        )
+        return tuple(assoc_stat_group_stations)
+
+    def activate_resources(
+        self,
+        target_station_group: StationGroup,
+    ) -> None:
+        assoc_stat_group_stations = self.filter_resources_by_station_group(
+            target_station_group
+        )
+        for station in assoc_stat_group_stations:
+            if station.sim_control.ispassive():
+                station.sim_control.activate()
 
     @override
     def initialise(self) -> None:
@@ -3051,10 +3044,36 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         self,
         job: Job,
     ) -> Generator[Any, None, InfrastructureObject]:
-        # ALLOCATION REQUEST
-        # TODO ++++++++++ add later ++++++++++++
-        # time component: given start date of operation
-        # returning release date, waiting for release date or release early
+        """find target station for job which shall be allocated
+        to a resource
+
+        Parameters
+        ----------
+        job : Job
+            job to be dispatched (allocated)
+
+        Returns
+        -------
+        InfrastructureObject
+            target resource object to which the job should be dispatched
+
+        Yields
+        ------
+        Generator[Any]
+            any value can be yielded, usually only calls to Salabim
+
+        Raises
+        ------
+        ValueError
+            if an agent's decision is requested, but no agent instance is set
+        RuntimeError
+            if store placements fail due to a constant timeout,
+            needed to catch deadlocks
+        ValueError
+            if no proper Salabim store object was retrieved for placement
+        """
+
+        # ** ALLOCATION REQUEST
         dispatcher = self.env.dispatcher
         infstruct_mgr = self.env.infstruct_mgr
         # call dispatcher to check for allocation rule
@@ -3073,21 +3092,20 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 # ** SET external Gym flag, build feature vector
                 dispatcher.request_agent_alloc(job=job)
                 # ** Break external loop
-                # [only STEP] Calc reward in Gym-Env
-                loggers.agents.debug(
-                    '--------------- DEBUG: call before hold(0) at %s, %s',
-                    self.env.t(),
-                    self.env.t_as_dt(),
-                )
+                # loggers.agents.debug(
+                #     '--------------- DEBUG: call before hold(0) at %s, %s',
+                #     self.env.t(),
+                #     self.env.t_as_dt(),
+                # )
                 yield self.sim_control.hold(0, priority=self.sim_put_prio)
-                # ** make and set decision in Gym-Env
-                # ** [CHANGED] calculate reward
-                # ** RESET external Gym flag
-                loggers.agents.debug(
-                    '--------------- DEBUG: call after hold(0) at %s, %s',
-                    self.env.t(),
-                    self.env.t_as_dt(),
-                )
+                # ** 1.1 make and set decision in Gym-Env
+                # ** 1.2 RESET external Gym flag
+                # ** 2 calculate reward
+                # loggers.agents.debug(
+                #     '--------------- DEBUG: call after hold(0) at %s, %s',
+                #     self.env.t(),
+                #     self.env.t_as_dt(),
+                # )
                 loggers.agents.debug(
                     'Action feasibility: current %s, past %s',
                     alloc_agent.action_feasible,
@@ -3101,7 +3119,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
 
         dispatcher.jobs_temp_state(jobs=[job], reset_temp=True)
-        # get logic queue
+        # get logical queue
         logical_queue = target_station.logical_queue
         # check if the target is a sink
         if isinstance(target_station, Sink):
@@ -3224,7 +3242,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
 
         # Processing Station only
         # request and get job from associated buffer if it exists
-        if isinstance(self, ProcessingStation) and self._buffers:
+        if isinstance(self, ProcessingStation) and self.buffers:
             yield self.sim_control.from_store(
                 store=self.stores,
                 filter=lambda item: item.job_id == job.job_id,
@@ -3996,9 +4014,9 @@ class Operation:
         dispatcher: Dispatcher,
         job: Job,
         exec_system_identifier: SystemID,
+        target_station_group_identifier: SystemID,
         proc_time: Timedelta,
         setup_time: Timedelta,
-        target_station_group_identifier: SystemID | None = None,
         prio: int | None = None,
         planned_starting_date: Datetime | None = None,
         planned_ending_date: Datetime | None = None,
@@ -4064,9 +4082,9 @@ class Operation:
         # registration: only return OpID, other properties directly
         # written by dispatcher method
         # add target station group by station group identifier
-        self.target_exec_system: ProductionArea | None = None
-        self.target_station_group: StationGroup | None = None
-        self.time_creation: Datetime | None = None
+        self.target_exec_system: ProductionArea
+        self.target_station_group: StationGroup
+        self.time_creation: Datetime
 
         self._op_id = self.dispatcher.register_operation(
             op=self,
@@ -4115,7 +4133,7 @@ class Operation:
         return self._exec_system_identifier
 
     @property
-    def target_station_group_identifier(self) -> SystemID | None:
+    def target_station_group_identifier(self) -> SystemID:
         return self._target_station_group_identifier
 
     @property
@@ -4185,9 +4203,9 @@ class Job(salabim.Component):
         self,
         dispatcher: Dispatcher,
         execution_systems: Sequence[SystemID],
+        station_groups: Sequence[SystemID],
         proc_times: Sequence[Timedelta],
         setup_times: Sequence[Timedelta],
-        station_groups: Sequence[SystemID | None] | None = None,
         prio: int | Sequence[int | None] | None = None,
         planned_starting_date: Datetime | Sequence[Datetime | None] | None = None,
         planned_ending_date: Datetime | Sequence[Datetime | None] | None = None,
@@ -4199,15 +4217,6 @@ class Job(salabim.Component):
         """
         ADD DESCRIPTION
         """
-        # add not provided information
-        # target station identifiers
-        # if target_stations_order is None:
-        op_target_stations: Sequence[SystemID | None]
-        if isinstance(station_groups, Sequence):
-            op_target_stations = station_groups
-        else:
-            op_target_stations = [None] * len(execution_systems)
-
         # prio
         self.op_wise_prio: bool
         self._prio: int | None
@@ -4318,8 +4327,6 @@ class Job(salabim.Component):
         self.proc_time = sum(proc_times, Timedelta())
         self.setup_time = sum(setup_times, Timedelta())
         self.order_time = self.proc_time + self.setup_time
-        # self.remaining_order_time = self.total_order_time
-        # self.slack: Timedelta = Timedelta()
 
         # inter-process job state parameters
         # first operation scheduled --> released job
@@ -4361,7 +4368,7 @@ class Job(salabim.Component):
                 proc_time=op_proc_time,
                 setup_time=setup_times[idx],
                 exec_system_identifier=execution_systems[idx],
-                target_station_group_identifier=op_target_stations[idx],
+                target_station_group_identifier=station_groups[idx],
                 prio=op_prios[idx],
                 planned_starting_date=op_starting_dates[idx],
                 planned_ending_date=op_ending_dates[idx],

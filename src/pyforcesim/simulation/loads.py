@@ -21,7 +21,6 @@ from pyforcesim.types import (
     OrderDates,
     OrderPriority,
     OrderTimes,
-    TimeTillDue,
 )
 
 if TYPE_CHECKING:
@@ -140,7 +139,7 @@ class RandomJobGenerator(BaseJobGenerator):
     def retrieve(
         self,
         exec_system_ids: Sequence[SystemID],
-        target_station_group_ids: dict[SystemID, Sequence[SystemID]] | None = None,
+        target_station_group_ids: dict[SystemID, Sequence[SystemID]],
         gen_setup_times: bool = False,
         time_unit: TimeUnitsTimedelta = TimeUnitsTimedelta.HOURS,
         gen_prio: bool = False,
@@ -157,18 +156,17 @@ class RandomJobGenerator(BaseJobGenerator):
             )
 
             station_groups: list[SystemID] | None = None
-            if target_station_group_ids is not None:
-                station_groups = []
-                for exec_system_id in execution_systems:
-                    # multiple candidates: random choice
-                    candidates = target_station_group_ids[exec_system_id]
+            station_groups = []
+            for exec_system_id in execution_systems:
+                # multiple candidates: random choice
+                candidates = target_station_group_ids[exec_system_id]
 
-                    if len(candidates) > 1:
-                        candidate = cast(SystemID, self.rnd_gen.choice(candidates))
-                    else:
-                        candidate = candidates[0]
+                if len(candidates) > 1:
+                    candidate = cast(SystemID, self.rnd_gen.choice(candidates))
+                else:
+                    candidate = candidates[0]
 
-                    station_groups.append(candidate)
+                station_groups.append(candidate)
 
             # ** order times
             # processing times

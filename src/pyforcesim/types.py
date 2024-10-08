@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import enum
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
@@ -79,6 +79,7 @@ class QueueLike(Protocol[T]):
     def as_list(self) -> list[T]: ...
     def __getitem__(self, index: int) -> T: ...
     def __len__(self) -> int: ...
+    def __iter__(self) -> Iterator[T]: ...
 
 
 @dataclass(kw_only=True, slots=True, eq=False, match_args=False)
@@ -97,7 +98,7 @@ class OrderDates:
 class JobGenerationInfo:
     custom_id: CustomID | None = field(default=None)
     execution_systems: Sequence[SystemID]
-    station_groups: Sequence[SystemID | None] | None = field(default=None)
+    station_groups: Sequence[SystemID]
     order_time: OrderTimes
     dates: OrderDates
     prio: OrderPriority | Sequence[OrderPriority | None] | None = field(default=None)
