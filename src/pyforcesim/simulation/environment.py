@@ -5,7 +5,13 @@ from __future__ import annotations
 import multiprocessing as mp
 from abc import ABCMeta, abstractmethod
 from collections import deque
-from collections.abc import Generator, Iterable, Iterator, Sequence
+from collections.abc import (
+    Collection,
+    Generator,
+    Iterable,
+    Iterator,
+    Sequence,
+)
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
 from datetime import tzinfo as TZInfo
@@ -79,7 +85,7 @@ from pyforcesim.types import (
 
 # ** constants
 T = TypeVar('T', bound='System')
-J = TypeVar('J')
+J = TypeVar('J', bound='Job')
 # definition of routing system level
 EXEC_SYSTEM_TYPE: Final = SimSystemTypes.PRODUCTION_AREA
 # time after a store request is failed
@@ -2705,6 +2711,31 @@ class LogicalQueue(System, QueueLike[J]):
         if obj not in self.assoc_resources:
             self.assoc_resources.add(obj)
 
+    def filter_content_by_station_groups(
+        self,
+        target_station_group_ids: Collection[SystemID],
+    ) -> tuple[J, ...]:
+        def filter_stat_group(item: J) -> bool:
+            keep: bool
+            if item.current_op is None:
+                assert (
+                    item.last_op is not None
+                ), 'tried to apply filter on item with non-existent last OP'
+                keep = True
+            else:
+                item_stat_group = item.current_op.target_station_group
+                keep = item_stat_group.system_id in target_station_group_ids
+            return keep
+
+        assoc_stat_group_items: tuple[J, ...]
+        if len(self) == 0:
+            assoc_stat_group_items = tuple()
+        else:
+            filter_stat_group_items = cast(Iterator[J], filter(filter_stat_group, self))
+            assoc_stat_group_items = tuple(filter_stat_group_items)
+
+        return assoc_stat_group_items
+
     def filter_resources_by_station_group(
         self,
         target_station_group: StationGroup,
@@ -2721,14 +2752,17 @@ class LogicalQueue(System, QueueLike[J]):
 
     def activate_resources(
         self,
-        target_station_group: StationGroup,
+        target_station_group: StationGroup | None,
     ) -> None:
-        assoc_stat_group_stations = self.filter_resources_by_station_group(
-            target_station_group
-        )
-        for station in assoc_stat_group_stations:
+        relevant_stations = self.assoc_resources
+
+        if target_station_group is not None:
+            relevant_stations = self.filter_resources_by_station_group(target_station_group)
+
+        for station in relevant_stations:
             if station.sim_control.ispassive():
                 station.sim_control.activate()
+                break
 
     @override
     def initialise(self) -> None:
@@ -3176,10 +3210,12 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             self.stat_monitor.change_WIP(job=job, remove=True)
         # [STATS:WIP] ADDING WIP TO TARGET STATION
         # add only if there is a next operation, only case if the current operation exists
+        target_station_group: StationGroup | None = None
         if job.current_op is not None:
             target_station.stat_monitor.change_WIP(job=job, remove=False)
-
+            target_station_group = job.current_op.target_station_group
         # activate target processing station if passive
+        logical_queue.activate_resources(target_station_group)
         if target_station.sim_control.ispassive():
             target_station.sim_control.activate()
 
@@ -3527,7 +3563,10 @@ class ProcessingStation(InfrastructureObject):
         while True:
             # initialise state by passivating machines
             # resources are activated by other resources
-            if len(self.logical_queue) == 0:
+            relevant_jobs = self.logical_queue.filter_content_by_station_groups(
+                target_station_group_ids=self.supersystems_ids
+            )
+            if len(relevant_jobs) == 0:
                 yield self.sim_control.passivate()
             loggers.prod_stations.debug('[MACHINE: %s] is getting job from queue', self)
 
@@ -3993,7 +4032,10 @@ class Sink(InfrastructureObject):
     def sim_logic(self) -> Generator[None, None, None]:
         dispatcher = self.env.dispatcher
         while True:
-            if len(self.logical_queue) == 0:
+            relevant_jobs = self.logical_queue.filter_content_by_station_groups(
+                target_station_group_ids=self.supersystems_ids
+            )
+            if len(relevant_jobs) == 0:
                 yield self.sim_control.passivate()
             loggers.sinks.debug('[SINK: %s] is getting job from queue', self)
             job = self.logical_queue.pop()
