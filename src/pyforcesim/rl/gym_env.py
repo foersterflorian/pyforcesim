@@ -126,7 +126,6 @@ class JSSEnv(gym.Env):
         # should not be needed any more, empty event list is checked below
         self.agent.set_decision(action=action)
 
-        # TODO place reward calculation here
         # background: up to this point calculation of rewards always based on
         # state s_(t+1) for action a_t, but reward should be calculated
         # for state s_t --> r_t = R(s_t, a_t)

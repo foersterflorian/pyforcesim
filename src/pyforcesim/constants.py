@@ -115,6 +115,7 @@ DB_INJECTION_PATTERN: Final[str] = (
 # since a day has 24 hours each infrastructure object can process
 # 24 hours of workload per day at the maximum
 MAX_PROCESSING_CAPACITY: Final[Timedelta] = Timedelta(hours=24)
+MAX_LOGICAL_QUEUE_SIZE: Final[int] = 30
 
 
 class SimResourceTypes(enum.StrEnum):

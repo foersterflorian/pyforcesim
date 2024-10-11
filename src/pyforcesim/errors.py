@@ -5,6 +5,11 @@ class AssociationError(Exception):
     """error that describes cases in which systems are not associated with each other"""
 
 
+class SequencingAgentAssignmentError(Exception):
+    """error that describes cases in which a sequencing agent is assigned to a
+    non-supported system type"""
+
+
 # TODO check deletion
 # class NoAllocationAgentAssignedError(Exception):
 #     """error that describes that a system has no assigned allocation agent"""

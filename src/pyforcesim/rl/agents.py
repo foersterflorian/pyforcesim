@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import timedelta as Timedelta
 from typing import TYPE_CHECKING, Generic, TypeVar, cast
 from typing_extensions import override
@@ -22,7 +22,9 @@ from pyforcesim.types import (
 
 if TYPE_CHECKING:
     from pyforcesim.simulation.environment import (
+        InfrastructureObject,
         Job,
+        LogicalQueue,
         Operation,
         ProcessingStation,
         ProductionArea,
@@ -54,6 +56,14 @@ class Agent(Generic[S], ABC):
         self._dispatching_signal: bool = False
         self.num_decisions: int = 0
         self.cum_reward: float = 0.0
+        # RL related properties
+        self.feat_vec: npt.NDArray[np.float32] | None = None
+        # action chosen by RL agent
+        self._action: int | None = None
+        self._action_feasible: bool = False
+        self.past_action_feasible: bool = False
+        # count number of consecutive non-feasible actions
+        self.non_feasible_counter: int = 0
 
     def __str__(self) -> str:
         return f'Agent(type={self._agent_task}, Assoc_Syst_ID={self._assoc_system.system_id})'
@@ -81,6 +91,26 @@ class Agent(Generic[S], ABC):
     @property
     def dispatching_signal(self) -> bool:
         return self._dispatching_signal
+
+    @property
+    def action(self) -> int | None:
+        return self._action
+
+    @property
+    def action_feasible(self) -> bool:
+        return self._action_feasible
+
+    @action_feasible.setter
+    def action_feasible(
+        self,
+        feasible: bool,
+    ) -> None:
+        if feasible:
+            self.non_feasible_counter = 0
+        else:
+            self.non_feasible_counter += 1
+        self.past_action_feasible = self._action_feasible
+        self._action_feasible = feasible
 
     def set_dispatching_signal(
         self,
@@ -131,7 +161,7 @@ class AllocationAgent(Agent['ProductionArea']):
         super().__init__(assoc_system=assoc_system, agent_task='ALLOC', seed=seed)
 
         # get associated systems
-        self._assoc_proc_stations = self._assoc_system.lowest_level_subsystems(
+        self._assoc_proc_stations = self.assoc_system.lowest_level_subsystems(
             only_processing_stations=True
         )
         # default action mask: allow all actions
@@ -151,18 +181,9 @@ class AllocationAgent(Agent['ProductionArea']):
         self.utilisations: dict[SystemID, float] = {}
         self.last_station_group: StationGroup | None = None
 
-        # RL related properties
-        self.feat_vec: npt.NDArray[np.float32] | None = None
-
         # execution control
         # [ACTIONS]
-        # action chosen by RL agent
-        self._action: int | None = None
-        self._action_feasible: bool = False
-        self.past_action_feasible: bool = False
         self._chosen_station: ProcessingStation | None = None
-        # count number of consecutive non-feasible actions
-        self.non_feasible_counter: int = 0
 
     @property
     def current_job(self) -> Job | None:
@@ -181,32 +202,12 @@ class AllocationAgent(Agent['ProductionArea']):
         return self._last_op
 
     @property
-    def action(self) -> int | None:
-        return self._action
-
-    @property
     def chosen_station(self) -> ProcessingStation | None:
         return self._chosen_station
 
     @property
     def assoc_proc_stations(self) -> tuple[ProcessingStation, ...]:
         return self._assoc_proc_stations
-
-    @property
-    def action_feasible(self) -> bool:
-        return self._action_feasible
-
-    @action_feasible.setter
-    def action_feasible(
-        self,
-        feasible: bool,
-    ) -> None:
-        if feasible:
-            self.non_feasible_counter = 0
-        else:
-            self.non_feasible_counter += 1
-        self.past_action_feasible = self._action_feasible
-        self._action_feasible = feasible
 
     @property
     def action_mask(self) -> npt.NDArray[np.bool_]:
@@ -452,7 +453,7 @@ class AllocationAgent(Agent['ProductionArea']):
         # resources
         # needed properties
         # station group, availability, WIP_time
-        for i, res in enumerate(self._assoc_proc_stations):
+        for i, res in enumerate(self.assoc_proc_stations):
             # T1 build feature vector for one machine
             monitor = res.stat_monitor
             # station group identifier should be the system's one
@@ -777,10 +778,122 @@ class ValidateAllocationAgent(AllocationAgent):
         return action_idx
 
 
-class SequencingAgent(Agent):
+class SequencingAgent(Agent['LogicalQueue[Job]']):
     def __init__(
         self,
-        assoc_system: System,
+        assoc_system: LogicalQueue,
     ) -> None:
-        raise NotImplementedError('SequencingAgent not implemented yet.')
-        # super().__init__(assoc_system=assoc_system, agent_task='SEQ')
+        super().__init__(assoc_system=assoc_system, agent_task='SEQ')
+
+        # execution control
+        # [ACTIONS]
+        self._chosen_job: Job | None = None
+
+    @property
+    def assoc_contents(self) -> tuple[Job, ...]:
+        return self.assoc_system.as_tuple()
+
+    @property
+    def chosen_job(self) -> Job | None:
+        return self._chosen_job
+
+    @override
+    def request_decision(
+        self,
+        req_obj: InfrastructureObject,
+    ) -> None:
+        # indicator that request is being made
+        self.set_dispatching_signal(reset=False)
+        relevant_jobs = self.assoc_contents
+        # build feature vector
+        self.feat_vec = self.build_feat_vec(req_object=req_obj, jobs=relevant_jobs)
+        loggers.agents.debug(
+            '[REQUEST Agent %s]: built FeatVec at %s', self, self.env.t_as_dt()
+        )
+        loggers.agents.debug('[Agent %s]: Feature Vector: %s', self, self.feat_vec)
+
+    # TODO update
+    @override
+    def build_feat_vec(
+        self,
+        req_object: InfrastructureObject,
+        jobs: Sequence[Job],
+    ) -> npt.NDArray[np.float32]:
+        action_mask: list[bool] = []
+        station_feasible: bool
+        # job
+        # needed properties: target station group ID, order time
+        if job.current_order_time is None:
+            raise ValueError(f'Current order time of job {job} >>None<<')
+        norm_td = pyf_dt.timedelta_from_val(1.0, TimeUnitsTimedelta.HOURS)
+        order_time = job.current_order_time / norm_td
+        slack = job.stat_monitor.slack_hours
+        # current op: obtain StationGroupID
+        current_op = job.current_op
+        if current_op is not None:
+            job_SGI = current_op.target_station_group_identifier
+        else:
+            raise ValueError(
+                'Tried to build feature vector for job without current operation.'
+            )
+        if job_SGI is None:
+            raise ValueError('Station Group ID of current operation is None.')
+        job_info = (job_SGI, order_time, slack)
+        job_info_arr = np.array(job_info, dtype=np.float32)
+        # resources
+        # needed properties
+        # station group, availability, WIP_time
+        for i, res in enumerate(self._assoc_proc_stations):
+            # T1 build feature vector for one machine
+            monitor = res.stat_monitor
+            # station group identifier should be the system's one
+            # because custom IDs can be non-numeric which is bad for an agent
+            # use only first identifier although multiple values are possible
+            supersystem = cast('StationGroup', res.supersystems_as_list()[0])
+            res_SGI = supersystem.system_id
+            # feasibility check
+            if res_SGI == job_SGI:
+                station_feasible = True
+            else:
+                station_feasible = False
+            action_mask.append(station_feasible)
+
+            # availability: boolean to integer
+            avail = int(monitor.is_available)
+            # WIP_time in hours
+            # WIP_time = monitor.WIP_load_time / Timedelta(hours=1)
+            WIP_time_remain = monitor.WIP_load_time_remaining / Timedelta(hours=1)
+            # tuple: (System SGI of resource obj, availability status,
+            # WIP calculated in time units)
+            # res_info = (res_SGI, avail, WIP_time)
+            res_info = (res_SGI, avail, WIP_time_remain)
+            res_info_arr_current = np.array(res_info, dtype=np.float32)
+
+            if i == 0:
+                res_info_arr_all = res_info_arr_current
+            else:
+                res_info_arr_all = np.concatenate((res_info_arr_all, res_info_arr_current))
+
+        # concat job information
+        res_info_arr_all = np.concatenate((res_info_arr_all, job_info_arr), dtype=np.float32)
+        # action mask
+        self.action_mask = np.array(action_mask, dtype=np.bool_)
+
+        return res_info_arr_all
+
+    @override
+    def set_decision(
+        self,
+        action: int,
+    ) -> None:
+        self._action = action
+        # first action is 'waiting'
+        self._chosen_job = None
+        if action != 0:
+            job_idx = action - 1
+            self._chosen_job = self.assoc_contents[job_idx]
+        self.num_decisions += 1
+        # indicator that request was processed, reset dispatching signal
+        self.set_dispatching_signal(reset=True)
+
+        loggers.agents.debug('[DECISION SET Agent %s]: Set to >>%d<<', self, self._action)

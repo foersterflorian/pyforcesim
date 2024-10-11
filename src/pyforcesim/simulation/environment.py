@@ -41,6 +41,7 @@ from pyforcesim.constants import (
     DEFAULT_DATETIME,
     DEFAULT_SEED,
     INF,
+    MAX_LOGICAL_QUEUE_SIZE,
     MAX_PROCESSING_CAPACITY,
     POLICIES_ALLOC,
     POLICIES_SEQ,
@@ -56,8 +57,13 @@ from pyforcesim.dashboard.dashboard import (
     start_dashboard,
 )
 from pyforcesim.dashboard.websocket_server import start_websocket_server
-from pyforcesim.errors import AssociationError, SQLNotFoundError, SQLTooManyValuesFoundError
-from pyforcesim.rl.agents import Agent, AllocationAgent
+from pyforcesim.errors import (
+    AssociationError,
+    SequencingAgentAssignmentError,
+    SQLNotFoundError,
+    SQLTooManyValuesFoundError,
+)
+from pyforcesim.rl.agents import Agent, AllocationAgent, SequencingAgent
 from pyforcesim.simulation import databases as db
 from pyforcesim.simulation import monitors
 from pyforcesim.simulation.base_components import (
@@ -1546,6 +1552,24 @@ class Dispatcher:
         return ret_value
 
     ### ROUTING LOGIC ###
+    def check_seq_dispatch(
+        self,
+        req_obj: InfrastructureObject,
+    ) -> tuple[bool, SequencingAgent | None]:
+        is_agent: bool = False
+        agent: SequencingAgent | None = None
+        # TODO: add checks for allocations on execution system level
+        if self.seq_rule == 'AGENT':
+            # check agent availability
+            is_agent = req_obj.check_seq_agent()
+            if is_agent:
+                logical_queue = req_obj.logical_queue
+                agent = logical_queue.seq_agent
+                agent.action_feasible = False
+            else:
+                raise ValueError('Allocation rule set to agent, but no agent instance found.')
+
+        return is_agent, agent
 
     def check_alloc_dispatch(
         self,
@@ -1594,6 +1618,28 @@ class Dispatcher:
         # reset TEMP state
         self.env.infstruct_mgr.res_objs_temp_state(
             res_objs=agent.assoc_proc_stations,
+            reset_temp=True,
+        )
+
+    def request_agent_seq(
+        self,
+        req_obj: InfrastructureObject,
+    ) -> None:
+        # agent available, get necessary information for decision
+        agent = req_obj.logical_queue.seq_agent
+        relevant_jobs = agent.assoc_contents
+        # [KPI] calculate necessary KPIs by putting associated
+        # objects in TEMP state
+        self.env.dispatcher.jobs_temp_state(
+            jobs=relevant_jobs,
+            reset_temp=False,
+        )
+        # request decision from agent, sets internal flag
+        agent.request_decision(req_obj=req_obj)
+        loggers.dispatcher.debug('[DISPATCHER] Alloc Agent: Decision request made.')
+        # reset TEMP state
+        self.env.dispatcher.jobs_temp_state(
+            jobs=relevant_jobs,
             reset_temp=True,
         )
 
@@ -1711,6 +1757,7 @@ class Dispatcher:
     def request_job_sequencing(
         self,
         req_obj: InfrastructureObject,
+        is_agent: bool,
     ) -> Job:
         """
         request a sequencing decision for a given queue of the requesting resource
@@ -1734,21 +1781,21 @@ class Dispatcher:
         # contains all feasible jobs for this resource
         logical_queue = req_obj.logical_queue
         # get job from logic queue with currently defined priority rule
-        job = self._seq_priority_rule(req_obj=req_obj, queue=logical_queue)
+        job = self._choose_job_from_queue(
+            req_obj=req_obj,
+            queue=logical_queue,
+            is_agent=is_agent,
+        )
         # reset environment signal for SEQUENCING
         if job.current_proc_time is None:
             raise ValueError(f'No processing time defined for job {job}.')
 
         return job
 
-    def _seq_priority_rule(
+    def _get_seq_policy(
         self,
         req_obj: InfrastructureObject,
-        queue: LogicalQueue[Job],
-    ) -> Job:
-        """apply priority rules to a pool of jobs"""
-
-        # ** Sequencing Rules
+    ) -> GeneralPolicy | SequencingPolicy:
         # first use requesting object, then Dispatcher (global)
         policy: GeneralPolicy | SequencingPolicy
         if req_obj.seq_policy is not None:
@@ -1758,12 +1805,40 @@ class Dispatcher:
         else:
             raise ValueError('No sequencing policy defined.')
 
-        job_collection = tuple(queue.as_list())
-        loggers.dispatcher.debug('[DISPATCHER] Set relevant jobs in >>TEMP state<<')
-        self.jobs_temp_state(jobs=job_collection, reset_temp=False)
-        job = policy.apply(items=job_collection)
-        loggers.dispatcher.debug('[DISPATCHER] Reset jobs from >>TEMP state<<')
-        self.jobs_temp_state(jobs=job_collection, reset_temp=True)
+        return policy
+
+    def _choose_job_from_queue(
+        self,
+        req_obj: InfrastructureObject,
+        queue: LogicalQueue[Job],
+        is_agent: bool,
+    ) -> Job:
+        """apply priority rules to a pool of jobs"""
+        job: Job | None = None
+
+        if not is_agent:
+            _ = queue.filter_content_by_station_groups(
+                target_station_group_ids=req_obj.supersystems_ids
+            )
+            relevant_jobs = queue.filter_content_by_release_status(chained_filter=True)
+            loggers.dispatcher.debug('[DISPATCHER] Set relevant jobs in >>TEMP state<<')
+            self.jobs_temp_state(relevant_jobs, reset_temp=False)
+            # if there are no available ones: use all stations
+            if relevant_jobs:
+                # ** Sequencing Rules
+                policy = self._get_seq_policy(req_obj=req_obj)
+                job = policy.apply(items=relevant_jobs)
+            else:
+                # TODO handling of not released jobs --> waiting?
+                ...
+
+            self.jobs_temp_state(relevant_jobs, reset_temp=True)
+            loggers.dispatcher.debug('[DISPATCHER] Reset jobs from >>TEMP state<<')
+        else:
+            # TODO 11.10.2024: add agent decision with waiting action
+            ...
+
+        # job_collection = queue.as_tuple()
         queue.remove(job)
 
         return job
@@ -2024,11 +2099,14 @@ class System(metaclass=ABCMeta):
         self.seq_policy: GeneralPolicy | SequencingPolicy | None = None
         self.alloc_policy: GeneralPolicy | AllocationPolicy | None = None
 
-        # [AGENT] decision agent
+        # [AGENT] decision agents
         self._agent_types: frozenset[AgentTasks] = frozenset(['SEQ', 'ALLOC'])
         self._alloc_agent_registered: bool = False
+        self._seq_agent_registered: bool = False
         # assignment
         self._alloc_agent: AllocationAgent | None = None
+        self._seq_agent: SequencingAgent | None = None
+        self._seq_agent_supported_systems: tuple[type[System], ...] = (LogicalQueue,)
 
     @property
     def env(self) -> SimulationEnvironment:
@@ -2056,7 +2134,88 @@ class System(metaclass=ABCMeta):
     ) -> None:
         self._sim_put_prio = val
 
+    @property
+    def alloc_agent(self) -> AllocationAgent:
+        if self._alloc_agent is None:
+            raise ValueError('No AllocationAgent instance registered.')
+        else:
+            return self._alloc_agent
+
+    @property
+    def seq_agent(self) -> SequencingAgent:
+        if self._seq_agent is None:
+            raise ValueError('No SequencingAgent instance registered.')
+        else:
+            return self._seq_agent
+
     ### REWORK
+    def _assign_alloc_agent(
+        self,
+        agent: Agent,
+    ) -> None:
+        # allocation agents on lowest hierarchy level not allowed
+        if self._abstraction_level == 0:
+            raise RuntimeError(
+                ('Can not register allocation agents ' 'for lowest hierarchy level objects.')
+            )
+        # registration, type and existence check
+        if not self._alloc_agent_registered and isinstance(agent, AllocationAgent):
+            self._alloc_agent = agent
+            self._alloc_agent_registered = True
+            loggers.pyf_env.info(
+                'Successfully registered Allocation Agent in %s',
+                self,
+            )
+        elif not isinstance(agent, AllocationAgent):
+            raise TypeError(
+                (
+                    f'The object must be of type >>AllocationAgent<<, '
+                    f'but is type >>{type(agent)}<<'
+                )
+            )
+        else:
+            raise AttributeError(
+                (
+                    'There is already a registered AllocationAgent instance. '
+                    'Only one instance per system is allowed.'
+                )
+            )
+
+    def _assign_seq_agent(
+        self,
+        agent: Agent,
+    ) -> None:
+        # registration, type and existence check
+        if not isinstance(self, self._seq_agent_supported_systems):
+            raise SequencingAgentAssignmentError(
+                (
+                    f'System type of >>{self}<< is '
+                    f'>>{type(self)}<< which is not supported for sequencing agents. '
+                    f'Assignment possible for: {self._seq_agent_supported_systems}'
+                )
+            )
+        if not self._seq_agent_registered and isinstance(agent, SequencingAgent):
+            self._seq_agent = agent
+            self._seq_agent_registered = True
+            loggers.pyf_env.info(
+                'Successfully registered Allocation Agent in %s',
+                self,
+            )
+        elif not isinstance(agent, SequencingAgent):
+            raise TypeError(
+                (
+                    f'The object must be of type >>SequencingAgent<<, '
+                    f'but is type >>{type(agent)}<<'
+                )
+            )
+        else:
+            raise AttributeError(
+                (
+                    'There is already a registered SequencingAgent instance. '
+                    'Only one instance per system is allowed.'
+                )
+            )
+
     def register_agent(
         self,
         agent: Agent,
@@ -2066,59 +2225,28 @@ class System(metaclass=ABCMeta):
             raise ValueError(
                 (
                     f'The agent type >>{agent_task}<< is not allowed. '
-                    f'Choose from {self._agent_types}'
+                    f'Choose from: {self._agent_types}'
                 )
             )
 
         match agent_task:
             case 'ALLOC':
-                # allocation agents on lowest hierarchy level not allowed
-                if self._abstraction_level == 0:
-                    raise RuntimeError(
-                        (
-                            'Can not register allocation agents '
-                            'for lowest hierarchy level objects.'
-                        )
-                    )
-                # registration, type and existence check
-                if not self._alloc_agent_registered and isinstance(agent, AllocationAgent):
-                    self._alloc_agent = agent
-                    self._alloc_agent_registered = True
-                    loggers.pyf_env.info(
-                        'Successfully registered Allocation Agent in %s',
-                        self,
-                    )
-                elif not isinstance(agent, AllocationAgent):
-                    raise TypeError(
-                        (
-                            f'The object must be of type >>AllocationAgent<< '
-                            f'but is type >>{type(agent)}<<'
-                        )
-                    )
-                else:
-                    raise AttributeError(
-                        (
-                            'There is already a registered AllocationAgent instance. '
-                            'Only one instance per system is allowed.'
-                        )
-                    )
+                self._assign_alloc_agent(agent=agent)
             case 'SEQ':
-                raise NotImplementedError(
-                    'Registration of sequencing agents not supported yet!'
-                )
+                self._assign_seq_agent(agent=agent)
 
         return self, self.env
-
-    @property
-    def alloc_agent(self) -> AllocationAgent:
-        if self._alloc_agent is None:
-            raise ValueError('No AllocationAgent instance registered.')
-        else:
-            return self._alloc_agent
 
     def check_alloc_agent(self) -> bool:
         """checks if an allocation agent is registered for the system"""
         if self._alloc_agent_registered:
+            return True
+        else:
+            return False
+
+    def check_seq_agent(self) -> bool:
+        """checks if an allocation agent is registered for the system"""
+        if self._seq_agent_registered:
             return True
         else:
             return False
@@ -2641,10 +2769,26 @@ class ContainerSystem(Generic[T], System):
 class LogicalQueue(System, QueueLike[J]):
     def __init__(
         self,
-        env: monitors.SimulationEnvironment,
+        env: SimulationEnvironment,
         custom_identifier: CustomID,
         name: str | None = None,
+        size: int = MAX_LOGICAL_QUEUE_SIZE,
     ) -> None:
+        """_summary_
+
+        Parameters
+        ----------
+        env : SimulationEnvironment
+            associated environment for simulation
+        custom_identifier : CustomID
+            user-defined unique identifier
+        name : str | None, optional
+            user-defined special name, does not have to be unique, by default None
+        size : int, optional
+            size of given queue, no capacity as this number is not enforced during
+            simulation runs; parameter used to obtain feature vectors with fixed size,
+            by default MAX_LOGICAL_QUEUE_CAPACITY
+        """
         super().__init__(
             env=env,
             supersystem=None,
@@ -2656,7 +2800,9 @@ class LogicalQueue(System, QueueLike[J]):
         )
 
         self._sim_queue = salabim.Queue(env=env, name=self.name, monitor=False)
+        self.size = size
         self.assoc_resources: set[InfrastructureObject] = set()
+        self.filtered: tuple[J, ...] | None = None
 
     @property
     def sim_queue(self) -> salabim.Queue:
@@ -2697,6 +2843,9 @@ class LogicalQueue(System, QueueLike[J]):
     def as_list(self) -> list[J]:
         return self.sim_queue.as_list()
 
+    def as_tuple(self) -> tuple[J, ...]:
+        return tuple(self.sim_queue.as_list())
+
     def add_resource(
         self,
         obj: InfrastructureObject,
@@ -2711,10 +2860,27 @@ class LogicalQueue(System, QueueLike[J]):
         if obj not in self.assoc_resources:
             self.assoc_resources.add(obj)
 
+    def _get_items_to_filter(
+        self,
+        chained_filter: bool = False,
+    ) -> Sequence[J] | LogicalQueue:
+        items_to_filter: Sequence[J] | LogicalQueue = self
+        if not chained_filter:
+            self.filtered = None
+        elif chained_filter and self.filtered is not None:
+            items_to_filter = self.filtered
+        elif chained_filter and self.filtered is None:
+            raise ValueError('No pre-filtered content found.')
+
+        return items_to_filter
+
     def filter_content_by_station_groups(
         self,
         target_station_group_ids: Collection[SystemID],
+        chained_filter: bool = False,
     ) -> tuple[J, ...]:
+        items_to_filter = self._get_items_to_filter(chained_filter=chained_filter)
+
         def filter_stat_group(item: J) -> bool:
             keep: bool
             if item.current_op is None:
@@ -2727,14 +2893,44 @@ class LogicalQueue(System, QueueLike[J]):
                 keep = item_stat_group.system_id in target_station_group_ids
             return keep
 
-        assoc_stat_group_items: tuple[J, ...]
-        if len(self) == 0:
-            assoc_stat_group_items = tuple()
+        relevant_items: tuple[J, ...]
+        if len(items_to_filter) == 0:
+            relevant_items = tuple()
         else:
-            filter_stat_group_items = cast(Iterator[J], filter(filter_stat_group, self))
-            assoc_stat_group_items = tuple(filter_stat_group_items)
+            filter_items = cast(Iterator[J], filter(filter_stat_group, items_to_filter))
+            relevant_items = tuple(filter_items)
 
-        return assoc_stat_group_items
+        self.filtered = relevant_items
+
+        return relevant_items
+
+    def filter_content_by_release_status(
+        self,
+        chained_filter: bool = False,
+    ) -> tuple[J, ...]:
+        items_to_filter = self._get_items_to_filter(chained_filter=chained_filter)
+
+        def filter_released_jobs(item: J) -> bool:
+            keep: bool
+            if item.current_op is None:
+                assert (
+                    item.last_op is not None
+                ), 'tried to apply filter on item with non-existent last OP'
+                keep = True
+            else:
+                keep = item.current_op.is_released
+            return keep
+
+        relevant_items: tuple[J, ...]
+        if len(items_to_filter) == 0:
+            relevant_items = tuple()
+        else:
+            filter_items = cast(Iterator[J], filter(filter_released_jobs, items_to_filter))
+            relevant_items = tuple(filter_items)
+
+        self.filtered = relevant_items
+
+        return relevant_items
 
     def filter_resources_by_station_group(
         self,
@@ -3112,13 +3308,14 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         infstruct_mgr = self.env.infstruct_mgr
         # call dispatcher to check for allocation rule
         # resets current feasibility status
+        # TODO check removal
         yield self.sim_control.hold(0, priority=self.sim_put_prio)
         dispatcher.jobs_temp_state(jobs=[job], reset_temp=False)
         loggers.agents.debug('[%s] Checking agent allocation at %s', self, self.env.t_as_dt())
         is_agent, alloc_agent = dispatcher.check_alloc_dispatch(job=job)
         target_station: InfrastructureObject
         if is_agent and alloc_agent is None:
-            raise ValueError('Agent decision is set, but no agent is provided.')
+            raise ValueError('Agent [ALLOC] decision is set, but no agent is provided.')
         elif is_agent and alloc_agent is not None:
             # if agent is set, set flags and calculate feature vector
             # as long as there is no feasible action
@@ -3251,8 +3448,44 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # --- logic ---
         # job enters logic queue of machine with unrestricted capacity
         # each machine can have an associated physical buffer
+
+        # ?? ----------------------------------------
         dispatcher = self.env.dispatcher
         infstruct_mgr = self.env.infstruct_mgr
+        # call dispatcher to check for allocation rule
+        # resets current feasibility status
+        yield self.sim_control.hold(0, priority=self.sim_put_prio)
+
+        loggers.agents.debug('[%s] Checking agent allocation at %s', self, self.env.t_as_dt())
+        is_agent, seq_agent = dispatcher.check_seq_dispatch(req_obj=self)
+        # target_station: InfrastructureObject
+        if is_agent and seq_agent is None:
+            raise ValueError('Agent [SEQ] decision is set, but no agent is provided.')
+        elif is_agent and seq_agent is not None:
+            # if agent is set, set flags and calculate feature vector
+            # as long as there is no feasible action
+            while not seq_agent.action_feasible:
+                # ** SET external Gym flag, build feature vector
+                dispatcher.request_agent_seq(req_obj=self)
+                # ** Break external loop
+                yield self.sim_control.hold(0, priority=self.sim_put_prio)
+                # ** 1.1 make and set decision in Gym-Env
+                # ** 1.2 RESET external Gym flag
+                # ** 2 calculate reward
+                loggers.agents.debug(
+                    'Action feasibility: current %s, past %s',
+                    seq_agent.action_feasible,
+                    seq_agent.past_action_feasible,
+                )
+                # obtain target station, check for feasibility
+                # --> SET ``agent.action_feasible``
+                target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
+        else:
+            # simply obtain target station if no agent decision is needed
+            target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
+
+        # ?? -------------------------------------------------------------------
+
         # request job and its time characteristics from associated queue
         yield self.sim_control.hold(0, priority=self.sim_get_prio)
         job = dispatcher.request_job_sequencing(req_obj=self)
@@ -3552,9 +3785,6 @@ class ProcessingStation(InfrastructureObject):
 
     @override
     def pre_process(self) -> None:
-        # infstruct_mgr = self.env.infstruct_mgr
-        # infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
-        # stay in INIT state until first job is received
         pass
 
     @override
