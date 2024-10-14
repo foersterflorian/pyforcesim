@@ -28,19 +28,26 @@ from pyforcesim.types import Infinite
 from pyforcesim.types import LoggingLevels as loglevel
 
 # ** logging
+LOG_FMT: Final[str] = ' %(asctime)s | pyfsim:%(module)s:%(levelname)s | %(message)s'
+LOG_DATE_FMT: Final[str] = '%Y-%m-%d %H:%M:%S +0000'
+LOGGING_ENABLED: Final[bool] = True
 LOGGING_TO_FILE: Final[bool] = True
+LOGGING_FILE_SIZE: Final[int] = 10485760  # in bytes
+LOGGING_LEVEL_STD_OUT: Final[loglevel] = loglevel.INFO
+LOGGING_LEVEL_FILE: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_BASE: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_ENV: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_GYM_ENV: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_ENV_BUILDER: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_DISPATCHER: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_DISPATCHER: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_INFSTRCT: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_SINKS: Final[loglevel] = loglevel.ERROR
-LOGGING_LEVEL_PRODSTATIONS: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_PRODSTATIONS: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_JOBS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_BUFFERS: Final[loglevel] = loglevel.ERROR
+LOGGING_LEVEL_QUEUES: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.DEBUG
@@ -116,6 +123,7 @@ DB_INJECTION_PATTERN: Final[str] = (
 # 24 hours of workload per day at the maximum
 MAX_PROCESSING_CAPACITY: Final[Timedelta] = Timedelta(hours=24)
 MAX_LOGICAL_QUEUE_SIZE: Final[int] = 30
+SEQUENCING_WAITING_TIME: Final[float] = 15  # time in minutes
 
 
 class SimResourceTypes(enum.StrEnum):

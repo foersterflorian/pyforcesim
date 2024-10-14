@@ -45,6 +45,7 @@ from pyforcesim.constants import (
     MAX_PROCESSING_CAPACITY,
     POLICIES_ALLOC,
     POLICIES_SEQ,
+    SEQUENCING_WAITING_TIME,
     TIMEZONE_CEST,
     SimResourceTypes,
     SimStatesCommon,
@@ -93,10 +94,13 @@ from pyforcesim.types import (
 T = TypeVar('T', bound='System')
 J = TypeVar('J', bound='Job')
 # definition of routing system level
-EXEC_SYSTEM_TYPE: Final = SimSystemTypes.PRODUCTION_AREA
+EXEC_SYSTEM_TYPE: Final[SimSystemTypes] = SimSystemTypes.PRODUCTION_AREA
 # time after a store request is failed
 FAIL_DELAY: Final[Timedelta] = pyf_dt.timedelta_from_val(
     24, time_unit=TimeUnitsTimedelta.HOURS
+)
+SEQ_WAITING_TIME: Final[Timedelta] = pyf_dt.timedelta_from_val(
+    SEQUENCING_WAITING_TIME, time_unit=TimeUnitsTimedelta.MINUTES
 )
 
 
@@ -602,7 +606,6 @@ class InfrastructureManager:
                     conn.commit()
                 # add to object lookup
                 self.resources[system_id] = obj
-                logical_queue.add_resource(obj=obj)
 
         loggers.infstrct.info(
             'Successfully registered object with SystemID >>%s<< and name >>%s<<',
@@ -981,6 +984,13 @@ class Dispatcher:
         )
 
     ### JOBS ###
+    def _verify_job_properties(
+        self,
+        job: Job,
+    ) -> None:
+        if job.current_proc_time is None:
+            raise ValueError(f'No processing time defined for job {job}.')
+
     def register_job(
         self,
         job: Job,
@@ -1360,7 +1370,6 @@ class Dispatcher:
     def release_operation(
         self,
         op: Operation,
-        target_station: ProcessingStation,
     ) -> None:
         """
         used to signal the release of the given operation
@@ -1374,6 +1383,16 @@ class Dispatcher:
         # update operation database
         # release date
         self.update_operation_db(op=op, property='release_date', val=op.time_release)
+        # target station: custom identifier + name
+        # self.update_operation_db(
+        #     op=op, property='target_station_sys_id', val=target_station.system_id
+        # )
+
+    def assign_operation(
+        self,
+        op: Operation,
+        target_station: InfrastructureObject,
+    ) -> None:
         # target station: custom identifier + name
         self.update_operation_db(
             op=op, property='target_station_sys_id', val=target_station.system_id
@@ -1683,7 +1702,8 @@ class Dispatcher:
                 target_station_group=target_station_group,
             )
             # with allocation request operation is released
-            self.release_operation(op=op, target_station=target_station)
+            # self.release_operation(op=op, target_station=target_station)
+            self.release_operation(op=op)
         else:
             # ?? [PERHAPS CHANGE IN FUTURE]
             # all operations done, look for sinks
@@ -1758,13 +1778,16 @@ class Dispatcher:
         self,
         req_obj: InfrastructureObject,
         is_agent: bool,
-    ) -> Job:
+    ) -> Job | None:
         """
         request a sequencing decision for a given queue of the requesting resource
         requester: input side processing stations
         request for: job instance
 
         req_obj: requesting object (ProcessingStation)
+        returned object:
+            job: Job instance to process
+            None: no job chosen --> initiate waiting state
         """
         # SIGNALING SEQUENCING DECISION
         # (ONLY IF MULTIPLE JOBS IN THE QUEUE EXIST)
@@ -1786,9 +1809,11 @@ class Dispatcher:
             queue=logical_queue,
             is_agent=is_agent,
         )
-        # reset environment signal for SEQUENCING
-        if job.current_proc_time is None:
-            raise ValueError(f'No processing time defined for job {job}.')
+        if job is not None:
+            self._verify_job_properties(job)
+            op = job.current_op
+            if op is not None:
+                self.assign_operation(op=op, target_station=req_obj)
 
         return job
 
@@ -1812,8 +1837,9 @@ class Dispatcher:
         req_obj: InfrastructureObject,
         queue: LogicalQueue[Job],
         is_agent: bool,
-    ) -> Job:
+    ) -> Job | None:
         """apply priority rules to a pool of jobs"""
+        # if job is None: --> no job available --> waiting
         job: Job | None = None
 
         if not is_agent:
@@ -1821,25 +1847,25 @@ class Dispatcher:
                 target_station_group_ids=req_obj.supersystems_ids
             )
             relevant_jobs = queue.filter_content_by_release_status(chained_filter=True)
-            loggers.dispatcher.debug('[DISPATCHER] Set relevant jobs in >>TEMP state<<')
-            self.jobs_temp_state(relevant_jobs, reset_temp=False)
-            # if there are no available ones: use all stations
+            loggers.dispatcher.debug(
+                '[DISPATCHER] Set relevant jobs in >>TEMP state<<: %s', relevant_jobs
+            )
+
             if relevant_jobs:
                 # ** Sequencing Rules
+                self.jobs_temp_state(relevant_jobs, reset_temp=False)
                 policy = self._get_seq_policy(req_obj=req_obj)
                 job = policy.apply(items=relevant_jobs)
-            else:
-                # TODO handling of not released jobs --> waiting?
-                ...
+                self.jobs_temp_state(relevant_jobs, reset_temp=True)
 
-            self.jobs_temp_state(relevant_jobs, reset_temp=True)
             loggers.dispatcher.debug('[DISPATCHER] Reset jobs from >>TEMP state<<')
         else:
             # TODO 11.10.2024: add agent decision with waiting action
             ...
 
         # job_collection = queue.as_tuple()
-        queue.remove(job)
+        if job is not None:
+            queue.remove(job)
 
         return job
 
@@ -2253,7 +2279,7 @@ class System(metaclass=ABCMeta):
 
     def __str__(self) -> str:
         return (
-            f'System (type: {self._system_type}, '
+            f'{self.__class__.__name__} (type: {self._system_type}, '
             f'custom_id: {self._custom_identifier}, name: {self._name})'
         )
 
@@ -2836,7 +2862,7 @@ class LogicalQueue(System, QueueLike[J]):
 
     def remove(
         self,
-        item: Any,
+        item: J,
     ) -> None:
         self.sim_queue.remove(item)  # type: ignore
 
@@ -2954,10 +2980,13 @@ class LogicalQueue(System, QueueLike[J]):
 
         if target_station_group is not None:
             relevant_stations = self.filter_resources_by_station_group(target_station_group)
-
+        loggers.queues.debug(
+            '[LOG-QUEUE] Activate one of following resources: %s', relevant_stations
+        )
         for station in relevant_stations:
             if station.sim_control.ispassive():
                 station.sim_control.activate()
+                loggers.queues.debug('[LOG-QUEUE] Activated resource: %s', station)
                 break
 
     @override
@@ -3115,6 +3144,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             state=current_state,
             logical_queue=log_queue,
         )
+        log_queue.add_resource(obj=self)
         self._logical_queue = log_queue
         # [STATS] Monitoring
         if add_monitor:
@@ -3165,6 +3195,8 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             self._use_const_setup_time = True
         else:
             self._use_const_setup_time = False
+        # waiting action
+        self.seq_waiting_time = self.env.td_to_simtime(SEQ_WAITING_TIME)
 
     @property
     def resource_type(self) -> SimResourceTypes:
@@ -3402,19 +3434,26 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # TODO check removal
         # job.enter(logical_queue)
         # [STATS:WIP] REMOVING WIP FROM CURRENT STATION
+        # !! implications for WIP calculation
+        # !! an unambiguous allocation and therefore WIP calculation
+        # !! can only be performed if there is one resource per associated queue
+        # !! in this case the allocation is predetermined
+        # !! otherwise the WIP had to be calculated for each associated resource
+        # !! which does not seem to be correct as the job is not yet allocated
         # remove only if it was added before, only case if the last operation exists
-        if job.last_op is not None:
+        if job.last_op is not None and len(self.logical_queue.assoc_resources) == 1:
             self.stat_monitor.change_WIP(job=job, remove=True)
         # [STATS:WIP] ADDING WIP TO TARGET STATION
         # add only if there is a next operation, only case if the current operation exists
         target_station_group: StationGroup | None = None
         if job.current_op is not None:
-            target_station.stat_monitor.change_WIP(job=job, remove=False)
+            if len(logical_queue.assoc_resources) == 1:
+                target_station.stat_monitor.change_WIP(job=job, remove=False)
             target_station_group = job.current_op.target_station_group
         # activate target processing station if passive
         logical_queue.activate_resources(target_station_group)
-        if target_station.sim_control.ispassive():
-            target_station.sim_control.activate()
+        # if target_station.sim_control.ispassive():
+        #     target_station.sim_control.activate()
 
         loggers.prod_stations.debug('[%s] Put Job %s in queue %s', self, job, logical_queue)
 
@@ -3449,7 +3488,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # job enters logic queue of machine with unrestricted capacity
         # each machine can have an associated physical buffer
 
-        # ?? ----------------------------------------
         dispatcher = self.env.dispatcher
         infstruct_mgr = self.env.infstruct_mgr
         # call dispatcher to check for allocation rule
@@ -3459,12 +3497,13 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         loggers.agents.debug('[%s] Checking agent allocation at %s', self, self.env.t_as_dt())
         is_agent, seq_agent = dispatcher.check_seq_dispatch(req_obj=self)
         # target_station: InfrastructureObject
+        job: Job | None = None
         if is_agent and seq_agent is None:
             raise ValueError('Agent [SEQ] decision is set, but no agent is provided.')
         elif is_agent and seq_agent is not None:
             # if agent is set, set flags and calculate feature vector
             # as long as there is no feasible action
-            while not seq_agent.action_feasible:
+            while not seq_agent.action_feasible and job is None:
                 # ** SET external Gym flag, build feature vector
                 dispatcher.request_agent_seq(req_obj=self)
                 # ** Break external loop
@@ -3479,16 +3518,25 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 )
                 # obtain target station, check for feasibility
                 # --> SET ``agent.action_feasible``
-                target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
+                job = dispatcher.request_job_sequencing(req_obj=self, is_agent=is_agent)
+                if job is None:
+                    # implement waiting
+                    yield self.sim_control.hold(self.seq_waiting_time)
+                    loggers.agents.debug('[%s][SEQ]: Performing waiting action...')
         else:
-            # simply obtain target station if no agent decision is needed
-            target_station = dispatcher.request_job_allocation(job=job, is_agent=is_agent)
-
-        # ?? -------------------------------------------------------------------
+            # obtain target job if no agent decision is needed
+            # wait if no proper selection is possible
+            while job is None:
+                job = dispatcher.request_job_sequencing(req_obj=self, is_agent=is_agent)
+                if job is None:
+                    # implement waiting
+                    yield self.sim_control.hold(self.seq_waiting_time)
+                    loggers.infstrct.debug('[%s] SEQ: Performing waiting action...')
 
         # request job and its time characteristics from associated queue
-        yield self.sim_control.hold(0, priority=self.sim_get_prio)
-        job = dispatcher.request_job_sequencing(req_obj=self)
+        # yield self.sim_control.hold(0, priority=self.sim_get_prio)
+        # job = dispatcher.request_job_sequencing(req_obj=self)
+        assert job is not None, 'Job is >>None<< after retrieval process'
         self.current_job = job
         self.current_op = job.current_op
         # update time characteristics of the infrastructure object
@@ -3505,7 +3553,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 job.job_id,
                 self.env.now(),
                 self.custom_identifier,
-                self.setup_time,
+                job.current_setup_time,
             )
             self.setup_time = job.current_setup_time
 

@@ -787,6 +787,7 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
 
         # execution control
         # [ACTIONS]
+        self._relevant_jobs: tuple[Job, ...] | None = None
         self._chosen_job: Job | None = None
 
     @property
@@ -804,7 +805,7 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
     ) -> None:
         # indicator that request is being made
         self.set_dispatching_signal(reset=False)
-        relevant_jobs = self.assoc_contents
+        self._relevant_jobs = self.assoc_contents
         # build feature vector
         self.feat_vec = self.build_feat_vec(req_object=req_obj, jobs=relevant_jobs)
         loggers.agents.debug(
@@ -889,9 +890,11 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
         self._action = action
         # first action is 'waiting'
         self._chosen_job = None
+        if self._relevant_jobs is None:
+            raise ValueError('[AGENT][SEQ] Relevant jobs may not be >>None<<')
         if action != 0:
             job_idx = action - 1
-            self._chosen_job = self.assoc_contents[job_idx]
+            self._chosen_job = self._relevant_jobs[job_idx]
         self.num_decisions += 1
         # indicator that request was processed, reset dispatching signal
         self.set_dispatching_signal(reset=True)
