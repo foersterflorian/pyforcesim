@@ -205,6 +205,8 @@ class SimulationEnvironment(salabim.Environment):
 
         # ** simulation run
         self.FAIL_DELAY: Final[float] = self.td_to_simtime(timedelta=FAIL_DELAY)
+        # waiting action
+        self.seq_waiting_time = self.env.td_to_simtime(SEQ_WAITING_TIME)
 
         loggers.pyf_env.info('New Environment >>%s<< created.', self.name())
 
@@ -1035,11 +1037,8 @@ class Dispatcher:
             conn.commit()
 
         self._jobs[job_id] = job
-
+        job._on_registration(time_creation=creation_date)
         loggers.dispatcher.debug('Successfully registered job with JobID >>%s<<', job_id)
-
-        # TODO check for explicit method to write information
-        job.time_creation = creation_date
 
         return self._env, job_id
 
@@ -1315,16 +1314,13 @@ class Dispatcher:
             conn.commit()
 
         self._ops[op_id] = op
-
+        op._on_registration(
+            target_exec_system=exec_system,
+            target_stat_group=target_station_group,
+            time_creation=creation_date,
+        )
         loggers.dispatcher.debug('Successfully registered operation with OpID >>%s<<', op_id)
 
-        # write operation information directly
-        # TODO check for explicit method
-        op.target_exec_system = exec_system
-        op.target_station_group = target_station_group
-        op.time_creation = creation_date
-
-        # return operation ID
         return op_id
 
     def update_operation_db(
@@ -1577,16 +1573,23 @@ class Dispatcher:
     ) -> tuple[bool, SequencingAgent | None]:
         is_agent: bool = False
         agent: SequencingAgent | None = None
-        # TODO: add checks for allocations on execution system level
-        if self.seq_rule == 'AGENT':
-            # check agent availability
-            is_agent = req_obj.check_seq_agent()
-            if is_agent:
-                logical_queue = req_obj.logical_queue
-                agent = logical_queue.seq_agent
-                agent.action_feasible = False
-            else:
-                raise ValueError('Allocation rule set to agent, but no agent instance found.')
+        # TODO: check removal
+        # if self.seq_rule == 'AGENT':
+        #     # check agent availability
+        #     is_agent = req_obj.check_seq_agent()
+        #     if is_agent:
+        #         logical_queue = req_obj.logical_queue
+        #         agent = logical_queue.seq_agent
+        #         agent.action_feasible = False
+        #     else:
+        #         raise ValueError('Allocation rule set to agent, but no agent instance found.')
+
+        # check agent availability
+        is_agent = req_obj.check_seq_agent()
+        if is_agent:
+            logical_queue = req_obj.logical_queue
+            agent = logical_queue.seq_agent
+            agent.action_feasible = False
 
         return is_agent, agent
 
@@ -1598,15 +1601,22 @@ class Dispatcher:
         next_op = self.get_next_operation(job=job)
         is_agent: bool = False
         agent: AllocationAgent | None = None
-        # TODO: add checks for allocations on execution system level
-        if self.alloc_rule == 'AGENT' and next_op is not None:
+        # TODO: check removal
+        # if self.alloc_rule == 'AGENT' and next_op is not None:
+        #     # check agent availability
+        #     is_agent = next_op.target_exec_system.check_alloc_agent()
+        #     if is_agent:
+        #         agent = next_op.target_exec_system.alloc_agent
+        #         agent.action_feasible = False
+        #     else:
+        #         raise ValueError('Allocation rule set to agent, but no agent instance found.')
+
+        if next_op is not None:
             # check agent availability
             is_agent = next_op.target_exec_system.check_alloc_agent()
             if is_agent:
                 agent = next_op.target_exec_system.alloc_agent
                 agent.action_feasible = False
-            else:
-                raise ValueError('Allocation rule set to agent, but no agent instance found.')
 
         return is_agent, agent
 
@@ -1769,11 +1779,12 @@ class Dispatcher:
 
             if self.env.check_agent_feasibility and not agent.action_feasible:
                 raise RuntimeError('action not feasible')
-            loggers.agents.debug('Action feasibility status: %s', agent.action_feasible)
+            loggers.agents.debug(
+                '[AGENT][ALLOC] Action feasibility status: %s', agent.action_feasible
+            )
 
         return target_station
 
-    # TODO add agent
     def request_job_sequencing(
         self,
         req_obj: InfrastructureObject,
@@ -1860,8 +1871,15 @@ class Dispatcher:
 
             loggers.dispatcher.debug('[DISPATCHER] Reset jobs from >>TEMP state<<')
         else:
-            # TODO 11.10.2024: add agent decision with waiting action
-            ...
+            agent = req_obj.seq_agent
+            job = agent.chosen_job
+
+            if self.env.check_agent_feasibility and not agent.action_feasible:
+                raise RuntimeError('action not feasible')
+
+            loggers.agents.debug(
+                '[AGENT][SEQ] Action feasibility status: %s', agent.action_feasible
+            )
 
         # job_collection = queue.as_tuple()
         if job is not None:
@@ -1902,8 +1920,6 @@ class Dispatcher:
             the same results
             default: False
         """
-        # TODO: Implement debug function to display results during sim runs
-
         # SQL query
         stmt = (
             sql.select(
@@ -2127,6 +2143,7 @@ class System(metaclass=ABCMeta):
 
         # [AGENT] decision agents
         self._agent_types: frozenset[AgentTasks] = frozenset(['SEQ', 'ALLOC'])
+        self._agent_decision_allowed: bool = False
         self._alloc_agent_registered: bool = False
         self._seq_agent_registered: bool = False
         # assignment
@@ -2173,6 +2190,21 @@ class System(metaclass=ABCMeta):
             raise ValueError('No SequencingAgent instance registered.')
         else:
             return self._seq_agent
+
+    @property
+    def agent_decision_allowed(self) -> bool:
+        return self._agent_decision_allowed
+
+    def trigger_agent_decision(self) -> None:
+        if not self._agent_decision_allowed:
+            self._agent_decision_allowed = True
+        else:
+            raise RuntimeError(
+                (
+                    f'Tried to set flag for agent decision for system '
+                    f'>>{self}<<, but it was already set.'
+                )
+            )
 
     ### REWORK
     def _assign_alloc_agent(
@@ -2265,17 +2297,15 @@ class System(metaclass=ABCMeta):
 
     def check_alloc_agent(self) -> bool:
         """checks if an allocation agent is registered for the system"""
-        if self._alloc_agent_registered:
+        if self._alloc_agent_registered and self._agent_decision_allowed:
             return True
-        else:
-            return False
+        return False
 
     def check_seq_agent(self) -> bool:
         """checks if an allocation agent is registered for the system"""
-        if self._seq_agent_registered:
+        if self._seq_agent_registered and self._agent_decision_allowed:
             return True
-        else:
-            return False
+        return False
 
     def __str__(self) -> str:
         return (
@@ -2791,7 +2821,6 @@ class ContainerSystem(Generic[T], System):
         pass
 
 
-# TODO add sequencing agents to logical queues
 class LogicalQueue(System, QueueLike[J]):
     def __init__(
         self,
@@ -3168,23 +3197,11 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             sim_logic=self.sim_logic,
             post_process=self.post_process,
         )
-        # TODO check removal old logical queue
-        # [LOGIC] logic queue
-        # each resource uses one associated logic queue, logic queues are not
-        # physically available
-        # queue_name: str = f'queue_{self.name}'
-        # self.logic_queue = salabim.Queue(name=queue_name, env=self.env, monitor=False)
         # currently available jobs on that resource
         self.contents: dict[LoadID, Job] = {}
         # currently processed job
         self.current_job: Job | None = None
         self.current_op: Operation | None = None
-        # TODO remove
-        # [STATS] additional information
-        # number of inputs/outputs
-        # self.num_inputs: int = 0
-        # self.num_outputs: int = 0
-
         # time characteristics
         self._proc_time: Timedelta = Timedelta.min
         # setup time: if a setup time is provided use always this time and
@@ -3195,8 +3212,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             self._use_const_setup_time = True
         else:
             self._use_const_setup_time = False
-        # waiting action
-        self.seq_waiting_time = self.env.td_to_simtime(SEQ_WAITING_TIME)
 
     @property
     def resource_type(self) -> SimResourceTypes:
@@ -3341,7 +3356,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # call dispatcher to check for allocation rule
         # resets current feasibility status
         # TODO check removal
-        yield self.sim_control.hold(0, priority=self.sim_put_prio)
+        # yield self.sim_control.hold(0, priority=self.sim_put_prio)
         dispatcher.jobs_temp_state(jobs=[job], reset_temp=False)
         loggers.agents.debug('[%s] Checking agent allocation at %s', self, self.env.t_as_dt())
         is_agent, alloc_agent = dispatcher.check_alloc_dispatch(job=job)
@@ -3431,8 +3446,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
 
         # [Job] enter logic queue after physical placement
         logical_queue.append(job)
-        # TODO check removal
-        # job.enter(logical_queue)
         # [STATS:WIP] REMOVING WIP FROM CURRENT STATION
         # !! implications for WIP calculation
         # !! an unambiguous allocation and therefore WIP calculation
@@ -3521,8 +3534,8 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 job = dispatcher.request_job_sequencing(req_obj=self, is_agent=is_agent)
                 if job is None:
                     # implement waiting
-                    yield self.sim_control.hold(self.seq_waiting_time)
-                    loggers.agents.debug('[%s][SEQ]: Performing waiting action...')
+                    yield self.sim_control.hold(self.env.seq_waiting_time)
+                    loggers.agents.debug('[%s][SEQ]: Performing waiting action...', self)
         else:
             # obtain target job if no agent decision is needed
             # wait if no proper selection is possible
@@ -3530,8 +3543,8 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                 job = dispatcher.request_job_sequencing(req_obj=self, is_agent=is_agent)
                 if job is None:
                     # implement waiting
-                    yield self.sim_control.hold(self.seq_waiting_time)
-                    loggers.infstrct.debug('[%s] SEQ: Performing waiting action...')
+                    yield self.sim_control.hold(self.env.seq_waiting_time)
+                    loggers.infstrct.debug('[%s] SEQ: Performing waiting action...', self)
 
         # request job and its time characteristics from associated queue
         # yield self.sim_control.hold(0, priority=self.sim_get_prio)
@@ -4346,7 +4359,6 @@ class Operation:
         """
         ADD DESCRIPTION
         """
-        # TODO: change to OrderTime object
         # !! perhaps processing times in future multiple entries depending on
         # !! associated machine
         # change of input format necessary, currently only one machine for each operation
@@ -4487,6 +4499,16 @@ class Operation:
             self._prio = new_prio
             # REWORK changing OP prio must change job prio but only if op is job's current one
 
+    def _on_registration(
+        self,
+        target_exec_system: ProductionArea,
+        target_stat_group,
+        time_creation: Datetime,
+    ) -> None:
+        self.target_exec_system = target_exec_system
+        self.target_station_group = target_stat_group
+        self.time_creation = time_creation
+
     # def _calc_slack(self) -> None:
     #     if self.time_planned_ending is not None:
     #         env = self.dispatcher.env
@@ -4531,6 +4553,7 @@ class Job(salabim.Component):
         planned_ending_date: Datetime | Sequence[Datetime | None] | None = None,
         custom_identifier: CustomID | None = None,
         current_state: SimStatesCommon = SimStatesCommon.INIT,
+        job_type: str = 'Job',
         additional_info: dict[str, CustomID] | None = None,
         **kwargs,
     ) -> None:
@@ -4595,53 +4618,19 @@ class Job(salabim.Component):
             self.op_wise_ending_date = False
 
         ### VALIDITY CHECK ###
-        # length of provided identifiers and lists must match
-        # TODO put in separate method
-        if station_groups is not None:
-            if len(station_groups) != len(execution_systems):
-                raise ValueError(
-                    (
-                        'The number of target stations must match '
-                        'the number of execution systems.'
-                    )
-                )
-        if len(proc_times) != len(execution_systems):
-            raise ValueError(
-                (
-                    'The number of processing times must match '
-                    'the number of execution systems.'
-                )
-            )
-        if len(setup_times) != len(proc_times):
-            raise ValueError(
-                'The number of setup times must match the number of processing times.'
-            )
-        if len(op_prios) != len(proc_times):
-            raise ValueError(
-                (
-                    'The number of operation priorities must match '
-                    'the number of processing times.'
-                )
-            )
-        if len(op_starting_dates) != len(proc_times):
-            raise ValueError(
-                (
-                    'The number of operation starting dates must match '
-                    'the number of processing times.'
-                )
-            )
-        if len(op_ending_dates) != len(proc_times):
-            raise ValueError(
-                (
-                    'The number of operation ending dates must match '
-                    'the number of processing times.'
-                )
-            )
-
+        self._verify_gen_properties(
+            execution_systems=execution_systems,
+            station_groups=station_groups,
+            proc_times=proc_times,
+            setup_times=setup_times,
+            starting_dates=op_starting_dates,
+            ending_dates=op_ending_dates,
+            prios=op_prios,
+        )
         ### BASIC INFORMATION ###
         # assign job information
         self.custom_identifier = custom_identifier
-        self.job_type: str = 'Job'
+        self.job_type = job_type
         self._dispatcher = dispatcher
         # sum of the proc times of each operation
         self.proc_time = sum(proc_times, Timedelta())
@@ -4794,6 +4783,62 @@ class Job(salabim.Component):
             )
         else:
             self._current_resource = obj
+
+    def _verify_gen_properties(
+        self,
+        execution_systems: Sequence[SystemID],
+        station_groups: Sequence[SystemID],
+        proc_times: Sequence[Timedelta],
+        setup_times: Sequence[Timedelta],
+        starting_dates: Sequence[Datetime | None],
+        ending_dates: Sequence[Datetime | None],
+        prios: Sequence[int | None],
+    ) -> None:
+        if len(station_groups) != len(execution_systems):
+            raise ValueError(
+                (
+                    'The number of target stations must match '
+                    'the number of execution systems.'
+                )
+            )
+        if len(proc_times) != len(execution_systems):
+            raise ValueError(
+                (
+                    'The number of processing times must match '
+                    'the number of execution systems.'
+                )
+            )
+        if len(setup_times) != len(proc_times):
+            raise ValueError(
+                'The number of setup times must match the number of processing times.'
+            )
+        if len(prios) != len(proc_times):
+            raise ValueError(
+                (
+                    'The number of operation priorities must match '
+                    'the number of processing times.'
+                )
+            )
+        if len(starting_dates) != len(proc_times):
+            raise ValueError(
+                (
+                    'The number of operation starting dates must match '
+                    'the number of processing times.'
+                )
+            )
+        if len(ending_dates) != len(proc_times):
+            raise ValueError(
+                (
+                    'The number of operation ending dates must match '
+                    'the number of processing times.'
+                )
+            )
+
+    def _on_registration(
+        self,
+        time_creation: Datetime,
+    ) -> None:
+        self.time_creation = time_creation
 
     # def _calc_slack(self) -> None:
     #     if self.time_planned_ending is not None:

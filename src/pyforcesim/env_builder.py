@@ -105,8 +105,11 @@ def test_agent_env() -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]
 
 
 def standard_env_1_2_3_ConstIdeal(
+    sequencing: bool = False,
     with_agent: bool = False,
+    validate: bool = False,
     seed: int | None = None,
+    debug: bool = False,
 ) -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]:
     starting_dt = pyf_dt.dt_with_tz_UTC(2024, 3, 28, 0)
     env = sim.SimulationEnvironment(
@@ -131,12 +134,16 @@ def standard_env_1_2_3_ConstIdeal(
     )
     # area_source.add_subsystem(group_source)
     order_time_source = pyf_dt.timedelta_from_val(val=2.0, time_unit=TimeUnitsTimedelta.HOURS)
+    job_gen_limit: int | None = None
+    if debug:
+        job_gen_limit = 12
+
     source = sim.Source(
         env=env,
         supersystem=group_source,
         custom_identifier=CustomID('source'),
         proc_time=order_time_source,
-        job_generation_limit=12,  # None
+        job_generation_limit=job_gen_limit,
     )
     # group_source.add_subsystem(source)
     # sink
@@ -149,9 +156,7 @@ def standard_env_1_2_3_ConstIdeal(
     group_sink = sim.StationGroup(
         env=env, supersystem=area_sink, custom_identifier=CustomID('2000')
     )
-    # area_sink.add_subsystem(group_sink)
     _ = sim.Sink(env=env, supersystem=group_sink, custom_identifier=CustomID('sink'))
-    # group_sink.add_subsystem(sink)
 
     # processing stations
     # prod area 1
@@ -164,129 +169,23 @@ def standard_env_1_2_3_ConstIdeal(
     group_prod = sim.StationGroup(
         env=env, supersystem=area_prod, custom_identifier=CustomID('1')
     )
-    # area_prod.add_subsystem(group_prod)
-    group_prod2 = sim.StationGroup(
-        env=env, supersystem=area_prod, custom_identifier=CustomID('2')
-    )
-    # area_prod.add_subsystem(group_prod2)
-    # machines
-    for machine in range(3):
-        if machine < 2:
-            target_group_prod = group_prod
-        else:
-            target_group_prod = group_prod2
-
-        buffer = sim.Buffer(
-            capacity=20,
-            env=env,
-            supersystem=target_group_prod,
-            custom_identifier=CustomID(str(10 + machine).zfill(2)),
-        )
-        _ = sim.Machine(
-            env=env,
-            supersystem=target_group_prod,
-            custom_identifier=CustomID(str(machine).zfill(2)),
-            buffers=[buffer],
-        )
-
-    sequence_generator = loads.ConstantSequenceSinglePA(
-        env=env, seed=100, prod_area_id=area_prod.system_id
-    )
-    prod_sequence_PA = sequence_generator.retrieve(
-        target_obj=source,
-    )
-    source.register_job_sequence(prod_sequence_PA)
-
-    # conditions
-    duration_transient = pyf_dt.timedelta_from_val(val=6, time_unit=TimeUnitsTimedelta.HOURS)
-    conditions.TransientCondition(env=env, duration_transient=duration_transient)
-    sim_dur = pyf_dt.timedelta_from_val(val=3, time_unit=TimeUnitsTimedelta.WEEKS)
-    # sim_end_date = pyf_dt.dt_with_tz_UTC(2024, 3, 23, 12)
-    conditions.JobGenDurationCondition(env=env, target_obj=source, sim_run_duration=sim_dur)
-
-    alloc_agent = agents.AllocationAgent(assoc_system=area_prod)
-    if with_agent:
-        conditions.TriggerAgentCondition(env=env, agent=alloc_agent)
-
-    return env, alloc_agent
-
-
-def standard_env_1_2_3_ConstIdeal_seq(
-    with_agent: bool = False,
-    seed: int | None = None,
-) -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]:
-    starting_dt = pyf_dt.dt_with_tz_UTC(2024, 3, 28, 0)
-    env = sim.SimulationEnvironment(
-        name='base',
-        time_unit='seconds',
-        starting_datetime=starting_dt,
-        seed=seed,
-        debug_dashboard=False,
-    )
-    env.dispatcher.seq_rule = 'FIFO'
-    # env.dispatcher.alloc_rule = 'LOAD_TIME'
-    env.dispatcher.alloc_rule = 'LOAD_TIME_REMAINING'
-    # source
-    area_source = sim.ProductionArea(
-        env=env,
-        custom_identifier=CustomID('1000'),
-        sim_get_prio=-20,
-        sim_put_prio=-30,
-    )
-    group_source = sim.StationGroup(
-        env=env, supersystem=area_source, custom_identifier=CustomID('1000')
-    )
-    # area_source.add_subsystem(group_source)
-    order_time_source = pyf_dt.timedelta_from_val(val=2.0, time_unit=TimeUnitsTimedelta.HOURS)
-    source = sim.Source(
-        env=env,
-        supersystem=group_source,
-        custom_identifier=CustomID('source'),
-        proc_time=order_time_source,
-        job_generation_limit=12,  # None
-    )
-    # group_source.add_subsystem(source)
-    # sink
-    area_sink = sim.ProductionArea(
-        env=env,
-        custom_identifier=CustomID('2000'),
-        sim_get_prio=-22,
-        sim_put_prio=-32,
-    )
-    group_sink = sim.StationGroup(
-        env=env, supersystem=area_sink, custom_identifier=CustomID('2000')
-    )
-    # area_sink.add_subsystem(group_sink)
-    _ = sim.Sink(env=env, supersystem=group_sink, custom_identifier=CustomID('sink'))
-    # group_sink.add_subsystem(sink)
-
-    # processing stations
-    # prod area 1
-    area_prod = sim.ProductionArea(
-        env=env,
-        custom_identifier=CustomID('1'),
-        sim_get_prio=-21,
-        sim_put_prio=-31,
-    )
-    group_prod = sim.StationGroup(
-        env=env, supersystem=area_prod, custom_identifier=CustomID('1')
-    )
-    # area_prod.add_subsystem(group_prod)
     group_prod2 = sim.StationGroup(
         env=env, supersystem=area_prod, custom_identifier=CustomID('2')
     )
     group_buffer = sim.StationGroup(
         env=env, supersystem=area_prod, custom_identifier=CustomID('buffer_group')
     )
-    # log_q = sim.LogicalQueue(env=env, custom_identifier=CustomID('logQ_seq'))
+
     log_q = None
+    if sequencing:
+        log_q = sim.LogicalQueue(env=env, custom_identifier=CustomID('logQ_seq'))
+
     buffer = sim.Buffer(
         capacity=sim.MAX_LOGICAL_QUEUE_SIZE,
         env=env,
         supersystem=group_buffer,
         custom_identifier=CustomID('buffer'),
     )
-    # area_prod.add_subsystem(group_prod2)
     # machines
     for machine in range(3):
         if machine < 2:
@@ -294,12 +193,14 @@ def standard_env_1_2_3_ConstIdeal_seq(
         else:
             target_group_prod = group_prod2
 
-        # buffer = sim.Buffer(
-        #     capacity=20,
-        #     env=env,
-        #     supersystem=target_group_prod,
-        #     custom_identifier=CustomID(str(10 + machine).zfill(2)),
-        # )
+        if not sequencing:
+            buffer = sim.Buffer(
+                capacity=20,
+                env=env,
+                supersystem=target_group_prod,
+                custom_identifier=CustomID(str(10 + machine).zfill(2)),
+            )
+
         _ = sim.Machine(
             env=env,
             supersystem=target_group_prod,
@@ -319,12 +220,17 @@ def standard_env_1_2_3_ConstIdeal_seq(
     # conditions
     duration_transient = pyf_dt.timedelta_from_val(val=6, time_unit=TimeUnitsTimedelta.HOURS)
     conditions.TransientCondition(env=env, duration_transient=duration_transient)
-    # sim_dur = pyf_dt.timedelta_from_val(val=3, time_unit=TimeUnitsTimedelta.WEEKS)
-    # sim_end_date = pyf_dt.dt_with_tz_UTC(2024, 3, 23, 12)
-    # conditions.JobGenDurationCondition(env=env, target_obj=source, sim_run_duration=sim_dur)
+    if not debug:
+        sim_dur = pyf_dt.timedelta_from_val(val=3, time_unit=TimeUnitsTimedelta.WEEKS)
+        conditions.JobGenDurationCondition(
+            env=env, target_obj=source, sim_run_duration=sim_dur
+        )
 
     alloc_agent = agents.AllocationAgent(assoc_system=area_prod)
-    if with_agent:
+    if validate:
+        alloc_agent = agents.ValidateAllocationAgent(assoc_system=area_prod)
+
+    if not sequencing and with_agent:
         conditions.TriggerAgentCondition(env=env, agent=alloc_agent)
 
     return env, alloc_agent
@@ -556,6 +462,7 @@ def standard_env_1_2_3_ConstIdeal_validate(
 
 
 def standard_env_1_3_7_ConstIdeal(
+    sequencing: bool = False,
     with_agent: bool = False,
     seed: int | None = None,
 ) -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]:
@@ -568,7 +475,7 @@ def standard_env_1_3_7_ConstIdeal(
         debug_dashboard=False,
     )
     env.dispatcher.seq_rule = 'FIFO'
-    env.dispatcher.alloc_rule = 'LOAD_TIME'
+    env.dispatcher.alloc_rule = 'LOAD_TIME_REMAINING'
     # source
     area_source = sim.ProductionArea(
         env=env,
@@ -585,7 +492,7 @@ def standard_env_1_3_7_ConstIdeal(
         supersystem=group_source,
         custom_identifier=CustomID('source'),
         proc_time=order_time_source,
-        job_generation_limit=None,
+        job_generation_limit=21,  # None
     )
     # sink
     area_sink = sim.ProductionArea(
@@ -617,6 +524,20 @@ def standard_env_1_3_7_ConstIdeal(
     group_prod3 = sim.StationGroup(
         env=env, supersystem=area_prod, custom_identifier=CustomID('3')
     )
+    group_buffer = sim.StationGroup(
+        env=env, supersystem=area_prod, custom_identifier=CustomID('buffer_group')
+    )
+
+    log_q = None
+    if sequencing:
+        log_q = sim.LogicalQueue(env=env, custom_identifier=CustomID('logQ_seq'))
+
+    buffer = sim.Buffer(
+        capacity=sim.MAX_LOGICAL_QUEUE_SIZE,
+        env=env,
+        supersystem=group_buffer,
+        custom_identifier=CustomID('buffer'),
+    )
     # machines
     for machine in range(7):
         if machine < 2:
@@ -626,16 +547,19 @@ def standard_env_1_3_7_ConstIdeal(
         else:
             target_group_prod = group_prod3
 
-        buffer = sim.Buffer(
-            capacity=20,
-            env=env,
-            supersystem=target_group_prod,
-            custom_identifier=CustomID(str(10 + machine).zfill(2)),
-        )
+        if not sequencing:
+            buffer = sim.Buffer(
+                capacity=20,
+                env=env,
+                supersystem=target_group_prod,
+                custom_identifier=CustomID(str(10 + machine).zfill(2)),
+            )
+
         _ = sim.Machine(
             env=env,
             supersystem=target_group_prod,
             custom_identifier=CustomID(str(machine).zfill(2)),
+            logical_queue=log_q,
             buffers=[buffer],
         )
 
@@ -650,9 +574,9 @@ def standard_env_1_3_7_ConstIdeal(
     # conditions
     duration_transient = pyf_dt.timedelta_from_val(val=28, time_unit=TimeUnitsTimedelta.HOURS)
     conditions.TransientCondition(env=env, duration_transient=duration_transient)
-    sim_dur = pyf_dt.timedelta_from_val(val=3, time_unit=TimeUnitsTimedelta.WEEKS)
+    # sim_dur = pyf_dt.timedelta_from_val(val=3, time_unit=TimeUnitsTimedelta.WEEKS)
     # sim_end_date = pyf_dt.dt_with_tz_UTC(2024, 3, 23, 12)
-    conditions.JobGenDurationCondition(env=env, target_obj=source, sim_run_duration=sim_dur)
+    # conditions.JobGenDurationCondition(env=env, target_obj=source, sim_run_duration=sim_dur)
 
     alloc_agent = agents.AllocationAgent(assoc_system=area_prod)
     if with_agent:

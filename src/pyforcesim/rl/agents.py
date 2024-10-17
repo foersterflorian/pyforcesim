@@ -822,6 +822,16 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
     ) -> npt.NDArray[np.float32]:
         action_mask: list[bool] = []
         station_feasible: bool
+        # list of jobs
+        # needed props:
+        # - target station group ID
+        # - order time
+        # - slack (if slack-based rewards used)
+        # build feature vector with fixed size, depending on logical queue size
+        # --> total vector size: queue size * number of features
+        # iterate over all associated jobs and build new vector for each job
+        # for each empty place, pad with zeros
+
         # job
         # needed properties: target station group ID, order time
         if job.current_order_time is None:

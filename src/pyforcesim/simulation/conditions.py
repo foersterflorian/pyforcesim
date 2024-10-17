@@ -12,10 +12,11 @@ from pyforcesim.errors import ViolationStartingConditionError
 from pyforcesim.simulation.base_components import SimulationComponent
 
 if TYPE_CHECKING:
-    from pyforcesim.rl.agents import Agent
+    from pyforcesim.rl.agents import Agent, S
     from pyforcesim.simulation.environment import (
         SimulationEnvironment,
         Source,
+        System,
     )
 
 # _dt_mgr = DTManager()
@@ -176,7 +177,7 @@ class TriggerAgentCondition(BaseCondition):
     def __init__(
         self,
         env: SimulationEnvironment,
-        agent: Agent,
+        agent: Agent[S],
         name: str = 'TriggerAgentCondition',
     ) -> None:
         # initialise base class
@@ -198,7 +199,8 @@ class TriggerAgentCondition(BaseCondition):
         sim_time = self.env.td_to_simtime(timedelta=self.env.duration_transient)
         yield self.sim_control.hold(sim_time, priority=-90)
         # change allocation rule of dispatcher
-        self.env.dispatcher.alloc_rule = 'AGENT'
+        # self.env.dispatcher.alloc_rule = 'AGENT'
+        self.agent.assoc_system.trigger_agent_decision()
         loggers.conditions.info(
             '[CONDITION %s]: Set allocation rule to >>AGENT<< at %s', self, self.env.t_as_dt()
         )
