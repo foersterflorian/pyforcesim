@@ -61,6 +61,7 @@ LOGGING_LEVEL_DB: Final[loglevel] = loglevel.ERROR
 INF: Final[Infinite] = float('inf')
 DEFAULT_SEED: Final[int] = 42
 EPSILON: Final[float] = 1e-8
+ROUNDING_PRECISION: Final[int] = 6
 
 
 # ** dates and times
@@ -87,6 +88,7 @@ class TimeUnitsTimedelta(enum.StrEnum):
 TIMEZONE_CEST: Final[ZoneInfo] = ZoneInfo('Europe/Berlin')
 TIMEZONE_UTC: Final[Timezone] = Timezone.utc
 DEFAULT_DATETIME: Final[Datetime] = Datetime(1970, 1, 1, tzinfo=TIMEZONE_UTC)
+SLACK_THRESHOLD: Final[Timedelta] = Timedelta(hours=2)
 
 
 # ** database
@@ -123,7 +125,7 @@ DB_INJECTION_PATTERN: Final[str] = (
 # 24 hours of workload per day at the maximum
 MAX_PROCESSING_CAPACITY: Final[Timedelta] = Timedelta(hours=24)
 MAX_LOGICAL_QUEUE_SIZE: Final[int] = 30
-SEQUENCING_WAITING_TIME: Final[float] = 15  # time in minutes
+SEQUENCING_WAITING_TIME: Final[Timedelta] = Timedelta(minutes=15)
 
 
 class SimResourceTypes(enum.StrEnum):

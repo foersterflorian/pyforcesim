@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Final, Generic, TypeVar, cast
 from typing_extensions import override
 
 import pandas as pd
@@ -18,6 +18,7 @@ from pyforcesim.constants import (
     HELPER_STATES,
     INF,
     PROCESSING_PROPERTIES,
+    SLACK_THRESHOLD,
     UTIL_PROPERTIES,
     SimStatesAvailability,
     SimStatesCommon,
@@ -60,6 +61,9 @@ class Monitor(Generic[T]):
         # [REGISTRATION]
         self._env = env
         self._target_object = obj
+        self.NORM_TD: Final[Timedelta] = pyf_dt.timedelta_from_val(
+            1.0, TimeUnitsTimedelta.HOURS
+        )
 
         if current_state == SimStatesCommon.TEMP or current_state == SimStatesStorage.TEMP:
             raise ValueError('TEMP state is not allowed as initial state.')
@@ -352,6 +356,22 @@ class LoadMonitor(Monitor[L]):
         )
         self.remaining_order_time = self.target_object.order_time
         self.slack: Timedelta = Timedelta()
+        self.slack_init: Timedelta = Timedelta()
+        self.slack_init_hours: float = 0.0
+        self.slack_upper_bound: Timedelta = Timedelta()
+        self.slack_upper_bound_hours: float = 0.0
+
+    def release(self) -> None:
+        """certain actions performed on release"""
+        self.calc_KPI()
+        self.slack_init = self.slack
+        self.slack_init_hours = self.slack_hours
+        self.slack_upper_bound = self.slack_init
+        self.slack_upper_bound_hours = self.slack_init_hours
+
+        if self.slack_upper_bound < SLACK_THRESHOLD:
+            self.slack_upper_bound = SLACK_THRESHOLD
+            self.slack_upper_bound_hours = SLACK_THRESHOLD / self.NORM_TD
 
     def slack_time_units(
         self,
@@ -465,7 +485,7 @@ class OperationMonitor(LoadMonitor['Operation']):
     @override
     def calc_KPI(self) -> None:
         super().calc_KPI()  # especially time proportions
-        self._KPI_remaining_order_time()  # needed fo slack
+        self._KPI_remaining_order_time()  # needed for slack
         self._KPI_slack()
 
 

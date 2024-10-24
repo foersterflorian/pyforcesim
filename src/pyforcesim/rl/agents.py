@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from datetime import timedelta as Timedelta
-from typing import TYPE_CHECKING, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Final, Generic, TypeVar, cast
 from typing_extensions import override
 
 import numpy as np
@@ -12,7 +12,14 @@ from numpy.random._generator import Generator as NPRandomGenerator
 
 from pyforcesim import datetime as pyf_dt
 from pyforcesim import loggers
-from pyforcesim.constants import HELPER_STATES, UTIL_PROPERTIES, TimeUnitsTimedelta
+from pyforcesim.constants import (
+    EPSILON,
+    HELPER_STATES,
+    ROUNDING_PRECISION,
+    SEQUENCING_WAITING_TIME,
+    UTIL_PROPERTIES,
+    TimeUnitsTimedelta,
+)
 from pyforcesim.types import (
     AgentTasks,
     LoadDistribution,
@@ -52,6 +59,9 @@ class Agent(Generic[S], ABC):
             seed = self.env.seed
         self._seed = seed
         self._rng = np.random.default_rng(seed=self.seed)
+        self.NORM_TD: Final[Timedelta] = pyf_dt.timedelta_from_val(
+            1.0, TimeUnitsTimedelta.HOURS
+        )
 
         self._dispatching_signal: bool = False
         self.num_decisions: int = 0
@@ -435,8 +445,7 @@ class AllocationAgent(Agent['ProductionArea']):
         # needed properties: target station group ID, order time
         if job.current_order_time is None:
             raise ValueError(f'Current order time of job {job} >>None<<')
-        norm_td = pyf_dt.timedelta_from_val(1.0, TimeUnitsTimedelta.HOURS)
-        order_time = job.current_order_time / norm_td
+        order_time = job.current_order_time / self.NORM_TD
         slack = job.stat_monitor.slack_hours
         # current op: obtain StationGroupID
         current_op = job.current_op
@@ -787,6 +796,7 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
 
         # execution control
         # [ACTIONS]
+        self.waiting_time = SEQUENCING_WAITING_TIME / self.NORM_TD
         self._relevant_jobs: tuple[Job, ...] | None = None
         self._chosen_job: Job | None = None
 
@@ -807,90 +817,85 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
         self.set_dispatching_signal(reset=False)
         self._relevant_jobs = self.assoc_contents
         # build feature vector
-        self.feat_vec = self.build_feat_vec(req_object=req_obj, jobs=relevant_jobs)
+        self.feat_vec = self.build_feat_vec(req_object=req_obj)
         loggers.agents.debug(
             '[REQUEST Agent %s]: built FeatVec at %s', self, self.env.t_as_dt()
         )
         loggers.agents.debug('[Agent %s]: Feature Vector: %s', self, self.feat_vec)
 
-    # TODO update
     @override
     def build_feat_vec(
         self,
         req_object: InfrastructureObject,
-        jobs: Sequence[Job],
     ) -> npt.NDArray[np.float32]:
         action_mask: list[bool] = []
-        station_feasible: bool
-        # list of jobs
+        # station properties
+        supersystem = cast('StationGroup', req_object.supersystems_as_list()[0])
+        res_SGI = supersystem.system_id
+        avail = int(req_object.stat_monitor.is_available)
+        res_info = (res_SGI, avail)
+        res_info_arr = np.array(res_info, dtype=np.float32)
+
+        # job properties
         # needed props:
         # - target station group ID
         # - order time
+        # - upper bound of slack (set when job was released)
         # - slack (if slack-based rewards used)
+        # TODO: add slack target
         # build feature vector with fixed size, depending on logical queue size
         # --> total vector size: queue size * number of features
         # iterate over all associated jobs and build new vector for each job
         # for each empty place, pad with zeros
+        jobs = self._relevant_jobs
+        assert jobs is not None, 'relevant jobs not available, >>None<< instead'
+        num_q_slots = req_object.logical_queue.size
+        num_jobs = len(jobs)
+        job_data: list[float] = []
+        action_waiting_feasible: bool = True
 
-        # job
-        # needed properties: target station group ID, order time
-        if job.current_order_time is None:
-            raise ValueError(f'Current order time of job {job} >>None<<')
-        norm_td = pyf_dt.timedelta_from_val(1.0, TimeUnitsTimedelta.HOURS)
-        order_time = job.current_order_time / norm_td
-        slack = job.stat_monitor.slack_hours
-        # current op: obtain StationGroupID
-        current_op = job.current_op
-        if current_op is not None:
+        for job in jobs:
+            # job
+            # needed properties: target station group ID, order time
+            if job.current_order_time is None:
+                raise ValueError(f'Current order time of job {job} >>None<<')
+            current_op = job.current_op
+            if current_op is None:
+                raise ValueError(
+                    'Tried to build feature vector for job without current operation.'
+                )
+            order_time = job.current_order_time / self.NORM_TD
+            slack_upper_bound = job.stat_monitor.slack_upper_bound_hours
+            slack = job.stat_monitor.slack_hours
             job_SGI = current_op.target_station_group_identifier
-        else:
-            raise ValueError(
-                'Tried to build feature vector for job without current operation.'
-            )
-        if job_SGI is None:
-            raise ValueError('Station Group ID of current operation is None.')
-        job_info = (job_SGI, order_time, slack)
-        job_info_arr = np.array(job_info, dtype=np.float32)
-        # resources
-        # needed properties
-        # station group, availability, WIP_time
-        for i, res in enumerate(self._assoc_proc_stations):
-            # T1 build feature vector for one machine
-            monitor = res.stat_monitor
-            # station group identifier should be the system's one
-            # because custom IDs can be non-numeric which is bad for an agent
-            # use only first identifier although multiple values are possible
-            supersystem = cast('StationGroup', res.supersystems_as_list()[0])
-            res_SGI = supersystem.system_id
-            # feasibility check
+
+            job_info = (job_SGI, order_time, slack_upper_bound, slack)
+            job_data.extend(job_info)
+
+            station_feasible: bool = False
             if res_SGI == job_SGI:
                 station_feasible = True
-            else:
-                station_feasible = False
             action_mask.append(station_feasible)
+            # waiting action not feasible if any job has negative slack
+            if slack < 0.0:
+                action_waiting_feasible = False
 
-            # availability: boolean to integer
-            avail = int(monitor.is_available)
-            # WIP_time in hours
-            # WIP_time = monitor.WIP_load_time / Timedelta(hours=1)
-            WIP_time_remain = monitor.WIP_load_time_remaining / Timedelta(hours=1)
-            # tuple: (System SGI of resource obj, availability status,
-            # WIP calculated in time units)
-            # res_info = (res_SGI, avail, WIP_time)
-            res_info = (res_SGI, avail, WIP_time_remain)
-            res_info_arr_current = np.array(res_info, dtype=np.float32)
+        feat_vec_len = num_q_slots * len(job_info)
+        pad_len = feat_vec_len - len(job_data)
+        job_info_arr = np.array(job_data, dtype=np.float32)
+        job_info_arr = np.pad(job_info_arr, (0, pad_len), constant_values=0)
+        pad_len_actions = num_q_slots - num_jobs
+        action_mask_arr = np.array(action_mask, dtype=np.bool_)
+        self.action_mask = np.pad(
+            action_mask_arr,
+            (1, pad_len_actions),
+            constant_values=(action_waiting_feasible, False),
+        )
 
-            if i == 0:
-                res_info_arr_all = res_info_arr_current
-            else:
-                res_info_arr_all = np.concatenate((res_info_arr_all, res_info_arr_current))
+        # concat information
+        info_arr = np.concatenate((res_info_arr, job_info_arr), dtype=np.float32)
 
-        # concat job information
-        res_info_arr_all = np.concatenate((res_info_arr_all, job_info_arr), dtype=np.float32)
-        # action mask
-        self.action_mask = np.array(action_mask, dtype=np.bool_)
-
-        return res_info_arr_all
+        return info_arr
 
     @override
     def set_decision(
@@ -910,3 +915,117 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
         self.set_dispatching_signal(reset=True)
 
         loggers.agents.debug('[DECISION SET Agent %s]: Set to >>%d<<', self, self._action)
+
+    @staticmethod
+    def _reward_slack_polynomial(
+        x: float,
+        a: float = -0.2,
+        n: float = 2,
+    ) -> float:
+        return a * np.power(x, n)
+
+    @staticmethod
+    def _reward_curved_norm_scale(x: float, a: float) -> float:
+        if a <= 0.0:
+            raise ValueError('Parameter >>a<< must be greater than 0.')
+        a += EPSILON  # eliminate cases where a value of a=1 causes division by zero error
+        return (np.power(a, x) - 1) / (a - 1)
+
+    def _reward_slack_category(
+        self,
+        slack_init: float,
+        slack: float,
+        slack_lower_bound: float = 0.0,
+    ) -> float:
+        # TODO What happens if initial slack is smaller than lower bound?
+        # TODO What happens if current slack is greater than slack_init under the condition
+        # TODO that slack_init was already tardy?
+        # target value needed
+        # if job starts with an initial slack lower than the defined lower bound, a
+        # target value has to be set
+        # every initial slack lower than a given threshold value results in this threshold
+        # value as target
+        delta: float | None = None
+        if slack < slack_lower_bound:
+            # tardy
+            delta = slack - slack_lower_bound
+        elif slack > slack_init:
+            # premature
+            delta = slack - slack_init
+
+        proportion: float
+        reward: float
+        slack_range = abs(slack_init - slack_lower_bound)
+        if delta is None:
+            # positive reward: 0 <= slack <= slack_init
+            # curve between 0 and 1
+            proportion = slack / slack_range
+            reward = self._reward_curved_norm_scale(x=proportion, a=4)
+        else:
+            # other reward
+            proportion = delta / slack_range
+            reward = self._reward_slack_polynomial(x=proportion)
+
+        return round(reward, ROUNDING_PRECISION)
+
+    @override
+    def calc_reward(self) -> float:
+        job_reward = self.chosen_job
+        if job_reward is None:
+            # reward for waiting
+            reward = 0.0
+        else:
+            # decision type CAT 1, 2, 3
+            # S_dec = S_current
+            slack_init = job.stat_monitor.slack_init_hours  # initial slack on release
+            slack = job.stat_monitor.slack_hours
+
+        op_rew = self.current_op
+        if op_rew is None:
+            raise ValueError('Tried to calculate reward based on a non-existent operation.')
+        # obtain target station (set during action setting)
+        chosen_station = self.chosen_station
+        if chosen_station is None:
+            raise ValueError(
+                "No station was chosen. Maybe the agent's action was not properly set."
+            )
+        # obtain target SG from respective operation
+        target_station_group = op_rew.target_station_group
+        if target_station_group is None:
+            raise ValueError(f'Operation >>{op_rew}<< has no associated station group.')
+
+        loggers.agents.debug('[Agent Reward] Target station group: %s', target_station_group)
+        loggers.agents.debug('[Agent Reward] Chosen station: %s', chosen_station)
+        # perform feasibility check + set flag
+        self.action_feasible = self.env.check_feasible_agent_alloc(
+            target_station=chosen_station, op=op_rew
+        )
+
+        reward: float
+        if self.action_feasible:
+            # load_distribution_current = target_station.workload_distribution_current()
+            # reward = self.reward_load_balancing(
+            #     target_station_group=target_station_group,
+            #     chosen_station=chosen_station,
+            #     op_reward=op_rew,
+            #     enable_masking=False,
+            # )
+            # reward = self.reward_slack_estimate(
+            #     target_station_group=target_station_group,
+            #     chosen_station=chosen_station,
+            #     op_reward=op_rew,
+            # )
+            reward = self.reward_slack_delta_current(
+                chosen_station=chosen_station,
+            )
+
+        else:
+            # non-feasible actions
+            reward = -100.0
+
+        loggers.agents.debug('[AllocationAgent] reward: %.4f', reward)
+        self.cum_reward += reward
+        loggers.agents.debug('[Agent Reward] Num Decisions: %d', self.num_decisions)
+        loggers.agents.debug('[Agent Reward] Cum Reward: %.6f', self.cum_reward)
+
+        return reward

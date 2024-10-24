@@ -99,9 +99,6 @@ EXEC_SYSTEM_TYPE: Final[SimSystemTypes] = SimSystemTypes.PRODUCTION_AREA
 FAIL_DELAY: Final[Timedelta] = pyf_dt.timedelta_from_val(
     24, time_unit=TimeUnitsTimedelta.HOURS
 )
-SEQ_WAITING_TIME: Final[Timedelta] = pyf_dt.timedelta_from_val(
-    SEQUENCING_WAITING_TIME, time_unit=TimeUnitsTimedelta.MINUTES
-)
 
 
 # ** functions
@@ -206,7 +203,7 @@ class SimulationEnvironment(salabim.Environment):
         # ** simulation run
         self.FAIL_DELAY: Final[float] = self.td_to_simtime(timedelta=FAIL_DELAY)
         # waiting action
-        self.seq_waiting_time = self.env.td_to_simtime(SEQ_WAITING_TIME)
+        self.seq_waiting_time = self.env.td_to_simtime(SEQUENCING_WAITING_TIME)
 
         loggers.pyf_env.info('New Environment >>%s<< created.', self.name())
 
@@ -1075,6 +1072,7 @@ class Dispatcher:
         current_time = self.env.t_as_dt()
         job.time_release = current_time
         job.is_released = True
+        job.stat_monitor.release()
         self.update_job_db(job=job, property='release_date', val=job.time_release)
 
     def enter_job(
@@ -1376,6 +1374,7 @@ class Dispatcher:
         # release time
         op.time_release = current_time
         op.is_released = True
+        op.stat_monitor.release()
         # update operation database
         # release date
         self.update_operation_db(op=op, property='release_date', val=op.time_release)
