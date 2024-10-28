@@ -249,9 +249,9 @@ class SimulationEnvironment(salabim.Environment):
         else:
             return self._dispatcher
 
-    def check_feasible_agent_alloc(
+    def check_feasible_agent_choice(
         self,
-        target_station: ProcessingStation,
+        target_station: InfrastructureObject,
         op: Operation,
     ) -> bool:
         """
@@ -387,16 +387,64 @@ class InfrastructureManager:
         return self._prod_areas
 
     @property
+    def prod_areas_db(self) -> DataFrame:
+        """
+        returns a copy of the underlying SQL production areas database as
+        parsed Pandas DataFrame
+        """
+        prod_areas_db = db.parse_database_to_dataframe(
+            database=db.production_areas,
+            db_engine=self.env.db_engine,
+        )
+        return prod_areas_db
+
+    @property
     def station_groups(self) -> dict[SystemID, StationGroup]:
         return self._station_groups
+
+    @property
+    def station_groups_db(self) -> DataFrame:
+        """
+        returns a copy of the underlying SQL station group database as
+        parsed Pandas DataFrame
+        """
+        stat_group_db = db.parse_database_to_dataframe(
+            database=db.station_groups,
+            db_engine=self.env.db_engine,
+        )
+        return stat_group_db
 
     @property
     def resources(self) -> dict[SystemID, InfrastructureObject]:
         return self._resources
 
     @property
+    def resources_db(self) -> DataFrame:
+        """
+        returns a copy of the underlying SQL resource database as parsed
+        Pandas DataFrame
+        """
+        res_db = db.parse_database_to_dataframe(
+            database=db.resources,
+            db_engine=self.env.db_engine,
+        )
+        return res_db
+
+    @property
     def logical_queues(self) -> dict[SystemID, LogicalQueue[Job]]:
         return self._logical_queues
+
+    @property
+    def logical_queues_db(self) -> DataFrame:
+        """
+        returns a copy of the underlying SQL logical queue database as
+        parsed Pandas DataFrame
+        """
+        log_q_db = db.parse_database_to_dataframe(
+            database=db.logical_queues,
+            db_engine=self.env.db_engine,
+        )
+        return log_q_db
 
     def get_total_per_system_type(
         self,
@@ -463,11 +511,12 @@ class InfrastructureManager:
     def register_logical_queue(
         self,
         queue: LogicalQueue[Job],
+        system_id: SystemID,
         custom_identifier: CustomID,
         name: str | None,
     ) -> tuple[SystemID, str]:
         # obtain system ID
-        system_id = self._obtain_system_id(system_type=SimSystemTypes.LOGICAL_QUEUE)
+        # system_id = self._obtain_system_id(system_type=SimSystemTypes.LOGICAL_QUEUE)
         # custom name
         if name is None:
             name = f'{type(queue).__name__}_env_{system_id}'
@@ -605,6 +654,15 @@ class InfrastructureManager:
                     conn.commit()
                 # add to object lookup
                 self.resources[system_id] = obj
+
+            case SimSystemTypes.LOGICAL_QUEUE:
+                obj = cast('LogicalQueue[Job]', obj)
+                self.register_logical_queue(
+                    queue=obj,
+                    system_id=system_id,
+                    custom_identifier=custom_identifier,
+                    name=name,
+                )
 
         loggers.infstrct.info(
             'Successfully registered object with SystemID >>%s<< and name >>%s<<',
@@ -1584,9 +1642,9 @@ class Dispatcher:
         #         raise ValueError('Allocation rule set to agent, but no agent instance found.')
 
         # check agent availability
-        is_agent = req_obj.check_seq_agent()
+        logical_queue = req_obj.logical_queue
+        is_agent = logical_queue.check_seq_agent()
         if is_agent:
-            logical_queue = req_obj.logical_queue
             agent = logical_queue.seq_agent
             agent.action_feasible = False
 
@@ -1870,7 +1928,7 @@ class Dispatcher:
 
             loggers.dispatcher.debug('[DISPATCHER] Reset jobs from >>TEMP state<<')
         else:
-            agent = req_obj.seq_agent
+            agent = queue.seq_agent
             job = agent.chosen_job
 
             if self.env.check_agent_feasibility and not agent.action_feasible:
@@ -2918,7 +2976,7 @@ class LogicalQueue(System, QueueLike[J]):
         self,
         chained_filter: bool = False,
     ) -> Sequence[J] | LogicalQueue:
-        items_to_filter: Sequence[J] | LogicalQueue = self
+        items_to_filter: Sequence[J] | LogicalQueue[J] = self
         if not chained_filter:
             self.filtered = None
         elif chained_filter and self.filtered is not None:
@@ -3515,7 +3573,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         elif is_agent and seq_agent is not None:
             # if agent is set, set flags and calculate feature vector
             # as long as there is no feasible action
-            while not seq_agent.action_feasible and job is None:
+            while (not seq_agent.action_feasible) or (job is None):
                 # ** SET external Gym flag, build feature vector
                 dispatcher.request_agent_seq(req_obj=self)
                 # ** Break external loop

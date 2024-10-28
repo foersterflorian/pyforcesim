@@ -246,6 +246,24 @@ class ProductionSequence(BaseJobGenerator):
         # init base class
         super().__init__(env=env, seed=seed)
 
+    def _get_order_times(
+        self,
+        time_operational: Timedelta,
+        due_date_factor: float = 1.0,
+    ) -> OrderDates:
+        # planned starting time = current time
+        # planned ending = calculated due date
+        curr_time = self.env.t_as_dt()
+        due_date = calc_due_date(
+            starting_date=curr_time,
+            total_operational_time=time_operational,
+            factor=due_date_factor,
+        )
+        return OrderDates(
+            starting_planned=[curr_time],
+            ending_planned=[due_date],
+        )
+
 
 class SequenceSinglePA(ProductionSequence):
     def __init__(
@@ -288,6 +306,7 @@ class ConstantSequenceSinglePA(SequenceSinglePA):
     def retrieve(
         self,
         target_obj: Source,
+        due_date_factor: float = 1.0,
     ) -> Iterator[JobGenerationInfo]:
         """Generates a constant sequence of job generation infos
 
@@ -334,14 +353,17 @@ class ConstantSequenceSinglePA(SequenceSinglePA):
                         td=setup_time, round_to_next_seconds=60
                     )
                     proc_time = overall_time - setup_time
-                    # StationGroupID
+                    order_dates = self._get_order_times(
+                        time_operational=overall_time,
+                        due_date_factor=due_date_factor,
+                    )
                     stat_group_id = stat_group.system_id
                     job_gen_info = JobGenerationInfo(
                         custom_id=None,
                         execution_systems=[self._prod_area_id],
                         station_groups=[stat_group_id],
                         order_time=OrderTimes(proc=[proc_time], setup=[setup_time]),
-                        dates=OrderDates(),
+                        dates=order_dates,
                         prio=None,
                         current_state=SimStatesCommon.INIT,
                     )
@@ -445,20 +467,10 @@ class VariableSequenceSinglePA(SequenceSinglePA):
                         td=setup_time, round_to_next_seconds=60
                     )
                     proc_time = overall_time - setup_time
-                    # TODO add OrderDates
-                    # planned starting time = current time
-                    # planned ending = calculated due date
-                    curr_time = self.env.t_as_dt()
-                    due_date = calc_due_date(
-                        starting_date=curr_time,
-                        total_operational_time=overall_time,
-                        factor=due_date_factor,
+                    order_dates = self._get_order_times(
+                        time_operational=overall_time,
+                        due_date_factor=due_date_factor,
                     )
-                    order_dates = OrderDates(
-                        starting_planned=[curr_time],
-                        ending_planned=[due_date],
-                    )
-                    # StationGroupID
                     stat_group_id = stat_group.system_id
                     job_gen_info = JobGenerationInfo(
                         custom_id=None,

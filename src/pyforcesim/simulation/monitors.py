@@ -18,7 +18,8 @@ from pyforcesim.constants import (
     HELPER_STATES,
     INF,
     PROCESSING_PROPERTIES,
-    SLACK_THRESHOLD,
+    SLACK_THRESHOLD_LOWER,
+    SLACK_THRESHOLD_UPPER,
     UTIL_PROPERTIES,
     SimStatesAvailability,
     SimStatesCommon,
@@ -360,6 +361,8 @@ class LoadMonitor(Monitor[L]):
         self.slack_init_hours: float = 0.0
         self.slack_upper_bound: Timedelta = Timedelta()
         self.slack_upper_bound_hours: float = 0.0
+        self.slack_lower_bound: Timedelta = SLACK_THRESHOLD_LOWER
+        self.slack_lower_bound_hours: float = SLACK_THRESHOLD_LOWER / self.NORM_TD
 
     def release(self) -> None:
         """certain actions performed on release"""
@@ -369,9 +372,9 @@ class LoadMonitor(Monitor[L]):
         self.slack_upper_bound = self.slack_init
         self.slack_upper_bound_hours = self.slack_init_hours
 
-        if self.slack_upper_bound < SLACK_THRESHOLD:
-            self.slack_upper_bound = SLACK_THRESHOLD
-            self.slack_upper_bound_hours = SLACK_THRESHOLD / self.NORM_TD
+        if self.slack_upper_bound < SLACK_THRESHOLD_UPPER:
+            self.slack_upper_bound = SLACK_THRESHOLD_UPPER
+            self.slack_upper_bound_hours = SLACK_THRESHOLD_UPPER / self.NORM_TD
 
     def slack_time_units(
         self,

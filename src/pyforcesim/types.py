@@ -106,16 +106,47 @@ class JobGenerationInfo:
 
 
 # ** simulation environments
+EnvAgentConstructorReturn: TypeAlias = tuple[
+    'sim.SimulationEnvironment',
+    'agents.AllocationAgent | None',
+    'agents.SequencingAgent | None',
+]
+
+
 class EnvBuilderFunc(Protocol):
     def __call__(
         self,
+        sequencing: bool = ...,
         with_agent: bool = ...,
+        validate: bool = ...,
         seed: int | None = ...,
-    ) -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]: ...
+        num_station_groups: int = ...,
+        num_machines: int = ...,
+        variable_source_sequence: bool = ...,
+        debug: bool = ...,
+        seed_layout: int | None = ...,
+    ) -> EnvAgentConstructorReturn: ...
+
+
+class BuilderFuncFamilies(enum.StrEnum):
+    SINGLE_PRODUCTION_AREA = enum.auto()
+
+
+@dataclass(slots=True, kw_only=True, eq=False)
+class EnvGenerationInfo:
+    num_station_groups: int
+    num_machines: int
+    variable_source_sequence: bool
+    validate: bool
 
 
 # ** agents
 AgentTasks: TypeAlias = Literal['SEQ', 'ALLOC']
+
+
+class AgentDecisionTypes(enum.StrEnum):
+    ALLOC = enum.auto()
+    SEQ = enum.auto()
 
 
 # ** database

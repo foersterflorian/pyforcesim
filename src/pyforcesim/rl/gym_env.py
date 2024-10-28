@@ -1,3 +1,5 @@
+import re
+from dataclasses import asdict
 from datetime import timedelta as Timedelta
 from typing import Any, Final, cast
 
@@ -8,41 +10,70 @@ from pandas import DataFrame
 
 from pyforcesim.constants import DEFAULT_SEED
 from pyforcesim.env_builder import (
-    standard_env_1_2_3_ConstIdeal,
-    standard_env_1_3_7_ConstIdeal,
-    standard_env_1_3_7_ConstIdeal_validate,
-    standard_env_1_3_7_VarIdeal,
-    standard_env_1_3_7_VarIdeal_validate,
-    standard_env_1_5_5_ConstIdeal,
-    standard_env_1_5_10_ConstIdeal,
-    standard_env_1_5_15_ConstIdeal,
-    standard_env_1_5_20_ConstIdeal,
-    standard_env_1_5_30_ConstIdeal,
-    standard_env_1_5_50_ConstIdeal,
-    standard_env_1_5_70_ConstIdeal,
+    standard_env_single_area,
 )
 from pyforcesim.loggers import gym_env as logger
+from pyforcesim.rl import agents
 from pyforcesim.simulation import environment as sim
-from pyforcesim.types import EnvBuilderFunc, PlotlyFigure
+from pyforcesim.types import (
+    AgentDecisionTypes,
+    BuilderFuncFamilies,
+    EnvBuilderFunc,
+    EnvGenerationInfo,
+    PlotlyFigure,
+)
 
 MAX_WIP_TIME: Final[int] = 300
 MAX_NON_FEASIBLE: Final[int] = 20
 
 
-BUILDER_FUNCS: Final[dict[str, EnvBuilderFunc]] = {
-    '1-2-3_ConstIdeal': standard_env_1_2_3_ConstIdeal,
-    '1-3-7_ConstIdeal': standard_env_1_3_7_ConstIdeal,
-    '1-3-7_ConstIdeal_validate': standard_env_1_3_7_ConstIdeal_validate,
-    '1-3-7_VarIdeal': standard_env_1_3_7_VarIdeal,
-    '1-3-7_VarIdeal_validate': standard_env_1_3_7_VarIdeal_validate,
-    '1-5-5_ConstIdeal': standard_env_1_5_5_ConstIdeal,
-    '1-5-10_ConstIdeal': standard_env_1_5_10_ConstIdeal,
-    '1-5-15_ConstIdeal': standard_env_1_5_15_ConstIdeal,
-    '1-5-20_ConstIdeal': standard_env_1_5_20_ConstIdeal,
-    '1-5-30_ConstIdeal': standard_env_1_5_30_ConstIdeal,
-    '1-5-50_ConstIdeal': standard_env_1_5_50_ConstIdeal,
-    '1-5-70_ConstIdeal': standard_env_1_5_70_ConstIdeal,
+BUILDER_FUNCS: Final[dict[BuilderFuncFamilies, EnvBuilderFunc]] = {
+    BuilderFuncFamilies.SINGLE_PRODUCTION_AREA: standard_env_single_area,
 }
+
+
+def parse_exp_type(
+    exp_type: str,
+) -> EnvGenerationInfo:
+    pattern = re.compile(r'^[\d]+-([\d]+)-([\d]+)_([A-Z]+)_([A-Z]+)$', re.IGNORECASE)
+    matches = pattern.search(exp_type)
+    if matches is None:
+        raise ValueError(f'Experiment type >>{exp_type}<< could not be parsed.')
+
+    str_num_stat_groups = matches.group(1)
+    str_num_machines = matches.group(2)
+    str_generation_method = matches.group(3)
+    str_validation = matches.group(4)
+
+    num_station_groups: int
+    num_machines: int
+    variable_source_sequence: bool
+    validate: bool = False
+    # convert integers
+    try:
+        num_station_groups = int(str_num_stat_groups)
+        num_machines = int(str_num_machines)
+    except ValueError:
+        raise ValueError('Could not convert layout size parameters.')
+
+    if str_generation_method == 'ConstIdeal':
+        variable_source_sequence = False
+    elif str_generation_method == 'VarIdeal':
+        variable_source_sequence = True
+    else:
+        raise NotImplementedError(
+            (f'Unknown source generation sequence >>{str_generation_method}<<')
+        )
+
+    if str_validation:
+        validate = True
+
+    return EnvGenerationInfo(
+        num_station_groups=num_station_groups,
+        num_machines=num_machines,
+        variable_source_sequence=variable_source_sequence,
+        validate=validate,
+    )
 
 
 class JSSEnv(gym.Env):
@@ -53,14 +84,18 @@ class JSSEnv(gym.Env):
     def __init__(
         self,
         experiment_type: str,
+        agent_type: AgentDecisionTypes,
         gantt_chart_on_termination: bool = False,
         seed: int | None = DEFAULT_SEED,
         sim_randomise_reset: bool = False,
         sim_check_agent_feasibility: bool = True,
+        builder_func_family: BuilderFuncFamilies = BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
+        seed_layout: int | None = DEFAULT_SEED,
     ) -> None:
         super().__init__()
         # super().reset(seed=seed)
         self.seed = seed
+        self.seed_layout = seed_layout
         self.sim_randomise_reset = sim_randomise_reset
         self.sim_check_agent_feasibility = sim_check_agent_feasibility
         # build env
@@ -71,36 +106,56 @@ class JSSEnv(gym.Env):
                     f'Known types are: {tuple(BUILDER_FUNCS.keys())}'
                 )
             )
-        self.exp_type = experiment_type
-        self.builder_func = BUILDER_FUNCS[self.exp_type]
-        self.sim_env, self.agent = self.builder_func(with_agent=True, seed=self.seed)
-        self.sim_env.check_agent_feasibility = self.sim_check_agent_feasibility
-        # action space for allocation agent is length of all associated
-        # infrastructure objects
-        n_machines = len(self.agent.assoc_proc_stations)
-        self.action_space = gym.spaces.Discrete(n=n_machines, seed=seed)
-        # Example for using image as input (channel-first; channel-last also works):
-        target_system = cast(sim.ProductionArea, self.agent.assoc_system)
-        min_SGI = target_system.get_min_subsystem_id()
-        max_SGI = target_system.get_max_subsystem_id()
-        # observation: N_machines * (res_sys_SGI, avail, WIP_time)
-        machine_low = np.array([min_SGI, 0, 0])
-        machine_high = np.array([max_SGI, 1, MAX_WIP_TIME])
-        # observation jobs: (job_SGI, order_time, slack_current)
-        job_low = np.array([0, 0, -1000])
-        job_high = np.array([max_SGI, 100, 1000])
+        self.exp_type = parse_exp_type(experiment_type)
 
-        low = np.tile(machine_low, n_machines)
-        high = np.tile(machine_high, n_machines)
-        low = np.append(low, job_low)
-        high = np.append(high, job_high)
+        self.sequencing: bool = False
+        if agent_type == AgentDecisionTypes.SEQ:
+            self.sequencing = True
 
-        self.observation_space = gym.spaces.Box(
-            low=low,
-            high=high,
-            dtype=np.float32,
-            seed=seed,
-        )
+        self.builder_func = BUILDER_FUNCS[builder_func_family]
+        self.builder_kw = asdict(self.exp_type)
+        self._build_env(seed=self.seed)
+
+        self.action_space: gym.spaces.Discrete
+        self.observation_space: gym.spaces.Box
+        if agent_type == AgentDecisionTypes.ALLOC:
+            assert isinstance(
+                self.agent, agents.AllocationAgent
+            ), 'tried ALLOC setup for non-allocating agent'
+            # action space for allocation agent is length of all associated
+            # infrastructure objects
+            n_machines = len(self.agent.assoc_proc_stations)
+            self.action_space = gym.spaces.Discrete(n=n_machines, seed=seed)
+            # Example for using image as input (channel-first; channel-last also works):
+            target_system = cast(sim.ProductionArea, self.agent.assoc_system)
+            min_SGI = target_system.get_min_subsystem_id()
+            max_SGI = target_system.get_max_subsystem_id()
+            # observation: N_machines * (res_sys_SGI, avail, WIP_time)
+            machine_low = np.array([min_SGI, 0, 0])
+            machine_high = np.array([max_SGI, 1, MAX_WIP_TIME])
+            # observation jobs: (job_SGI, order_time, slack_current)
+            job_low = np.array([0, 0, -1000])
+            job_high = np.array([max_SGI, 100, 1000])
+
+            low = np.tile(machine_low, n_machines)
+            high = np.tile(machine_high, n_machines)
+            low = np.append(low, job_low)
+            high = np.append(high, job_high)
+
+            self.observation_space = gym.spaces.Box(
+                low=low,
+                high=high,
+                dtype=np.float32,
+                seed=seed,
+            )
+        elif agent_type == AgentDecisionTypes.SEQ:
+            assert isinstance(
+                self.agent, agents.SequencingAgent
+            ), 'tried SEQ setup for non-sequencing agent'
+            # TODO change construction for agent types (ALLOC --> SEQ)
+            ...
+        else:
+            raise NotImplementedError('Other agent types not supported')
 
         self.terminated: bool = False
         self.truncated: bool = False
@@ -113,6 +168,28 @@ class JSSEnv(gym.Env):
         self.last_op_db: DataFrame | None = None
         self.cycle_time: Timedelta | None = None
         self.sim_utilisation: float | None = None
+
+    def _build_env(
+        self,
+        seed: int | None,
+        with_agent: bool = True,
+    ) -> None:
+        self.sim_env, alloc_agent, seq_agent = self.builder_func(
+            sequencing=self.sequencing,
+            with_agent=with_agent,
+            seed=seed,
+            debug=False,
+            seed_layout=self.seed_layout,
+            **self.builder_kw,
+        )
+        if alloc_agent is not None:
+            self.agent = alloc_agent
+        elif seq_agent is not None:
+            self.agent = seq_agent
+        else:
+            raise ValueError('No agent for any type available.')
+
+        self.sim_env.check_agent_feasibility = self.sim_check_agent_feasibility
 
     def step(
         self,
@@ -178,10 +255,10 @@ class JSSEnv(gym.Env):
         self.truncated = False
         # re-init simulation environment
         if self.sim_randomise_reset:
-            self.sim_env, self.agent = self.builder_func(with_agent=True, seed=seed)
+            self._build_env(seed=seed)
         else:
-            self.sim_env, self.agent = self.builder_func(with_agent=True, seed=self.seed)
-        self.sim_env.check_agent_feasibility = self.sim_check_agent_feasibility
+            self._build_env(seed=self.seed)
+
         logger.debug('Environment re-initialised')
         # evaluate if all needed components are registered
         self.sim_env.check_integrity()
@@ -223,7 +300,8 @@ class JSSEnv(gym.Env):
         )
 
     def run_without_agent(self) -> sim.SimulationEnvironment:
-        env, _ = self.builder_func(with_agent=False, seed=self.seed)
+        self._build_env(seed=self.seed, with_agent=False)
+        env = self.sim_env
         env.initialise()
         env.run()
         env.finalise()
