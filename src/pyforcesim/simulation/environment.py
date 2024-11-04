@@ -1763,7 +1763,7 @@ class Dispatcher:
             target_exec_system = op.target_exec_system
             target_station_group = op.target_station_group
             loggers.dispatcher.debug('[DISPATCHER] Next operation %s', op)
-            target_station = self._choose_target_station_from_exec_system(
+            target_station = self.choose_target_station_from_exec_system(
                 exec_system=target_exec_system,
                 is_agent=is_agent,
                 target_station_group=target_station_group,
@@ -1787,7 +1787,7 @@ class Dispatcher:
 
         return target_station
 
-    def _choose_target_station_from_exec_system(
+    def choose_target_station_from_exec_system(
         self,
         exec_system: ProductionArea,
         target_station_group: StationGroup,
@@ -1872,7 +1872,7 @@ class Dispatcher:
         # contains all feasible jobs for this resource
         logical_queue = req_obj.logical_queue
         # get job from logic queue with currently defined priority rule
-        job = self._choose_job_from_queue(
+        job = self.choose_job_from_queue(
             req_obj=req_obj,
             queue=logical_queue,
             is_agent=is_agent,
@@ -1900,7 +1900,7 @@ class Dispatcher:
 
         return policy
 
-    def _choose_job_from_queue(
+    def choose_job_from_queue(
         self,
         req_obj: InfrastructureObject,
         queue: LogicalQueue[Job],

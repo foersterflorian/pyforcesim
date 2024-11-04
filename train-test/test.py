@@ -22,7 +22,7 @@ from pyforcesim import common, loggers
 from pyforcesim.rl.gym_env import JSSEnv
 
 if TYPE_CHECKING:
-    from pyforcesim.rl.agents import ValidateAllocationAgent
+    from pyforcesim.rl.agents import ValidateSequencingAgent
 
 
 USE_TRAIN_CONFIG: Final[bool] = False

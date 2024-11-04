@@ -106,6 +106,7 @@ class JobGenerationInfo:
 
 
 # ** simulation environments
+AgentType: TypeAlias = 'agents.AllocationAgent | agents.SequencingAgent'
 EnvAgentConstructorReturn: TypeAlias = tuple[
     'sim.SimulationEnvironment',
     'agents.AllocationAgent | None',

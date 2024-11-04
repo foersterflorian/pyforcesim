@@ -8,7 +8,13 @@ import numpy as np
 import numpy.typing as npt
 from pandas import DataFrame
 
-from pyforcesim.constants import DEFAULT_SEED
+from pyforcesim import datetime as pyf_dt
+from pyforcesim.constants import (
+    DEFAULT_SEED,
+    SLACK_THRESHOLD_LOWER,
+    SLACK_THRESHOLD_UPPER,
+    TimeUnitsTimedelta,
+)
 from pyforcesim.env_builder import (
     standard_env_single_area,
 )
@@ -25,17 +31,21 @@ from pyforcesim.types import (
 
 MAX_WIP_TIME: Final[int] = 300
 MAX_NON_FEASIBLE: Final[int] = 20
-
+NORM_TD: Final[Timedelta] = pyf_dt.timedelta_from_val(1, time_unit=TimeUnitsTimedelta.HOURS)
 
 BUILDER_FUNCS: Final[dict[BuilderFuncFamilies, EnvBuilderFunc]] = {
     BuilderFuncFamilies.SINGLE_PRODUCTION_AREA: standard_env_single_area,
 }
 
 
+def dummy_action() -> int:
+    return 0
+
+
 def parse_exp_type(
     exp_type: str,
 ) -> EnvGenerationInfo:
-    pattern = re.compile(r'^[\d]+-([\d]+)-([\d]+)_([A-Z]+)_([A-Z]+)$', re.IGNORECASE)
+    pattern = re.compile(r'^[\d]+-([\d]+)-([\d]+)_([A-Z]+)_*([A-Z]*)$', re.IGNORECASE)
     matches = pattern.search(exp_type)
     if matches is None:
         raise ValueError(f'Experiment type >>{exp_type}<< could not be parsed.')
@@ -93,16 +103,16 @@ class JSSEnv(gym.Env):
         seed_layout: int | None = DEFAULT_SEED,
     ) -> None:
         super().__init__()
-        # super().reset(seed=seed)
+        # exp type example: '1-2-3_VarIdeal_validate'
         self.seed = seed
         self.seed_layout = seed_layout
         self.sim_randomise_reset = sim_randomise_reset
         self.sim_check_agent_feasibility = sim_check_agent_feasibility
         # build env
-        if experiment_type not in BUILDER_FUNCS:
+        if builder_func_family not in BUILDER_FUNCS:
             raise KeyError(
                 (
-                    f'Experiment type >>{experiment_type}<< unknown. '
+                    f'Env Family >>{builder_func_family}<< unknown. '
                     f'Known types are: {tuple(BUILDER_FUNCS.keys())}'
                 )
             )
@@ -114,6 +124,7 @@ class JSSEnv(gym.Env):
 
         self.builder_func = BUILDER_FUNCS[builder_func_family]
         self.builder_kw = asdict(self.exp_type)
+        self.agent: agents.AllocationAgent | agents.SequencingAgent
         self._build_env(seed=self.seed)
 
         self.action_space: gym.spaces.Discrete
@@ -125,7 +136,7 @@ class JSSEnv(gym.Env):
             # action space for allocation agent is length of all associated
             # infrastructure objects
             n_machines = len(self.agent.assoc_proc_stations)
-            self.action_space = gym.spaces.Discrete(n=n_machines, seed=seed)
+            self.action_space = gym.spaces.Discrete(n=n_machines, seed=self.seed)
             # Example for using image as input (channel-first; channel-last also works):
             target_system = cast(sim.ProductionArea, self.agent.assoc_system)
             min_SGI = target_system.get_min_subsystem_id()
@@ -135,7 +146,7 @@ class JSSEnv(gym.Env):
             machine_high = np.array([max_SGI, 1, MAX_WIP_TIME])
             # observation jobs: (job_SGI, order_time, slack_current)
             job_low = np.array([0, 0, -1000])
-            job_high = np.array([max_SGI, 100, 1000])
+            job_high = np.array([100, 100, 1000])
 
             low = np.tile(machine_low, n_machines)
             high = np.tile(machine_high, n_machines)
@@ -146,17 +157,75 @@ class JSSEnv(gym.Env):
                 low=low,
                 high=high,
                 dtype=np.float32,
-                seed=seed,
+                seed=self.seed,
             )
         elif agent_type == AgentDecisionTypes.SEQ:
             assert isinstance(
                 self.agent, agents.SequencingAgent
             ), 'tried SEQ setup for non-sequencing agent'
             # TODO change construction for agent types (ALLOC --> SEQ)
-            ...
+            # num_actions: depending on number of queue slots
+            # feature vector:
+            #   - res_SGI, availability
+            #   - target_SGI, order time, lower bound slack, upper bound slack,
+            #       current slack
+            queue_slots = self.agent.assoc_system.size
+            # action space for allocation agent is number of all buffer slots
+            # associated with its queue + 1 for the waiting action
+            self.action_space = gym.spaces.Discrete(n=(queue_slots + 1), seed=self.seed)
+
+            min_SGI = 0
+            max_SGI = 100
+            # observation: N_machines * (res_sys_SGI, avail, WIP_time)
+            machine_low = np.array([min_SGI, 0])
+            machine_high = np.array([max_SGI, 1])
+            # observation jobs:
+            # N_queue_slots * (target_SGI, order time, lower bound slack,
+            # upper bound slack, current slack)
+            lower_bound_slack_min = SLACK_THRESHOLD_LOWER / NORM_TD
+            upper_bound_slack_min = SLACK_THRESHOLD_UPPER / NORM_TD
+            if lower_bound_slack_min > 0:
+                lower_bound_slack_min = 0
+            if upper_bound_slack_min > 0:
+                upper_bound_slack_min = 0
+
+            job_low = np.array(
+                [
+                    min_SGI,
+                    0,
+                    lower_bound_slack_min,
+                    upper_bound_slack_min,
+                    -100,
+                ]
+            )
+            job_high = np.array(
+                [
+                    max_SGI,
+                    100,
+                    lower_bound_slack_min,
+                    100,
+                    1000,
+                ]
+            )
+
+            job_low = np.tile(job_low, queue_slots)
+            job_high = np.tile(job_high, queue_slots)
+            low = np.append(machine_low, job_low)
+            high = np.append(machine_high, job_high)
+
+            self.observation_space = gym.spaces.Box(
+                low=low,
+                high=high,
+                dtype=np.float32,
+                seed=self.seed,
+            )
         else:
             raise NotImplementedError('Other agent types not supported')
 
+        # valid action sampling, works, but can not be activated since
+        # this statement makes the object not pickable and therefore it can not
+        # be saved with SB3's internal tools
+        # self.action_space.sample = self.random_action  # type: ignore
         self.terminated: bool = False
         self.truncated: bool = False
 
@@ -186,10 +255,16 @@ class JSSEnv(gym.Env):
             self.agent = alloc_agent
         elif seq_agent is not None:
             self.agent = seq_agent
-        else:
+        elif with_agent:
             raise ValueError('No agent for any type available.')
 
         self.sim_env.check_agent_feasibility = self.sim_check_agent_feasibility
+
+    def random_action(
+        self,
+        mask: npt.NDArray[np.int8] | None = None,
+    ) -> int:
+        return self.agent.random_action()
 
     def step(
         self,

@@ -6,6 +6,7 @@ import sys
 import time
 from pathlib import Path
 
+from pyforcesim import common
 from pyforcesim.constants import (
     LOG_DATE_FMT,
     LOG_FMT,
@@ -52,7 +53,8 @@ if LOGGING_ENABLED:
     base.addHandler(handler_stdout)
 
 if LOGGING_ENABLED and LOGGING_TO_FILE:
-    logging_pth = Path.cwd() / 'logs.txt'
+    timestamp = common.get_timestamp(with_time=True)
+    logging_pth = Path.cwd() / f'logs_{timestamp}.txt'
     handler_file = logging.handlers.RotatingFileHandler(
         logging_pth,
         maxBytes=LOGGING_FILE_SIZE,
@@ -61,23 +63,6 @@ if LOGGING_ENABLED and LOGGING_TO_FILE:
     handler_file.setLevel(LOGGING_LEVEL_FILE)
     handler_file.setFormatter(formatter)
     base.addHandler(handler_file)
-    # if logging_pth.exists():
-    #     try:
-    #         os.remove(logging_pth)
-    #     except PermissionError:
-    #         pass
-    # logging.basicConfig(
-    #     filename=logging_pth,
-    #     filemode='a',
-    #     format=LOG_FMT,
-    #     datefmt=LOG_DATE_FMT,
-    # )
-# else:
-#     logging.basicConfig(
-#         stream=sys.stdout,
-#         format=LOG_FMT,
-#         datefmt=LOG_DATE_FMT,
-#     )
 
 
 pyf_env = logging.getLogger('pyforcesim.sim_env')

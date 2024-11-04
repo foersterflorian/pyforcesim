@@ -1,10 +1,9 @@
 import os
+import sys
 import warnings
 from pathlib import Path
 from typing import Any, Final
 
-# from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback as EvalCallback
-# from sb3_contrib.common.maskable.evaluation import evaluate_policy
 from sb3_contrib.ppo_mask import MaskablePPO
 from stable_baselines3.common.callbacks import StopTrainingOnRewardThreshold
 from stable_baselines3.common.env_checker import check_env
@@ -14,6 +13,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from pyforcesim import common
 from pyforcesim.rl.gym_env import JSSEnv
 from pyforcesim.rl.sb3.custom_callbacks import MaskableEvalCallback as EvalCallback
+from pyforcesim.types import AgentDecisionTypes, BuilderFuncFamilies
 
 # ** input
 OVERWRITE_FOLDERS: Final[bool] = True
@@ -23,9 +23,10 @@ CALC_ITERATIONS: Final[int] = 69632 // 2048
 RNG_SEED: Final[int] = 42
 
 DATE = common.get_timestamp(with_time=False)
+DEC_TYPE: Final[AgentDecisionTypes] = AgentDecisionTypes.SEQ
 EXP_NUM: Final[str] = '1'
 ENV_STRUCTURE: Final[str] = '1-3-7'
-JOB_GEN_METHOD: Final[str] = 'VarIdeal'
+JOB_GEN_METHOD: Final[str] = 'ConstIdeal'
 EXP_TYPE: Final[str] = f'{ENV_STRUCTURE}_{JOB_GEN_METHOD}'
 FEEDBACK_MACHANISM: Final[str] = 'Util'
 EXPERIMENT_FOLDER: Final[str] = (
@@ -41,9 +42,9 @@ MODEL_BASE_NAME: Final[str] = f'pyf_sim_{MODEL}'
 NUM_EVAL_EPISODES: Final[int] = 2
 EVAL_FREQ: Final[int] = 2048 * 2
 REWARD_THRESHOLD: Final[float | None] = None  # -0.01
-TIMESTEPS_PER_ITER: Final[int] = int(2048 * 2)
-ITERATIONS: Final[int] = 500
-ITERATIONS_TILL_SAVE: Final[int] = 4
+TIMESTEPS_PER_ITER: Final[int] = int(2048 * 1)
+ITERATIONS: Final[int] = 20
+ITERATIONS_TILL_SAVE: Final[int] = 2
 
 FILENAME_PRETRAINED_MODEL: Final[str] = '2024-07-23--16-20-52_pyf_sim_PPO_mask_TS-69632'
 
@@ -131,10 +132,12 @@ def make_env(
 
     env = JSSEnv(
         experiment_type=experiment_type,
+        agent_type=DEC_TYPE,
         gantt_chart_on_termination=gantt_chart,
         seed=seed,
         sim_randomise_reset=sim_randomise_reset,
         sim_check_agent_feasibility=sim_check_agent_feasibility,
+        builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
     )
 
     if verify_env:
@@ -142,8 +145,12 @@ def make_env(
         # recreate to ensure that nothing was altered
         env = JSSEnv(
             experiment_type=experiment_type,
+            agent_type=DEC_TYPE,
             gantt_chart_on_termination=gantt_chart,
             seed=seed,
+            sim_randomise_reset=sim_randomise_reset,
+            sim_check_agent_feasibility=sim_check_agent_feasibility,
+            builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
         )
     tb_path: str | None = None
     if tensorboard_path is not None:
@@ -166,8 +173,18 @@ def train(
     tensorboard_command = f'pdm run tensorboard --logdir="{tensorboard_path}"'
     print('tensorboard command: ', tensorboard_command)
 
-    env = make_env(EXP_TYPE, tensorboard_path, normalise_obs=NORMALISE_OBS, seed=RNG_SEED)
-    eval_env = make_env(EXP_TYPE, tensorboard_path, normalise_obs=NORMALISE_OBS)
+    env = make_env(
+        EXP_TYPE,
+        tensorboard_path,
+        normalise_obs=NORMALISE_OBS,
+        seed=RNG_SEED,
+    )
+    eval_env = make_env(
+        EXP_TYPE,
+        tensorboard_path,
+        normalise_obs=NORMALISE_OBS,
+        seed=RNG_SEED,
+    )
     # ** reward threshold callback
     reward_thresh_callback: StopTrainingOnRewardThreshold | None = None
     if REWARD_THRESHOLD is not None:
@@ -226,12 +243,11 @@ def train(
         save_path_model, save_path_vec_norm = get_save_path_model(
             num_timesteps=num_timesteps, base_name=MODEL_BASE_NAME
         )
-        # break early if reward threshold is reached
+        # break early if training should not be continued
         if not eval_callback.continue_training:
             # rename best model and vec normalize info if present
             best_model_file = best_model_save_pth.joinpath('best_model.zip')
             os.rename(best_model_file, save_path_model)
-
             best_model_vec_norm: Path | None = None
             vec_norm = model.get_vec_normalize_env()
             if vec_norm is not None:

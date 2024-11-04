@@ -771,31 +771,44 @@ class ValidateAllocationAgent(AllocationAgent):
     ) -> None:
         super().__init__(assoc_system=assoc_system, seed=seed)
 
-        alloc_policy = self.env.dispatcher.alloc_policy
-        if alloc_policy is None:
-            raise ValueError('Validation Agent could not retrieve allocation policy')
-        else:
-            self.alloc_policy = alloc_policy
-
     def simulate_decision_making(self) -> int:
         # sets decision based on allocation policy returns action index
         # use current op
         op = self._current_op
         if op is None:
-            raise ValueError('[Validation Agent] Operation >>None<<')
+            raise ValueError('[ALLOC Validation Agent] Operation >>None<<')
         target_stat_group = op.target_station_group
         if target_stat_group is None:
-            raise ValueError('[Validation Agent] Target station group >>None<<')
-        # mimic approach of dispatcher
-        stations = target_stat_group.assoc_proc_stations
-        candidates = tuple(ps for ps in stations if ps.stat_monitor.is_available)
-        # if there are no available ones: use all stations
-        if candidates:
-            avail_stations = candidates
-        else:
-            avail_stations = stations
+            raise ValueError('[ALLOC Validation Agent] Target station group >>None<<')
 
-        target_station = self.alloc_policy.apply(items=avail_stations)
+        exec_system = self.assoc_system
+        target_station = self.env.dispatcher.choose_target_station_from_exec_system(
+            exec_system=exec_system,
+            target_station_group=target_stat_group,
+            is_agent=False,
+        )
+        # TODO check removal
+        # # obtain policy which should be applied
+        # policy: GeneralPolicy | AllocationPolicy
+
+        # if target_stat_group.alloc_policy is not None:
+        #     policy = target_stat_group.alloc_policy
+        # elif exec_system.alloc_policy is not None:
+        #     policy = exec_system.alloc_policy
+        # elif self.env.dispatcher.alloc_policy is not None:
+        #     policy = self.env.dispatcher.alloc_policy
+        # else:
+        #     raise ValueError('Validation Agent could not retrieve allocation policy')
+        # # mimic approach of dispatcher
+        # stations = target_stat_group.assoc_proc_stations
+        # candidates = tuple(ps for ps in stations if ps.stat_monitor.is_available)
+        # # if there are no available ones: use all stations
+        # if candidates:
+        #     avail_stations = candidates
+        # else:
+        #     avail_stations = stations
+
+        # target_station = self.alloc_policy.apply(items=avail_stations)
         action_idx = self.assoc_proc_stations.index(target_station)
 
         return action_idx
@@ -805,8 +818,9 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
     def __init__(
         self,
         assoc_system: LogicalQueue[Job],
+        seed: int | None = None,
     ) -> None:
-        super().__init__(assoc_system=assoc_system, agent_task='SEQ')
+        super().__init__(assoc_system=assoc_system, agent_task='SEQ', seed=seed)
 
         # execution control
         # [ACTIONS]
@@ -842,6 +856,7 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
             '[REQUEST Agent %s]: built FeatVec at %s', self, self.env.t_as_dt()
         )
         loggers.agents.debug('[Agent %s]: Feature Vector: %s', self, self.feat_vec)
+        loggers.agents.debug('[Agent %s]: Action Mask: %s', self, self.action_mask)
 
     @override
     def build_feat_vec(
@@ -934,14 +949,27 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
         self._chosen_job = None
         if self._relevant_jobs is None:
             raise ValueError('[AGENT][SEQ] Relevant jobs may not be >>None<<')
+        loggers.agents.debug(
+            '[Agent %s]: Possible jobs are >>%s<<', self, self._relevant_jobs
+        )
         if action != 0:
+            if action > len(self._relevant_jobs) and self.env.check_agent_feasibility:
+                raise IndexError('Chosen action out of bounds of relevant jobs.')
+            elif action > len(self._relevant_jobs):
+                # cases in which environment is verified, e.g. by SB3
+                action = len(self._relevant_jobs)
             job_idx = action - 1
             self._chosen_job = self._relevant_jobs[job_idx]
         self.num_decisions += 1
         # indicator that request was processed, reset dispatching signal
         self.set_dispatching_signal(reset=True)
 
-        loggers.agents.debug('[DECISION SET Agent %s]: Set to >>%d<<', self, self._action)
+        loggers.agents.debug(
+            '[DECISION SET Agent %s]: Set to >>%d<<. Chosen job: >>%s<<',
+            self,
+            self._action,
+            self._chosen_job,
+        )
 
     @staticmethod
     def _reward_slack_polynomial(
@@ -1045,7 +1073,7 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
                 '[Agent Reward] Target station group: %s', target_station_group
             )
 
-        if not self.action_feasible:
+        if not self.action_feasible and self.env.check_agent_feasibility:
             # should never happen with action masking
             raise RuntimeError('Non-feasible action chosen.')
 
@@ -1055,3 +1083,36 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
         loggers.agents.debug('[Agent Reward] Cum Reward: %.6f', self.cum_reward)
 
         return reward
+
+
+class ValidateSequencingAgent(SequencingAgent):
+    def __init__(
+        self,
+        assoc_system: LogicalQueue[Job],
+        seed: int | None = None,
+    ) -> None:
+        super().__init__(assoc_system=assoc_system, seed=seed)
+
+    def simulate_decision_making(self) -> int:
+        # sets decision based on allocation policy returns action index
+        # use current op
+        relevant_jobs = self._relevant_jobs
+        req_obj = self._req_obj
+        if relevant_jobs is None:
+            raise ValueError('[SEQ Validation Agent] No relevant jobs available.')
+        if req_obj is None:
+            raise ValueError('[SEQ Validation Agent] No requesting object available.')
+
+        job_selected = self.env.dispatcher.choose_job_from_queue(
+            req_obj=req_obj,
+            queue=self.assoc_system,
+            is_agent=False,
+        )
+        action_idx: int
+        if job_selected is None:
+            action_idx = 0
+        else:
+            # offset index by 1 because of waiting action
+            action_idx = relevant_jobs.index(job_selected) + 1
+
+        return action_idx

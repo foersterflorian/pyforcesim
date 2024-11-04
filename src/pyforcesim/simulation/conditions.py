@@ -10,13 +10,12 @@ from pyforcesim import datetime as pyf_dt
 from pyforcesim import loggers
 from pyforcesim.errors import ViolationStartingConditionError
 from pyforcesim.simulation.base_components import SimulationComponent
+from pyforcesim.types import AgentType
 
 if TYPE_CHECKING:
-    from pyforcesim.rl.agents import Agent, S
     from pyforcesim.simulation.environment import (
         SimulationEnvironment,
         Source,
-        System,
     )
 
 # _dt_mgr = DTManager()
@@ -177,7 +176,7 @@ class TriggerAgentCondition(BaseCondition):
     def __init__(
         self,
         env: SimulationEnvironment,
-        agent: Agent[S],
+        agent: AgentType,
         name: str = 'TriggerAgentCondition',
     ) -> None:
         # initialise base class
