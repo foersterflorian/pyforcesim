@@ -86,6 +86,7 @@ from pyforcesim.types import (
     PlotlyFigure,
     QueueLike,
     SalabimTimeUnits,
+    SourceSequence,
     SysIDResource,
     SystemID,
 )
@@ -327,6 +328,14 @@ class SimulationEnvironment(salabim.Environment):
             self.dashboard_server_process.terminate()
             # reset internal flag indicating that servers are started
             self.servers_connected = False
+
+    def start_open_run(self) -> None:
+        """Starts a run without termination criteria.
+        Initialisation und finalisation are done before.
+        """
+        self.initialise()
+        self.run()
+        self.finalise()
 
     def dashboard_update(self) -> None:
         # infrastructure manager instance
@@ -4187,19 +4196,19 @@ class Source(InfrastructureObject):
         self.stop_job_gen_state = salabim.State('stop_job_gen', env=self.env, monitor=False)
 
         # job generator
-        self._job_sequence: Iterator[JobGenerationInfo] | None = None
+        self._job_sequence: Iterator[SourceSequence] | None = None
 
     @property
-    def job_sequence(self) -> Iterator[JobGenerationInfo] | None:
+    def job_sequence(self) -> Iterator[SourceSequence] | None:
         return self._job_sequence
 
-    def _obtain_order_time(self) -> float:
-        order_time = self.env.td_to_simtime(timedelta=self.order_time)
-        return order_time
+    def obtain_order_time(self) -> Timedelta:
+        # order_time = self.env.td_to_simtime(timedelta=self.order_time)
+        return self.order_time
 
     def register_job_sequence(
         self,
-        job_sequence: Iterator[JobGenerationInfo],
+        job_sequence: Iterator[SourceSequence],
     ) -> None:
         if not isinstance(job_sequence, Iterator):
             raise TypeError('Job sequence must be an iterator')
@@ -4260,7 +4269,7 @@ class Source(InfrastructureObject):
         if self.job_sequence is None:
             raise RuntimeError('Job sequence not available')
 
-        for count, job_gen_info in enumerate(self.job_sequence):
+        for count, (job_gen_info, src_time) in enumerate(self.job_sequence):
             if self.use_stop_time:
                 # stop if stopping time is reached
                 # flag set by corresponding ConditionSetter
@@ -4270,18 +4279,11 @@ class Source(InfrastructureObject):
                 # use number of generated jobs as stopping criterion
                 if self.job_generation_limit is None:
                     raise ValueError('Number of generated jobs not set')
-                if count == self.job_generation_limit:
+                if (count + 1) == self.job_generation_limit:
                     break
 
             # ** prio
             job_gen_info.prio = count
-            # ** dates
-            # start_date_init = Datetime(2023, 11, 20, hour=6, tzinfo=TIMEZONE_UTC)
-            # end_date_init = Datetime(2023, 12, 1, hour=10, tzinfo=TIMEZONE_UTC)
-            # order_dates = OrderDates(
-            #     starting_planned=start_date_init, ending_planned=end_date_init
-            # )
-            # job_gen_info.dates = order_dates
 
             job = Job(
                 dispatcher=dispatcher,
@@ -4325,14 +4327,12 @@ class Source(InfrastructureObject):
 
             # hold for defined generation time (constant or statistically distributed)
             # if hold time elapsed start new generation
-            order_time = self._obtain_order_time()
+            proc_time_sim = self.env.td_to_simtime(src_time)
             loggers.sources.debug(
-                '[SOURCE: %s] Hold for >>%s<< at %s', self, order_time, self.env.t_as_dt()
+                '[SOURCE: %s] Hold for >>%s<< at %s', self, proc_time_sim, self.env.t_as_dt()
             )
 
-            yield self.sim_control.hold(order_time, priority=self.sim_put_prio)
-            # set counter up
-            count += 1
+            yield self.sim_control.hold(proc_time_sim, priority=self.sim_put_prio)
 
         # [STATE:Source] WAITING
         infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)

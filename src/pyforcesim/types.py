@@ -69,6 +69,12 @@ TimeTillDue: TypeAlias = Timedelta
 DueDate: TypeAlias = Datetime
 
 
+@dataclass(kw_only=True, slots=True, order=False)
+class StatDistributionInfo:
+    mean: float
+    std: float
+
+
 class QueueLike(Protocol[T]):
     def env(self) -> sim.SimulationEnvironment: ...
     def custom_identifier(self) -> CustomID: ...
@@ -104,6 +110,8 @@ class JobGenerationInfo:
     prio: OrderPriority | Sequence[OrderPriority | None] | None = field(default=None)
     current_state: SimStatesCommon
 
+
+SourceSequence: TypeAlias = tuple[JobGenerationInfo, Timedelta]
 
 # ** simulation environments
 AgentType: TypeAlias = 'agents.AllocationAgent | agents.SequencingAgent'

@@ -24,6 +24,7 @@ def standard_env_single_area(
     variable_source_sequence: bool = False,
     debug: bool = False,
     seed_layout: int | None = None,
+    factor_WIP: float = 0,
 ) -> EnvAgentConstructorReturn:
     layout_rng = np.random.default_rng(seed=seed_layout)
 
@@ -130,16 +131,27 @@ def standard_env_single_area(
             buffers=[buffer],
         )
 
-    sequence_generator: loads.ConstantSequenceSinglePA | loads.VariableSequenceSinglePA
+    sequence_generator: loads.SequenceSinglePA
     if variable_source_sequence:
-        sequence_generator = loads.VariableSequenceSinglePA(
+        # sequence_generator = loads.VariableSequenceSinglePA(
+        #     env=env,
+        #     seed=None,  # use env's default seed
+        #     prod_area_id=area_prod.system_id,
+        # )
+        # prod_sequence_PA = sequence_generator.retrieve(
+        #     target_obj=source,
+        #     delta_percentage=0.35,
+        # )
+        sequence_generator = loads.WIPSequenceSinglePA(
             env=env,
             seed=None,  # use env's default seed
             prod_area_id=area_prod.system_id,
         )
         prod_sequence_PA = sequence_generator.retrieve(
             target_obj=source,
-            delta_percentage=0.35,
+            uniform_lb=2,
+            uniform_ub=4,
+            factor_WIP=factor_WIP,
         )
     else:
         sequence_generator = loads.ConstantSequenceSinglePA(
@@ -156,7 +168,7 @@ def standard_env_single_area(
     duration_transient = pyf_dt.timedelta_from_val(val=8, time_unit=TimeUnitsTimedelta.HOURS)
     conditions.TransientCondition(env=env, duration_transient=duration_transient)
     if not debug:
-        sim_dur = pyf_dt.timedelta_from_val(val=12, time_unit=TimeUnitsTimedelta.WEEKS)
+        sim_dur = pyf_dt.timedelta_from_val(val=26, time_unit=TimeUnitsTimedelta.WEEKS)
         conditions.JobGenDurationCondition(
             env=env, target_obj=source, sim_run_duration=sim_dur
         )
