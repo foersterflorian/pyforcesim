@@ -1,3 +1,4 @@
+import threading
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
@@ -168,7 +169,7 @@ def standard_env_single_area(
     duration_transient = pyf_dt.timedelta_from_val(val=8, time_unit=TimeUnitsTimedelta.HOURS)
     conditions.TransientCondition(env=env, duration_transient=duration_transient)
     if not debug:
-        sim_dur = pyf_dt.timedelta_from_val(val=26, time_unit=TimeUnitsTimedelta.WEEKS)
+        sim_dur = pyf_dt.timedelta_from_val(val=12, time_unit=TimeUnitsTimedelta.WEEKS)
         conditions.JobGenDurationCondition(
             env=env, target_obj=source, sim_run_duration=sim_dur
         )
@@ -196,6 +197,14 @@ def standard_env_single_area(
             raise ValueError('Agent not provided for Env with agent decision')
 
         conditions.TriggerAgentCondition(env=env, agent=agent)
+
+    observer1 = conditions.Observer(env=env, name='trigger_set')
+    stop_prod_event = threading.Event()
+    kwargs = dict(stop_production_event=stop_prod_event, prod_area=area_prod)
+    env.register_observer(observer1, kwargs=kwargs)
+    # observer2 = conditions.TestObserver(env=env, name='trigger_pull')
+    # kwargs = dict(stop_production_event=stop_prod_event)
+    # env.register_observer(observer2, kwargs=kwargs)
 
     return env, alloc_agent, seq_agent
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Generator
 from datetime import datetime as Datetime
@@ -8,17 +10,18 @@ from typing import TYPE_CHECKING, Any
 
 from pyforcesim import datetime as pyf_dt
 from pyforcesim import loggers
+from pyforcesim.constants import TimeUnitsTimedelta
 from pyforcesim.errors import ViolationStartingConditionError
 from pyforcesim.simulation.base_components import SimulationComponent
+from pyforcesim.simulation.environment import ProductionArea, SimulationEnvironment
 from pyforcesim.types import AgentType
 
 if TYPE_CHECKING:
     from pyforcesim.simulation.environment import (
+        ProductionArea,
         SimulationEnvironment,
         Source,
     )
-
-# _dt_mgr = DTManager()
 
 
 class BaseCondition(ABC):
@@ -211,3 +214,43 @@ class TriggerAgentCondition(BaseCondition):
 
     def post_process(self) -> None:
         pass
+
+
+class Observer:
+    def __init__(
+        self,
+        env: SimulationEnvironment,
+        name: str,
+    ) -> None:
+        self._env = env
+        self._name = name
+
+    def __str__(self) -> str:
+        return f'{self.__class__.__name__}_{self.name}'
+
+    @property
+    def env(self) -> SimulationEnvironment:
+        return self._env
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def observe(
+        self,
+        stop_production_event: threading.Event,
+        prod_area: ProductionArea,
+    ) -> None:
+        ret = prod_area.get_content_WIP()
+        WIP_limit = pyf_dt.timedelta_from_val(20, TimeUnitsTimedelta.HOURS)
+        curr_WIP = ret[1]
+
+        while curr_WIP < WIP_limit:
+            time.sleep(0.5)
+            ret = prod_area.get_content_WIP()
+            curr_WIP = ret[1]
+            print(curr_WIP)
+
+        stop_production_event.set()
+        with open('./FILE_SUCCESS.txt', 'w') as f:
+            f.write(f'Successful retrieval at {self.env.t_as_dt()}.')

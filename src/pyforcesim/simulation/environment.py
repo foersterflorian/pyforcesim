@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+import threading
 from abc import ABCMeta, abstractmethod
 from collections import deque
 from collections.abc import (
@@ -17,6 +18,7 @@ from datetime import timedelta as Timedelta
 from datetime import tzinfo as TZInfo
 from operator import attrgetter
 from typing import (
+    TYPE_CHECKING,
     Any,
     Final,
     Generic,
@@ -80,7 +82,6 @@ from pyforcesim.types import (
     AgentTasks,
     CustomID,
     Infinite,
-    JobGenerationInfo,
     LoadDistribution,
     LoadID,
     PlotlyFigure,
@@ -90,6 +91,9 @@ from pyforcesim.types import (
     SysIDResource,
     SystemID,
 )
+
+if TYPE_CHECKING:
+    from pyforcesim.simulation import conditions
 
 # ** constants
 T = TypeVar('T', bound='System')
@@ -205,6 +209,8 @@ class SimulationEnvironment(salabim.Environment):
         self.FAIL_DELAY: Final[float] = self.td_to_simtime(timedelta=FAIL_DELAY)
         # waiting action
         self.seq_waiting_time = self.env.td_to_simtime(SEQUENCING_WAITING_TIME)
+        # observers
+        self.observers: set[threading.Thread] = set()
 
         loggers.pyf_env.info('New Environment >>%s<< created.', self.name())
 
@@ -250,6 +256,21 @@ class SimulationEnvironment(salabim.Environment):
         else:
             return self._dispatcher
 
+    def register_observer(
+        self,
+        observer: conditions.Observer,
+        kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        if kwargs is None:
+            kwargs = {}
+        thread = threading.Thread(target=observer.observe, kwargs=kwargs, daemon=True)
+        if thread not in self.observers:
+            self.observers.add(thread)
+
+    def start_observers(self) -> None:
+        for thread in self.observers:
+            thread.start()
+
     def check_feasible_agent_choice(
         self,
         target_station: InfrastructureObject,
@@ -292,6 +313,8 @@ class SimulationEnvironment(salabim.Environment):
         self.infstruct_mgr.initialise()
         # dispatcher instance
         self.dispatcher.initialise()
+        # observers
+        self.start_observers()
 
         # establish websocket connection
         if self.debug_dashboard and not self.servers_connected:
@@ -383,6 +406,8 @@ class InfrastructureManager:
         # information about a target sink
         self._sink_registered: bool = False
         self._sinks: list[Sink] = []
+
+        self.WIP_load_time_remaining: dict[SystemID, Timedelta] = {}
 
         # counter for processing stations (machines, assembly, etc.)
         self.num_proc_stations: int = 0
@@ -1216,7 +1241,6 @@ class Dispatcher:
             raise ValueError(
                 'Can not update job info because current operation is not available.'
             )
-        # job.stat_monitor.calc_KPI()
         if preprocess:
             # operation enters Processing Station
             # if first operation of given job add job's starting information
@@ -2489,12 +2513,6 @@ class ContainerSystem(Generic[T], System):
         self.subsystems: dict[SystemID, T] = {}
         self.subsystems_ids: set[SystemID] = set()
         self.subsystems_custom_ids: set[CustomID] = set()
-        # collection of all associated ProcessingStations
-        self._assoc_proc_stations: tuple[ProcessingStation, ...] = ()
-        self._assoc_proc_stations_sys_ids: frozenset[SystemID]
-        self._num_assoc_proc_stations: int = 0
-        # workload distribution
-        self.load_distribution_ideal: LoadDistribution = {}
 
         super().__init__(
             env=env,
@@ -2507,6 +2525,16 @@ class ContainerSystem(Generic[T], System):
             sim_get_prio=sim_get_prio,
             sim_put_prio=sim_put_prio,
         )
+        # collection of all associated ProcessingStations
+        self._assoc_proc_stations: tuple[ProcessingStation, ...] = ()
+        self._assoc_proc_stations_sys_ids: frozenset[SystemID]
+        self._num_assoc_proc_stations: int = 0
+        # current workload
+        self.contents_WIP_load_time: Timedelta = Timedelta()
+        self.contents_WIP_load_time_remaining: Timedelta = Timedelta()
+        self.contents_WIP_load_num_jobs: int = 0
+        # workload distribution
+        self.load_distribution_ideal: LoadDistribution = {}
 
     def __contains__(
         self,
@@ -2817,6 +2845,19 @@ class ContainerSystem(Generic[T], System):
         self,
         total: bool = False,
     ) -> tuple[Timedelta, ...] | Timedelta:
+        """get the current remaining WIP as load time for all associated processing stations
+        ONLY RELIABLE IF EACH PROCESSING STATION HAS ITS OWN BUFFER
+
+        Parameters
+        ----------
+        total : bool, optional
+            return total value of all processing stations, by default False
+
+        Returns
+        -------
+        tuple[Timedelta, ...] | Timedelta
+            returns WIP for each processing stations or together as single value
+        """
         stations = self.assoc_proc_stations
         workload_current = tuple((s.stat_monitor.WIP_load_time_remaining for s in stations))
         if total:
@@ -2887,6 +2928,159 @@ class ContainerSystem(Generic[T], System):
         pass
 
 
+class ProductionArea(ContainerSystem['StationGroup']):
+    def __init__(
+        self,
+        env: SimulationEnvironment,
+        custom_identifier: CustomID,
+        sim_get_prio: int,
+        sim_put_prio: int,
+        name: str | None = None,
+        state: SimStatesCommon | SimStatesStorage | None = None,
+    ) -> None:
+        """Group of processing stations which are considered parallel machines"""
+
+        # initialise base class
+        super().__init__(
+            env=env,
+            supersystem=None,
+            system_type=SimSystemTypes.PRODUCTION_AREA,
+            custom_identifier=custom_identifier,
+            abstraction_level=2,
+            name=name,
+            state=state,
+            sim_get_prio=sim_get_prio,
+            sim_put_prio=sim_put_prio,
+        )
+
+    @override
+    def add_subsystem(
+        self,
+        subsystem: System,
+    ) -> None:
+        """adding a subsystem to the given supersystem
+
+        Parameters
+        ----------
+        subsystem : System
+            subsystem object which shall be added to the supersystem
+
+        Raises
+        ------
+        TypeError
+            if a subsystem is not the type this system contains
+        """
+        # type check: only certain subsystems are allowed for each supersystem
+        if not isinstance(subsystem, StationGroup):
+            raise TypeError(
+                (
+                    f'The provided subsystem muste be of type >>StationGroup<<, '
+                    f'but it is {type(subsystem)}.'
+                )
+            )
+
+        super().add_subsystem(subsystem=subsystem)
+
+    def calc_content_WIP(self) -> None:
+        WIP_load_time, WIP_load_time_remaining, WIP_num = self.get_content_WIP()
+
+        self.contents_WIP_load_time = WIP_load_time
+        self.contents_WIP_load_time_remaining = WIP_load_time_remaining
+        self.contents_WIP_load_num_jobs = WIP_num
+
+    def get_content_WIP(self) -> tuple[Timedelta, Timedelta, int]:
+        WIP_load_time: Timedelta = Timedelta()
+        WIP_load_time_remaining: Timedelta = Timedelta()
+        WIP_num: int = 0
+        subsystems = self.subsystems_as_tuple()
+
+        for subsystem in subsystems:
+            WIP_load_time_sub, WIP_load_time_remaining_sub, WIP_num_sub = (
+                subsystem.get_content_WIP()
+            )
+            WIP_load_time += WIP_load_time_sub
+            WIP_load_time_remaining += WIP_load_time_remaining_sub
+            WIP_num += WIP_num_sub
+
+        return WIP_load_time, WIP_load_time_remaining, WIP_num
+
+
+class StationGroup(ContainerSystem['InfrastructureObject']):
+    def __init__(
+        self,
+        env: SimulationEnvironment,
+        supersystem: ProductionArea,
+        custom_identifier: CustomID,
+        name: str | None = None,
+        state: SimStatesCommon | SimStatesStorage | None = None,
+    ) -> None:
+        """Group of processing stations which are considered parallel machines"""
+
+        # initialise base class
+        super().__init__(
+            env=env,
+            supersystem=supersystem,
+            system_type=SimSystemTypes.STATION_GROUP,
+            custom_identifier=custom_identifier,
+            abstraction_level=1,
+            name=name,
+            state=state,
+        )
+
+    @override
+    def add_subsystem(
+        self,
+        subsystem: System,
+    ) -> None:
+        """adding a subsystem to the given supersystem
+
+        Parameters
+        ----------
+        subsystem : System
+            subsystem object which shall be added to the supersystem
+
+        Raises
+        ------
+        TypeError
+            if a subsystem is not the type this system contains
+        """
+        # type check: only certain subsystems are allowed for each supersystem
+        if not isinstance(subsystem, InfrastructureObject):
+            raise TypeError(
+                (
+                    f'The provided subsystem muste be of type >>InfrastructureObject<<, '
+                    f'but it is {type(subsystem)}.'
+                )
+            )
+
+        super().add_subsystem(subsystem=subsystem)
+
+    def calc_content_WIP(self) -> None:
+        WIP_load_time, WIP_load_time_remaining, WIP_num = self.get_content_WIP()
+        self.contents_WIP_load_time = WIP_load_time
+        self.contents_WIP_load_time_remaining = WIP_load_time_remaining
+        self.contents_WIP_load_num_jobs = WIP_num
+
+    def get_content_WIP(self) -> tuple[Timedelta, Timedelta, int]:
+        WIP_load_time: Timedelta = Timedelta()
+        WIP_load_time_remaining: Timedelta = Timedelta()
+        WIP_num: int = 0
+        subsystems = self.subsystems_as_tuple()
+        # TODO use logical queues or update buffer WIP
+        for subsystem in subsystems:
+            monitor = cast(
+                'monitors.InfStructMonitor | monitors.StorageMonitor', subsystem.stat_monitor
+            )
+            if hasattr(monitor, 'contents_WIP_load_time'):
+                WIP_load_time += monitor.contents_WIP_load_time
+            if hasattr(monitor, 'contents_WIP_load_time_remaining'):
+                WIP_load_time_remaining += monitor.contents_WIP_load_time_remaining
+            if hasattr(monitor, 'contents_WIP_load_num_jobs'):
+                WIP_num += monitor.contents_WIP_load_num_jobs
+
+        return WIP_load_time, WIP_load_time_remaining, WIP_num
+
+
 class LogicalQueue(System, QueueLike[J]):
     def __init__(
         self,
@@ -2895,7 +3089,7 @@ class LogicalQueue(System, QueueLike[J]):
         name: str | None = None,
         size: int = MAX_LOGICAL_QUEUE_SIZE,
     ) -> None:
-        """_summary_
+        """Queue class, a logical entity associated with each InfrastructureObject
 
         Parameters
         ----------
@@ -2924,6 +3118,10 @@ class LogicalQueue(System, QueueLike[J]):
         self.size = size
         self.assoc_resources: set[InfrastructureObject] = set()
         self.filtered: tuple[J, ...] | None = None
+        # current workload
+        self.contents_WIP_load_time: Timedelta = Timedelta()
+        self.contents_WIP_load_time_remaining: Timedelta = Timedelta()
+        self.contents_WIP_load_num_jobs: int = 0
 
     @property
     def sim_queue(self) -> salabim.Queue:
@@ -2984,8 +3182,8 @@ class LogicalQueue(System, QueueLike[J]):
     def _get_items_to_filter(
         self,
         chained_filter: bool = False,
-    ) -> Sequence[J] | LogicalQueue:
-        items_to_filter: Sequence[J] | LogicalQueue[J] = self
+    ) -> Sequence[J] | Self:
+        items_to_filter: Sequence[J] | Self = self
         if not chained_filter:
             self.filtered = None
         elif chained_filter and self.filtered is not None:
@@ -3071,10 +3269,7 @@ class LogicalQueue(System, QueueLike[J]):
         self,
         target_station_group: StationGroup | None,
     ) -> None:
-        relevant_stations = self.assoc_resources
-
-        if target_station_group is not None:
-            relevant_stations = self.filter_resources_by_station_group(target_station_group)
+        relevant_stations = self.get_relevant_resources(target_station_group)
         loggers.queues.debug(
             '[LOG-QUEUE] Activate one of following resources: %s', relevant_stations
         )
@@ -3084,6 +3279,66 @@ class LogicalQueue(System, QueueLike[J]):
                 loggers.queues.debug('[LOG-QUEUE] Activated resource: %s', station)
                 break
 
+    def get_relevant_resources(
+        self,
+        target_station_group: StationGroup | None,
+    ) -> set[InfrastructureObject] | tuple[ProcessingStation, ...]:
+        relevant_stations = self.assoc_resources
+        if target_station_group is not None:
+            relevant_stations = self.filter_resources_by_station_group(target_station_group)
+        loggers.queues.debug('[LOG-QUEUE] Getting relevant resources: %s', relevant_stations)
+
+        return relevant_stations
+
+    def calc_KPI_resources(
+        self,
+        resources: Iterable[InfrastructureObject],
+    ) -> None:
+        loggers.queues.debug('[LOG-QUEUE] KPI calculation: resources >>%s<<', resources)
+        for resource in resources:
+            resource.stat_monitor.calc_KPI()
+
+    def calc_contents_WIP(self) -> None:
+        WIP_load_time, WIP_load_time_remaining, WIP_load_num_jobs = (
+            self.calc_contents_WIP_filter(None)
+        )
+        self.contents_WIP_load_time = WIP_load_time
+        self.contents_WIP_load_time_remaining = WIP_load_time_remaining
+        self.contents_WIP_load_num_jobs = WIP_load_num_jobs
+
+    def calc_contents_WIP_filter(
+        self,
+        filter_station_group: StationGroup | None = None,
+    ) -> tuple[Timedelta, Timedelta, int]:
+        WIP_load_time: Timedelta = Timedelta()
+        WIP_load_time_remaining: Timedelta = Timedelta()
+        WIP_load_num_jobs: int = 0
+
+        relevant_contents: Sequence[J] | Self = self
+        if filter_station_group is not None:
+            relevant_contents = self.filter_content_by_station_groups(
+                (filter_station_group.system_id,)
+            )
+        loggers.queues.debug(
+            '[LOG-QUEUE] Contents WIP: relevant contents >>%s<<', relevant_contents
+        )
+        loggers.queues.debug(
+            (
+                '[LOG-QUEUE] Contents WIP: number relevant contents >>%d<<, '
+                'number all contents >>%d<<'
+            ),
+            len(relevant_contents),
+            len(self),
+        )
+
+        for item in relevant_contents:
+            WIP_load_time += item.order_time
+            WIP_load_num_jobs += 1
+
+        WIP_load_time_remaining = WIP_load_time  # no remaining times
+
+        return WIP_load_time, WIP_load_time_remaining, WIP_load_num_jobs
+
     @override
     def initialise(self) -> None:
         pass
@@ -3091,111 +3346,6 @@ class LogicalQueue(System, QueueLike[J]):
     @override
     def finalise(self) -> None:
         pass
-
-
-class ProductionArea(ContainerSystem['StationGroup']):
-    def __init__(
-        self,
-        env: SimulationEnvironment,
-        custom_identifier: CustomID,
-        sim_get_prio: int,
-        sim_put_prio: int,
-        name: str | None = None,
-        state: SimStatesCommon | SimStatesStorage | None = None,
-    ) -> None:
-        """Group of processing stations which are considered parallel machines"""
-
-        # initialise base class
-        super().__init__(
-            env=env,
-            supersystem=None,
-            system_type=SimSystemTypes.PRODUCTION_AREA,
-            custom_identifier=custom_identifier,
-            abstraction_level=2,
-            name=name,
-            state=state,
-            sim_get_prio=sim_get_prio,
-            sim_put_prio=sim_put_prio,
-        )
-
-    @override
-    def add_subsystem(
-        self,
-        subsystem: System,
-    ) -> None:
-        """adding a subsystem to the given supersystem
-
-        Parameters
-        ----------
-        subsystem : System
-            subsystem object which shall be added to the supersystem
-
-        Raises
-        ------
-        TypeError
-            if a subsystem is not the type this system contains
-        """
-        # type check: only certain subsystems are allowed for each supersystem
-        if not isinstance(subsystem, StationGroup):
-            raise TypeError(
-                (
-                    f'The provided subsystem muste be of type >>StationGroup<<, '
-                    f'but it is {type(subsystem)}.'
-                )
-            )
-
-        super().add_subsystem(subsystem=subsystem)
-
-
-class StationGroup(ContainerSystem['InfrastructureObject']):
-    def __init__(
-        self,
-        env: SimulationEnvironment,
-        supersystem: ProductionArea,
-        custom_identifier: CustomID,
-        name: str | None = None,
-        state: SimStatesCommon | SimStatesStorage | None = None,
-    ) -> None:
-        """Group of processing stations which are considered parallel machines"""
-
-        # initialise base class
-        super().__init__(
-            env=env,
-            supersystem=supersystem,
-            system_type=SimSystemTypes.STATION_GROUP,
-            custom_identifier=custom_identifier,
-            abstraction_level=1,
-            name=name,
-            state=state,
-        )
-
-    @override
-    def add_subsystem(
-        self,
-        subsystem: System,
-    ) -> None:
-        """adding a subsystem to the given supersystem
-
-        Parameters
-        ----------
-        subsystem : System
-            subsystem object which shall be added to the supersystem
-
-        Raises
-        ------
-        TypeError
-            if a subsystem is not the type this system contains
-        """
-        # type check: only certain subsystems are allowed for each supersystem
-        if not isinstance(subsystem, InfrastructureObject):
-            raise TypeError(
-                (
-                    f'The provided subsystem muste be of type >>InfrastructureObject<<, '
-                    f'but it is {type(subsystem)}.'
-                )
-            )
-
-        super().add_subsystem(subsystem=subsystem)
 
 
 # INFRASTRUCTURE COMPONENTS
@@ -3421,8 +3571,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         infstruct_mgr = self.env.infstruct_mgr
         # call dispatcher to check for allocation rule
         # resets current feasibility status
-        # TODO check removal
-        # yield self.sim_control.hold(0, priority=self.sim_put_prio)
         dispatcher.jobs_temp_state(jobs=[job], reset_temp=False)
         loggers.agents.debug('[%s] Checking agent allocation at %s', self, self.env.t_as_dt())
         is_agent, alloc_agent = dispatcher.check_alloc_dispatch(job=job)
@@ -3520,16 +3668,32 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # !! otherwise the WIP had to be calculated for each associated resource
         # !! which does not seem to be correct as the job is not yet allocated
         # remove only if it was added before, only case if the last operation exists
-        if job.last_op is not None and len(self.logical_queue.assoc_resources) == 1:
-            self.stat_monitor.change_WIP(job=job, remove=True)
+        # TODO check if explicit removal is necessary
+        # could use content of processing station
+        # if job.last_op is not None and len(self.logical_queue.assoc_resources) == 1:
+        #     self.stat_monitor.change_WIP(job=job, remove=True)
+        self.current_job = None
+        self.current_op = None
+        self.stat_monitor.calc_KPI()
+        # !! --------------------------------------------
         # [STATS:WIP] ADDING WIP TO TARGET STATION
         # add only if there is a next operation, only case if the current operation exists
         target_station_group: StationGroup | None = None
+        # TODO not necessary: possible solution: implicit over associated buffers / LogQueues
+        # if job.current_op is not None:
+        #     if len(logical_queue.assoc_resources) == 1:
+        #         target_station.stat_monitor.change_WIP(job=job, remove=False)
+        #     target_station_group = job.current_op.target_station_group
+
+        # TODO
+        # choose target station --> get StationGroup -->
+        # calc KPI for all stations in StationGroup
         if job.current_op is not None:
-            if len(logical_queue.assoc_resources) == 1:
-                target_station.stat_monitor.change_WIP(job=job, remove=False)
             target_station_group = job.current_op.target_station_group
+
         # activate target processing station if passive
+        relevant_resources = logical_queue.get_relevant_resources(target_station_group)
+        logical_queue.calc_KPI_resources(relevant_resources)
         logical_queue.activate_resources(target_station_group)
         # if target_station.sim_control.ispassive():
         #     target_station.sim_control.activate()
@@ -3542,8 +3706,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         dispatcher.update_job_state(job=job, state=SimStatesCommon.IDLE)
         # [CONTENT] remove content
         self.remove_content(job=job)
-        self.current_job = None
-        self.current_op = None
 
         loggers.prod_stations.debug(
             'From [%s] Updated states and placed job at %s',
@@ -3618,6 +3780,14 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         assert job is not None, 'Job is >>None<< after retrieval process'
         self.current_job = job
         self.current_op = job.current_op
+        target_station_group: StationGroup | None = None
+        if job.current_op is not None:
+            target_station_group = job.current_op.target_station_group
+        # update all members of the target station group
+        logical_queue = self.logical_queue
+        relevant_resources = logical_queue.get_relevant_resources(target_station_group)
+        logical_queue.calc_KPI_resources(relevant_resources)
+        self.stat_monitor.calc_KPI()
         # update time characteristics of the infrastructure object
         # contains additional checks if the target values are allowed
         if job.current_proc_time is None:
@@ -4263,7 +4433,6 @@ class Source(InfrastructureObject):
             
         loggers.sources.debug(f"[SOURCE: {self}] Stat Group IDs: {stat_group_ids}")
         """
-
         # ** new: job generation by sequence
         # !! currently only one production area
         if self.job_sequence is None:
@@ -4320,6 +4489,7 @@ class Source(InfrastructureObject):
             target_proc_station = yield from self.put_job(job=job)
             loggers.sources.debug('[SOURCE] PUT JOB with ret = %s', target_proc_station)
             # [STATS:Source] outputs
+            # TODO check removal
             self.stat_monitor.change_WIP_num(remove=True)
             # [STATE:Source] put in 'WAITING' by 'put_job' method but still processing
             # only 'WAITING' if all jobs are generated
@@ -4896,32 +5066,3 @@ class Job(salabim.Component):
         time_creation: Datetime,
     ) -> None:
         self.time_creation = time_creation
-
-    # def _calc_slack(self) -> None:
-    #     if self.time_planned_ending is not None:
-    #         env = self.dispatcher.env
-    #         curr_time = env.t_as_dt()
-    #         time_till_due = self.time_planned_ending - curr_time
-    #         self.slack = time_till_due - self.remaining_order_time
-
-    #         loggers.jobs.debug('[%s] Calculated slack as %s', self, self.slack)
-
-    # def _calc_remaining_order_time(self) -> None:
-    #     remaining_order_time: Timedelta = Timedelta()
-    #     for op in self.open_operations:
-    #         remaining_order_time += op.remaining_order_time
-
-    #     self.remaining_order_time = remaining_order_time
-
-    #     loggers.operations.debug(
-    #         '[%s] Calculated remaining order time as %s, total: %s',
-    #         self,
-    #         self.remaining_order_time,
-    #         self.order_time,
-    #     )
-
-    # def calc_KPI(self) -> None:
-    #     for op in self.open_operations:
-    #         op.calc_KPI()
-    #     self._calc_remaining_order_time()
-    #     self._calc_slack()

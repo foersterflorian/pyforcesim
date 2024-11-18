@@ -53,7 +53,7 @@ if LOGGING_ENABLED:
     base.addHandler(handler_stdout)
 
 if LOGGING_ENABLED and LOGGING_TO_FILE:
-    timestamp = common.get_timestamp(with_time=True)
+    timestamp = common.get_timestamp(with_time=False)
     logging_pth = Path.cwd() / f'logs_{timestamp}.txt'
     handler_file = logging.handlers.RotatingFileHandler(
         logging_pth,

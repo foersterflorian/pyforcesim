@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
 from pathlib import Path
@@ -26,13 +27,6 @@ from pyforcesim.constants import (
     SimStatesStorage,
     TimeUnitsTimedelta,
 )
-
-# from pyforcesim.simulation.environment import (
-#     InfrastructureObject,
-#     Job,
-#     Operation,
-#     SimulationEnvironment,
-# )
 from pyforcesim.types import LoadObjects, MonitorObjects, PlotlyFigure
 
 if TYPE_CHECKING:
@@ -41,6 +35,7 @@ if TYPE_CHECKING:
         Job,
         Operation,
         SimulationEnvironment,
+        StationGroup,
         StorageLike,
     )
 
@@ -520,9 +515,12 @@ class StorageMonitor(Monitor['StorageLike']):
         self._level_db = self._level_db.astype(self._level_db_types)
 
         self._current_fill_level = obj.fill_level_init
-        # self._fill_level_starting_time: float = self.env.now()
         self._fill_level_starting_time: Datetime = self.env.t_as_dt()
         self._wei_avg_fill_level: float | None = None
+        # WIPs
+        self.contents_WIP_load_time: Timedelta = Timedelta()
+        self.contents_WIP_load_time_remaining: Timedelta = Timedelta()
+        self.contents_WIP_load_num_jobs: int = 0
 
     @property
     def wei_avg_fill_level(self) -> float | None:
@@ -543,7 +541,26 @@ class StorageMonitor(Monitor['StorageLike']):
         is_finalise: bool = False
         if self.state_current == SimStatesCommon.FINISH:
             is_finalise = True
+
+        self._calc_contents_WIP()
         self._track_fill_level(is_finalise=is_finalise)
+
+    def _calc_contents_WIP(self) -> None:
+        relevant_store = cast(Iterable['Job'], self.target_object.sim_control.store)
+        WIP_num: int = 0
+        WIP_load_time: Timedelta = Timedelta()
+        for job in relevant_store:
+            current_op = job.current_op
+            if current_op is None:
+                raise ValueError(
+                    f'Current OP >>None<< during WIP retrieval in StorageMonitor >>{self}<<.'
+                )
+            WIP_load_time += current_op.order_time
+            WIP_num += 1
+
+        self.contents_WIP_load_time = WIP_load_time
+        self.contents_WIP_load_time_remaining = WIP_load_time
+        self.contents_WIP_load_num_jobs = WIP_num
 
     # storage fill level tracking
     def _track_fill_level(
@@ -572,6 +589,11 @@ class StorageMonitor(Monitor['StorageLike']):
             self._level_db = pd.concat([self._level_db, temp2], ignore_index=True)
             self._current_fill_level = self.target_object.fill_level
             self._fill_level_starting_time = current_time
+
+    @override
+    def calc_KPI(self) -> None:
+        super().calc_KPI()
+        self._calc_contents_WIP()
 
     @override
     def finalise_stats(self) -> None:
@@ -702,6 +724,9 @@ class InfStructMonitor(Monitor['InfrastructureObject']):
         self.WIP_load_num_jobs: int = 0
         self._WIP_load_num_jobs_last: int = 0
         self.WIP_load_time_remaining: Timedelta = Timedelta()
+        self.contents_WIP_load_time: Timedelta = Timedelta()
+        self.contents_WIP_load_time_remaining: Timedelta = Timedelta()
+        self.contents_WIP_load_num_jobs: int = 0
         self.num_inputs: int = 0
         self.num_outputs: int = 0
         self.WIP_inflow: Timedelta = Timedelta()
@@ -723,21 +748,56 @@ class InfStructMonitor(Monitor['InfrastructureObject']):
     def WIP_num_db(self) -> DataFrame:
         return self._WIP_num_db
 
-    @override
-    def calc_KPI(self) -> None:
-        """calculates different KPIs at any point in time"""
-        super().calc_KPI()
-        # utilisation
-        if self.time_non_helpers.total_seconds() > 0:
-            self.utilisation = self.time_utilisation / self.time_non_helpers
-            loggers.monitors.debug(
-                'Utilisation of %s: %.3f at %s',
-                self.target_object,
-                self.utilisation,
-                self.env.t_as_dt(),
-            )
-        # currently processed operation
-        target_object = cast('InfrastructureObject', self.target_object)
+    def _calc_contents_WIP(self) -> None:
+        WIP_num: int = 0
+        self._current_op_remaining()
+        current_op = self.target_object.current_op
+        if current_op is not None:
+            WIP_num = 1
+
+        self.contents_WIP_load_time = self.time_op_processed + self.time_op_remaining
+        self.contents_WIP_load_time_remaining = self.time_op_remaining
+        self.contents_WIP_load_num_jobs = WIP_num
+
+        loggers.monitors.debug(
+            (
+                '[Monitor] [Target Object >>%s<<] Contents WIP Load Time: %s, '
+                'Contents WIP Load Time remaining: %s'
+            ),
+            self.target_object,
+            self.contents_WIP_load_time,
+            self.contents_WIP_load_time_remaining,
+        )
+
+    def _calc_normal_WIP(self) -> None:
+        self._calc_contents_WIP()
+        log_q = self.target_object.logical_queue
+        relevant_station_group = cast(
+            'StationGroup', self.target_object.supersystems_as_tuple()[0]
+        )
+        q_WIP_load_time, q_WIP_load_time_remaining, q_WIP_load_num_jobs = (
+            log_q.calc_contents_WIP_filter(filter_station_group=relevant_station_group)
+        )
+
+        self.WIP_load_time = q_WIP_load_time + self.contents_WIP_load_time
+        self.WIP_load_time_remaining = (
+            q_WIP_load_time_remaining + self.contents_WIP_load_time_remaining
+        )
+        self.WIP_load_num_jobs = q_WIP_load_num_jobs + self.contents_WIP_load_num_jobs
+
+        loggers.monitors.debug(
+            (
+                '[Monitor] [Target Object >>%s<<] Normal WIP Load Time: %s, '
+                'Normal WIP Load Time remaining: %s, Normal WIP num jobs: %d'
+            ),
+            self.target_object,
+            self.WIP_load_time,
+            self.WIP_load_time_remaining,
+            self.WIP_load_num_jobs,
+        )
+
+    def _current_op_remaining(self) -> None:
+        target_object = self.target_object
         current_op = target_object.current_op
         if current_op is None:
             self.time_op_processed = Timedelta()
@@ -764,13 +824,22 @@ class InfStructMonitor(Monitor['InfrastructureObject']):
                 current_sim_time,
             )
 
-        self.WIP_load_time_remaining = self.WIP_load_time - self.time_op_processed
-        loggers.monitors.debug(
-            '[Monitor] [Target Object >>%s<<] WIP Load Time: %s, WIP Load Time remaining: %s',
-            self.target_object,
-            self.WIP_load_time,
-            self.WIP_load_time_remaining,
-        )
+    @override
+    def calc_KPI(self) -> None:
+        """calculates different KPIs at any point in time"""
+        super().calc_KPI()
+        # contents WIP calculation implicitly called by normal WIP calculation
+        self._calc_normal_WIP()
+        self._track_WIP_level()
+        # utilisation
+        if self.time_non_helpers.total_seconds() > 0:
+            self.utilisation = self.time_utilisation / self.time_non_helpers
+            loggers.monitors.debug(
+                'Utilisation of %s: %.3f at %s',
+                self.target_object,
+                self.utilisation,
+                self.env.t_as_dt(),
+            )
 
     def _track_WIP_level(
         self,
@@ -780,6 +849,7 @@ class InfStructMonitor(Monitor['InfrastructureObject']):
         # only calculate duration if level changes
         # current_time = self.env.now()
         current_time = self.env.t_as_dt()
+        self._calc_normal_WIP()
 
         if (self._WIP_load_time_last != self.WIP_load_time) or is_finalise:
             # if updates occur at an already set time, just update the level
