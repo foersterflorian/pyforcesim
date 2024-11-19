@@ -48,6 +48,7 @@ from pyforcesim.constants import (
     POLICIES_ALLOC,
     POLICIES_SEQ,
     SEQUENCING_WAITING_TIME,
+    SOURCE_GENERATION_WAITING_TIME,
     TIMEZONE_CEST,
     SimResourceTypes,
     SimStatesCommon,
@@ -88,6 +89,7 @@ from pyforcesim.types import (
     QueueLike,
     SalabimTimeUnits,
     SourceSequence,
+    StatDistributionInfo,
     SysIDResource,
     SystemID,
 )
@@ -210,7 +212,7 @@ class SimulationEnvironment(salabim.Environment):
         # waiting action
         self.seq_waiting_time = self.env.td_to_simtime(SEQUENCING_WAITING_TIME)
         # observers
-        self.observers: set[threading.Thread] = set()
+        self.observers: set[conditions.Observer] = set()
 
         loggers.pyf_env.info('New Environment >>%s<< created.', self.name())
 
@@ -259,17 +261,9 @@ class SimulationEnvironment(salabim.Environment):
     def register_observer(
         self,
         observer: conditions.Observer,
-        kwargs: dict[str, Any] | None = None,
     ) -> None:
-        if kwargs is None:
-            kwargs = {}
-        thread = threading.Thread(target=observer.observe, kwargs=kwargs, daemon=True)
-        if thread not in self.observers:
-            self.observers.add(thread)
-
-    def start_observers(self) -> None:
-        for thread in self.observers:
-            thread.start()
+        if observer not in self.observers:
+            self.observers.add(observer)
 
     def check_feasible_agent_choice(
         self,
@@ -313,9 +307,6 @@ class SimulationEnvironment(salabim.Environment):
         self.infstruct_mgr.initialise()
         # dispatcher instance
         self.dispatcher.initialise()
-        # observers
-        self.start_observers()
-
         # establish websocket connection
         if self.debug_dashboard and not self.servers_connected:
             loggers.pyf_env.info('Starting websocket server...')
@@ -2918,6 +2909,22 @@ class ContainerSystem(Generic[T], System):
 
         return proc_capa_perc_map_future
 
+    def WIP_ideal(
+        self,
+        order_time_stats_info: StatDistributionInfo,
+    ) -> Timedelta:
+        stations = self.assoc_proc_stations
+        mean = order_time_stats_info.mean
+        std = order_time_stats_info.std
+        var_K = std / mean
+
+        WIP_ideal_hours_single = mean * (1 + var_K**2)
+        WIP_ideal_hours = WIP_ideal_hours_single * len(stations)
+        WIP_ideal = pyf_dt.timedelta_from_val(WIP_ideal_hours, TimeUnitsTimedelta.HOURS)
+        WIP_ideal = pyf_dt.round_td_by_seconds(WIP_ideal, round_to_next_seconds=60)
+
+        return WIP_ideal
+
     @override
     def initialise(self) -> None:
         self._init_proc_station_properties()
@@ -4364,17 +4371,34 @@ class Source(InfrastructureObject):
         # triggers and flags
         self.stop_job_gen_cond_reg: bool = False
         self.stop_job_gen_state = salabim.State('stop_job_gen', env=self.env, monitor=False)
-
         # job generator
         self._job_sequence: Iterator[SourceSequence] | None = None
+        # external source generation control
+        self._generation_controller: conditions.WIPSourceController | None = None
+        self._stop_production: threading.Event | None = None
 
     @property
     def job_sequence(self) -> Iterator[SourceSequence] | None:
         return self._job_sequence
 
+    @property
+    def stop_production(self) -> threading.Event | None:
+        return self._stop_production
+
+    @property
+    def generation_controller(self) -> conditions.WIPSourceController | None:
+        return self._generation_controller
+
     def obtain_order_time(self) -> Timedelta:
         # order_time = self.env.td_to_simtime(timedelta=self.order_time)
         return self.order_time
+
+    def register_source_generation_controller(
+        self,
+        source_gen_controller: conditions.WIPSourceController,
+    ) -> None:
+        self._generation_controller = source_gen_controller
+        self._stop_production = source_gen_controller.stop_production
 
     def register_job_sequence(
         self,
@@ -4408,6 +4432,7 @@ class Source(InfrastructureObject):
     def sim_logic(self) -> Generator[None, None, None]:
         infstruct_mgr = self.env.infstruct_mgr
         dispatcher = self.env.dispatcher
+        GENERATION_WAITING_TIME = self.env.td_to_simtime(SOURCE_GENERATION_WAITING_TIME)
 
         # ?? only for random generation?
         """
@@ -4476,7 +4501,8 @@ class Source(InfrastructureObject):
             # [Call:DISPATCHER]
             dispatcher.release_job(job=job)
             # [STATS:Source] inputs
-            self.stat_monitor.change_WIP_num(remove=False)
+            # TODO check removal
+            # self.stat_monitor.change_WIP_num(remove=False)
 
             loggers.sources.debug(
                 '[SOURCE: %s] Generated %s at %s', self, job, self.env.t_as_dt()
@@ -4490,7 +4516,7 @@ class Source(InfrastructureObject):
             loggers.sources.debug('[SOURCE] PUT JOB with ret = %s', target_proc_station)
             # [STATS:Source] outputs
             # TODO check removal
-            self.stat_monitor.change_WIP_num(remove=True)
+            # self.stat_monitor.change_WIP_num(remove=True)
             # [STATE:Source] put in 'WAITING' by 'put_job' method but still processing
             # only 'WAITING' if all jobs are generated
             infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
@@ -4501,11 +4527,21 @@ class Source(InfrastructureObject):
             loggers.sources.debug(
                 '[SOURCE: %s] Hold for >>%s<< at %s', self, proc_time_sim, self.env.t_as_dt()
             )
+            if self.stop_production is not None:
+                infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
+
+                while self.stop_production.is_set():
+                    yield self.sim_control.hold(GENERATION_WAITING_TIME)
+
+                infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
 
             yield self.sim_control.hold(proc_time_sim, priority=self.sim_put_prio)
 
         # [STATE:Source] WAITING
         infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
+        # stop controller object
+        if self.generation_controller is not None:
+            self.generation_controller.stop_execution()
 
     @override
     def post_process(self) -> None:

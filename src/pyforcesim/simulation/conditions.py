@@ -1,20 +1,19 @@
 from __future__ import annotations
 
 import threading
-import time
-from abc import ABC, abstractmethod
-from collections.abc import Generator
+from abc import ABCMeta, abstractmethod
+from collections.abc import Generator, Iterable
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
 from typing import TYPE_CHECKING, Any
+from typing_extensions import override
 
 from pyforcesim import datetime as pyf_dt
 from pyforcesim import loggers
-from pyforcesim.constants import TimeUnitsTimedelta
 from pyforcesim.errors import ViolationStartingConditionError
 from pyforcesim.simulation.base_components import SimulationComponent
 from pyforcesim.simulation.environment import ProductionArea, SimulationEnvironment
-from pyforcesim.types import AgentType
+from pyforcesim.types import AgentType, StatDistributionInfo
 
 if TYPE_CHECKING:
     from pyforcesim.simulation.environment import (
@@ -24,7 +23,7 @@ if TYPE_CHECKING:
     )
 
 
-class BaseCondition(ABC):
+class BaseCondition(metaclass=ABCMeta):
     def __init__(
         self,
         env: SimulationEnvironment,
@@ -85,6 +84,7 @@ class TransientCondition(BaseCondition):
         self.duration_transient = duration_transient
         self.env.duration_transient = duration_transient
 
+    @override
     def pre_process(self) -> None:
         # validate that starting condition is met
         # check transient phase of environment
@@ -93,6 +93,7 @@ class TransientCondition(BaseCondition):
                 f'Environment {self.env.name()} not in transient state!'
             )
 
+    @override
     def sim_logic(self) -> Generator[None, None, None]:
         sim_time = self.env.td_to_simtime(timedelta=self.duration_transient)
         yield self.sim_control.hold(sim_time, priority=-100)
@@ -113,6 +114,7 @@ class TransientCondition(BaseCondition):
             '[CONDITION %s]: Event list of env: %s', self, self.env._event_list
         )
 
+    @override
     def post_process(self) -> None:
         pass
 
@@ -157,12 +159,14 @@ class JobGenDurationCondition(BaseCondition):
         self.target_obj = target_obj
         self.target_obj.stop_job_gen_cond_reg = True
 
+    @override
     def pre_process(self) -> None:
         if self.target_obj.stop_job_gen_state.get():
             raise ViolationStartingConditionError(
                 f'Target object {self.target_obj}: Flag not unset!'
             )
 
+    @override
     def sim_logic(self) -> Generator[None, None, None]:
         sim_time = self.env.td_to_simtime(timedelta=self.sim_run_duration)
         yield self.sim_control.hold(sim_time, priority=-100)
@@ -171,6 +175,7 @@ class JobGenDurationCondition(BaseCondition):
             '[CONDITION %s]: Job Generation Condition met at %s', self, self.env.t_as_dt()
         )
 
+    @override
     def post_process(self) -> None:
         pass
 
@@ -187,6 +192,7 @@ class TriggerAgentCondition(BaseCondition):
 
         self.agent = agent
 
+    @override
     def pre_process(self) -> None:
         # if self.env.transient_cond_state.get():
         if not self.env.is_transient_cond:
@@ -194,6 +200,7 @@ class TriggerAgentCondition(BaseCondition):
                 (f'Environment {self.env.name()} transient state: State already set!')
             )
 
+    @override
     def sim_logic(self) -> Generator[None, None, None]:
         # wait till transient state is over
         if self.env.duration_transient is None:
@@ -212,45 +219,187 @@ class TriggerAgentCondition(BaseCondition):
         # activate agent (trigger needed preparation steps)
         self.agent.activate()
 
+    @override
     def post_process(self) -> None:
         pass
 
 
-class Observer:
+class Observer(BaseCondition):
     def __init__(
         self,
         env: SimulationEnvironment,
         name: str,
+        setting_event: threading.Event,
+        sim_interval: Timedelta,
     ) -> None:
-        self._env = env
-        self._name = name
+        super().__init__(env, name)
+        self.setting_event = setting_event
+        self._stop_execution_event = threading.Event()
+        self.sim_interval = sim_interval
+        self.system_id = self.env.get_system_id()
 
-    def __str__(self) -> str:
-        return f'{self.__class__.__name__}_{self.name}'
+    def __key(self) -> str:
+        return f'{self.__str__()}_{self.system_id}'
+
+    def __hash__(self) -> int:
+        return hash(self.__key())
 
     @property
-    def env(self) -> SimulationEnvironment:
-        return self._env
+    def stop_execution_event(self) -> threading.Event:
+        return self._stop_execution_event
 
-    @property
-    def name(self) -> str:
-        return self._name
+    def stop_execution(self) -> None:
+        loggers.conditions.info('Stopping observer >>%s<<', self)
+        self.stop_execution_event.set()
 
-    def observe(
+
+class WIPSourceController(Observer):
+    def __init__(
         self,
-        stop_production_event: threading.Event,
+        env: SimulationEnvironment,
+        name: str,
+        setting_event: threading.Event,
+        sim_interval: Timedelta,
+        *,
         prod_area: ProductionArea,
+        target_sources: Iterable[Source],
+        WIP_limit: Timedelta | None = None,
+        stat_info: StatDistributionInfo | None = None,
     ) -> None:
-        ret = prod_area.get_content_WIP()
-        WIP_limit = pyf_dt.timedelta_from_val(20, TimeUnitsTimedelta.HOURS)
-        curr_WIP = ret[1]
+        super().__init__(
+            env=env,
+            name=name,
+            setting_event=setting_event,
+            sim_interval=sim_interval,
+        )
 
-        while curr_WIP < WIP_limit:
-            time.sleep(0.5)
-            ret = prod_area.get_content_WIP()
-            curr_WIP = ret[1]
-            print(curr_WIP)
+        self.stop_production = self.setting_event
+        self.prod_area = prod_area
+        self.target_sources = target_sources
+        self.WIP_limit = WIP_limit
+        self.stat_info = stat_info
+        self.sim_interval_time_units: float | None = None
 
-        stop_production_event.set()
-        with open('./FILE_SUCCESS.txt', 'w') as f:
-            f.write(f'Successful retrieval at {self.env.t_as_dt()}.')
+        self._register_sources()
+
+    def _register_sources(self) -> None:
+        for source in self.target_sources:
+            source.register_source_generation_controller(self)
+
+    @override
+    def pre_process(self) -> None:
+        if not any((self.WIP_limit, self.stat_info)):
+            raise ValueError('Either WIP_Plan or source distribution info mst be provided.')
+        elif self.WIP_limit is None:
+            assert self.stat_info is not None
+            self.WIP_limit = self.prod_area.WIP_ideal(self.stat_info)
+
+        self.sim_interval_time_units = self.env.td_to_simtime(self.sim_interval)
+
+    @override
+    def sim_logic(self) -> Generator[None, None, None]:
+        assert self.WIP_limit is not None, 'Target WIP level must not be >>None<<'
+        assert (
+            self.sim_interval_time_units is not None
+        ), 'Interval in simulation time units must not be >>None<<'
+
+        while not self.stop_execution_event.is_set():
+            _, WIP_current, _ = self.prod_area.get_content_WIP()
+            if WIP_current >= self.WIP_limit and not self.stop_production.is_set():
+                loggers.conditions.debug(
+                    '[CONDITION] Stop production at %s', self.env.t_as_dt()
+                )
+                self.stop_production.set()
+            elif WIP_current < self.WIP_limit and self.stop_production.is_set():
+                loggers.conditions.debug(
+                    '[CONDITION] Start production at %s', self.env.t_as_dt()
+                )
+                self.stop_production.clear()
+
+            yield self.sim_control.hold(self.sim_interval_time_units)
+
+    @override
+    def post_process(self) -> None:
+        pass
+
+
+# class ObserverThread(threading.Thread, metaclass=ABCMeta):
+#     def __init__(
+#         self,
+#         env: SimulationEnvironment,
+#         name: str,
+#         setting_event: threading.Event,
+#     ) -> None:
+#         super().__init__(group=None, target=None, name=name, daemon=True)
+#         self._env = env
+#         self._sim_name = name
+#         self.setting_event = setting_event
+#         self._stop_execution_event = threading.Event()
+
+#     def __str__(self) -> str:
+#         return f'{self.__class__.__name__}(Name: {self.sim_name})'
+
+#     @property
+#     def env(self) -> SimulationEnvironment:
+#         return self._env
+
+#     @property
+#     def sim_name(self) -> str:
+#         return self._sim_name
+
+#     @property
+#     def stop_execution_event(self) -> threading.Event:
+#         return self._stop_execution_event
+
+#     @abstractmethod
+#     def sim_logic(self) -> None: ...
+
+#     @override
+#     def run(self) -> None:
+#         loggers.conditions.info('Starting observer >>%s<<', self)
+#         self.sim_logic()
+
+#     def stop_execution(self) -> None:
+#         loggers.conditions.info('Stopping observer >>%s<<', self)
+#         self.stop_execution_event.set()
+
+
+# class WIPSourceControllerThread(ObserverThread):
+#     def __init__(
+#         self,
+#         env: SimulationEnvironment,
+#         name: str,
+#         setting_event: threading.Event,
+#         *,
+#         prod_area: ProductionArea,
+#         target_sources: Iterable[Source],
+#         WIP_limit: Timedelta,
+#     ) -> None:
+#         super().__init__(env=env, name=name, setting_event=setting_event)
+#         self.stop_production = self.setting_event
+#         self.prod_area = prod_area
+#         self.target_sources = target_sources
+#         self.WIP_limit = WIP_limit
+
+#         self._register_sources()
+
+#     def _register_sources(self) -> None:
+#         for source in self.target_sources:
+#             source.register_source_generation_event(self.stop_production)
+
+#     @override
+#     def sim_logic(self) -> None:
+#         while not self.stop_execution_event.is_set():
+#             _, WIP_current, _ = self.prod_area.get_content_WIP()
+#             if WIP_current >= self.WIP_limit:
+#                 loggers.conditions.info(
+#                     '--------[CONDITION] Stop production at %s', self.env.t_as_dt()
+#                 )
+#                 self.stop_production.set()
+#             elif WIP_current < self.WIP_limit and self.stop_production.is_set():
+#                 loggers.conditions.info(
+#                     '--------[CONDITION] Start production at %s', self.env.t_as_dt()
+#                 )
+#                 self.stop_production.clear()
+
+#             time.sleep(0.5)

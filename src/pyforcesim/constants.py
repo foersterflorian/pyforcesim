@@ -33,7 +33,7 @@ LOG_DATE_FMT: Final[str] = '%Y-%m-%d %H:%M:%S +0000'
 LOGGING_ENABLED: Final[bool] = True
 LOGGING_TO_FILE: Final[bool] = False
 LOGGING_FILE_SIZE: Final[int] = 10485760  # in bytes
-LOGGING_LEVEL_STD_OUT: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_STD_OUT: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_FILE: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_BASE: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_ENV: Final[loglevel] = loglevel.WARNING
@@ -96,28 +96,28 @@ SLACK_THRESHOLD_LOWER: Final[Timedelta] = Timedelta()
 DB_HANDLE: Final[str] = 'sqlite:///:memory:'
 DB_ECHO: Final[bool] = False
 DB_ROOT: Final[str] = 'databases'
-DB_DATA_TYPES: Final[set[str]] = {
-    'INTEGER',
-    'REAL',
-    'BOOLEAN',
-    'TEXT',
-    'BLOB',
-    'DATE',
-    'DATETIME',
-    'TIMEDELTA',
-}
-# SQLite supports more column constraints than these,
-# but only these are currently supported by the database module
-DB_SUPPORTED_COL_CONSTRAINTS: Final[frozenset[str]] = frozenset(
-    [
-        'NOT NULL',
-        'UNIQUE',
-        'PRIMARY KEY',
-    ]
-)
-DB_INJECTION_PATTERN: Final[str] = (
-    r'(^[_0-9]+)|[^\w ]|(true|false|select|where|drop|delete|create)'
-)
+# DB_DATA_TYPES: Final[set[str]] = {
+#     'INTEGER',
+#     'REAL',
+#     'BOOLEAN',
+#     'TEXT',
+#     'BLOB',
+#     'DATE',
+#     'DATETIME',
+#     'TIMEDELTA',
+# }
+# # SQLite supports more column constraints than these,
+# # but only these are currently supported by the database module
+# DB_SUPPORTED_COL_CONSTRAINTS: Final[frozenset[str]] = frozenset(
+#     [
+#         'NOT NULL',
+#         'UNIQUE',
+#         'PRIMARY KEY',
+#     ]
+# )
+# DB_INJECTION_PATTERN: Final[str] = (
+#     r'(^[_0-9]+)|[^\w ]|(true|false|select|where|drop|delete|create)'
+# )
 
 
 # ** simulation
@@ -127,6 +127,7 @@ DB_INJECTION_PATTERN: Final[str] = (
 MAX_PROCESSING_CAPACITY: Final[Timedelta] = Timedelta(hours=24)
 MAX_LOGICAL_QUEUE_SIZE: Final[int] = 60
 SEQUENCING_WAITING_TIME: Final[Timedelta] = Timedelta(minutes=15)
+SOURCE_GENERATION_WAITING_TIME: Final[Timedelta] = Timedelta(minutes=15)
 
 
 class SimResourceTypes(enum.StrEnum):

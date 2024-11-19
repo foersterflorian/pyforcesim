@@ -75,6 +75,7 @@ class BaseJobGenerator(ABC):
         self._rnd_gen = np.random.default_rng(seed=seed)
         self._seed = seed
         self._norm_td = pyf_dt.timedelta_from_val(1.0, TimeUnitsTimedelta.HOURS)
+        self._stat_info: StatDistributionInfo | None = None
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__} | Env: {self.env.name()} | Seed: {self.seed}'
@@ -90,6 +91,26 @@ class BaseJobGenerator(ABC):
     @property
     def rnd_gen(self) -> NPRandomGenerator:
         return self._rnd_gen
+
+    @property
+    def stat_info(self) -> StatDistributionInfo:
+        if self._stat_info is None:
+            raise ValueError(f'Statistical distribution info not available for >>{self}<<')
+        return self._stat_info
+
+    @stat_info.setter
+    def stat_info(
+        self,
+        value: StatDistributionInfo,
+    ) -> None:
+        if not isinstance(value, StatDistributionInfo):
+            raise TypeError(
+                (
+                    f'Type >StatDistributionInfo< must be assigned, '
+                    f'but value >>{value}<< was of type {type(value)}'
+                )
+            )
+        self._stat_info = value
 
     @abstractmethod
     def retrieve(self) -> Iterator[SourceSequence]: ...
@@ -497,8 +518,14 @@ class WIPSequenceSinglePA(SequenceSinglePA):
         env: SimulationEnvironment,
         prod_area_id: SystemID,
         seed: int | None = None,
+        *,
+        uniform_lb: float,
+        uniform_ub: float,
     ) -> None:
         super().__init__(env=env, prod_area_id=prod_area_id, seed=seed)
+        self.uniform_lb = uniform_lb
+        self.uniform_ub = uniform_ub
+        self.stat_info = self.stat_info_uniform(uniform_lb, uniform_ub)
 
     @staticmethod
     def stat_info_uniform(
@@ -517,8 +544,6 @@ class WIPSequenceSinglePA(SequenceSinglePA):
     def retrieve(
         self,
         target_obj: Source,
-        uniform_lb: float,
-        uniform_ub: float,
         factor_WIP: float = 0,
     ) -> Iterator[SourceSequence]:
         """(-1) < factor_WIP < 0: underload condition, factor_WIP <= (-1) only
@@ -545,9 +570,8 @@ class WIPSequenceSinglePA(SequenceSinglePA):
         # number of all processing stations in associated production area
         total_num_proc_stations = self.prod_area.num_assoc_proc_station
         # statistical information
-        stat_dist_info = self.stat_info_uniform(uniform_lb, uniform_ub)
-        mean = stat_dist_info.mean
-        std = stat_dist_info.std
+        mean = self.stat_info.mean
+        std = self.stat_info.std
         # calc expected value of interval
         # C_S / (C_M/µ + a*(1+(std^2/mean^2))
         prod_area_capa = self.prod_area.processing_capacities(total=True) / self._norm_td
@@ -572,7 +596,8 @@ class WIPSequenceSinglePA(SequenceSinglePA):
 
         # duration for WIP build-up/tear-down phase
         # implicit in equation: 1 day
-        duration_non_ideal_sequence = pyf_dt.timedelta_from_val(1, TimeUnitsTimedelta.DAYS)
+        # TODO changed for test of WIP regulation
+        duration_non_ideal_sequence = pyf_dt.timedelta_from_val(104, TimeUnitsTimedelta.WEEKS)
         td_zero = Timedelta()
 
         # generate endless sequence
@@ -582,7 +607,10 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                 # generate job for each ProcessingStation in StationGroup
                 for _ in range(stat_group.num_assoc_proc_station):
                     # generate random order time from uniform distribution
-                    overall_time_float = self.rnd_gen.uniform(low=uniform_lb, high=uniform_ub)
+                    overall_time_float = self.rnd_gen.uniform(
+                        low=self.uniform_lb,
+                        high=self.uniform_ub,
+                    )
                     overall_time = pyf_dt.timedelta_from_val(
                         overall_time_float, TimeUnitsTimedelta.HOURS
                     )

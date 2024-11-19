@@ -146,7 +146,7 @@ class Monitor(Generic[T]):
 
         # check if state is already set
         if self.state_status[target_state] and target_state != SimStatesCommon.TEMP:
-            loggers.monitors.info(
+            loggers.monitors.debug(
                 'Tried to set state of %s to >>%s<<, but this state was already set.'
                 ' State of object was not changed.',
                 self.target_object,
@@ -885,7 +885,7 @@ class InfStructMonitor(Monitor['InfrastructureObject']):
                 self._WIP_load_num_jobs_last = self.WIP_load_num_jobs
                 self._WIP_num_starting_time = current_time
 
-    def change_WIP_num(
+    def _change_WIP_num(
         self,
         remove: bool,
     ) -> None:
@@ -894,7 +894,7 @@ class InfStructMonitor(Monitor['InfrastructureObject']):
         else:
             self.num_inputs += 1
 
-    def change_WIP(
+    def _change_WIP(
         self,
         job: Job,
         remove: bool,
@@ -916,7 +916,7 @@ class InfStructMonitor(Monitor['InfrastructureObject']):
             self.WIP_inflow += job.current_order_time
             # self.num_inputs += 1
 
-        self.change_WIP_num(remove=remove)
+        self._change_WIP_num(remove=remove)
         self._track_WIP_level()
 
     @override
