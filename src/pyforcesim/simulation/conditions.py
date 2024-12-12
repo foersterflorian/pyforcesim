@@ -289,7 +289,7 @@ class WIPSourceController(Observer):
     @override
     def pre_process(self) -> None:
         if not any((self.WIP_limit, self.stat_info)):
-            raise ValueError('Either WIP_Plan or source distribution info mst be provided.')
+            raise ValueError('Either WIP_Plan or source distribution info must be provided.')
         elif self.WIP_limit is None:
             assert self.stat_info is not None
             self.WIP_limit = self.prod_area.WIP_ideal(self.stat_info)

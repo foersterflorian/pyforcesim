@@ -12,16 +12,13 @@ import numpy.typing as npt
 from numpy.random._generator import Generator as NPRandomGenerator
 
 from pyforcesim import datetime as pyf_dt
-from pyforcesim import loggers
 from pyforcesim.constants import SimStatesCommon, SimSystemTypes, TimeUnitsTimedelta
-from pyforcesim.simulation.environment import SimulationEnvironment, SystemID
+from pyforcesim.loggers import loads as logger
+from pyforcesim.simulation.environment import SimulationEnvironment
 from pyforcesim.types import (
-    DueDate,
     JobGenerationInfo,
     OrderDates,
-    OrderPriority,
     OrderTimes,
-    SourceSequence,
     StatDistributionInfo,
 )
 
@@ -31,6 +28,11 @@ if TYPE_CHECKING:
         SimulationEnvironment,
         Source,
         SystemID,
+    )
+    from pyforcesim.types import (
+        DueDate,
+        OrderPriority,
+        SourceSequence,
     )
 
 
@@ -45,6 +47,86 @@ def calc_due_date(
     due_date = starting_date + time_till_due
 
     return due_date
+
+
+def calc_WIP_relative(
+    t: float,
+    alpha: float,
+) -> float:
+    return (1 - (1 - t ** (1 / 4)) ** 4) + alpha * t
+
+
+def calc_capacity_relative(
+    t: float,
+) -> float:
+    return 1 - (1 - t ** (1 / 4)) ** 4
+
+
+def calc_t_on_WIP_relative(
+    WIP_target: float,
+    alpha: float = 10,
+    epsilon: float = 1e-3,
+) -> float:
+    # t between [0;1]
+    t: float = 0.5
+    WIP_calc = calc_WIP_relative(t, alpha)
+    delta = WIP_calc - WIP_target
+
+    t_step: float = 0.1
+    step: int = 1
+    while abs(delta) > epsilon:
+        logger.debug('Delta is: %.4f at step %d', delta, step)
+        if delta > 0:
+            # decrease t
+            t -= t_step / step
+            if t < 0:
+                t = 0
+        else:
+            # increase t
+            t += t_step / step
+            if t > 1:
+                t = 1
+
+        WIP_calc = calc_WIP_relative(t, alpha)
+        delta = WIP_calc - WIP_target
+        step += 1
+
+    logger.debug('Delta before return is: %.4f after step %d', delta, step)
+
+    return t
+
+
+def calc_t_on_capacity_relative(
+    capacity_target: float,
+    epsilon: float = 1e-3,
+) -> float:
+    # t between [0;1]
+    t: float = 0.5
+    capacity_calc = calc_capacity_relative(t)
+    delta = capacity_calc - capacity_target
+
+    t_step: float = 0.1
+    step: int = 1
+    while abs(delta) > epsilon:
+        logger.debug('Delta is: %.4f at step %d', delta, step)
+        if delta > 0:
+            # decrease t
+            t -= t_step / step
+            if t < 0:
+                t = 0
+        else:
+            # increase t
+            t += t_step / step
+            if t > 1:
+                t = 1
+
+        capacity_calc = calc_capacity_relative(t)
+        delta = capacity_calc - capacity_target
+        step += 1
+
+    logger.debug('Delta before return is: %.4f after step %d', delta, step)
+
+    return t
 
 
 # order time management
@@ -347,12 +429,12 @@ class ConstantSequenceSinglePA(SequenceSinglePA):
         # request StationGroupIDs by ProdAreaID in StationGroup database
         stat_groups = self.prod_area.subsystems_as_tuple()
 
-        loggers.loads.debug('stat_groups: %s', stat_groups)
+        logger.debug('stat_groups: %s', stat_groups)
 
         # number of all processing stations in associated production area
         total_num_proc_stations = self._prod_area.num_assoc_proc_station
 
-        loggers.loads.debug('total_num_proc_stations: %s', total_num_proc_stations)
+        logger.debug('total_num_proc_stations: %s', total_num_proc_stations)
 
         # order time equally distributed between all station within given ProductionArea
         # source distributes loads in round robin principle
@@ -361,7 +443,7 @@ class ConstantSequenceSinglePA(SequenceSinglePA):
         order_time_source = target_obj.order_time
         overall_time = order_time_source * total_num_proc_stations
 
-        loggers.loads.debug('station_order_time: %s', overall_time)
+        logger.debug('station_order_time: %s', overall_time)
 
         # generate endless sequence
         while True:
@@ -454,12 +536,12 @@ class VariableSequenceSinglePA(SequenceSinglePA):
         upper_percentage = 1.0 + delta_percentage
         # request StationGroupIDs by ProdAreaID in StationGroup database
         stat_groups = self.prod_area.subsystems_as_tuple()
-        loggers.loads.debug('stat_groups: %s', stat_groups)
+        logger.debug('stat_groups: %s', stat_groups)
 
         # number of all processing stations in associated production area
         total_num_proc_stations = self._prod_area.num_assoc_proc_station
 
-        loggers.loads.debug('total_num_proc_stations: %s', total_num_proc_stations)
+        logger.debug('total_num_proc_stations: %s', total_num_proc_stations)
 
         # order time equally distributed between all station within given ProductionArea
         # source distributes loads in round robin principle
@@ -468,7 +550,7 @@ class VariableSequenceSinglePA(SequenceSinglePA):
         order_time_source = target_obj.order_time
         overall_time_ideal = order_time_source * total_num_proc_stations
 
-        loggers.loads.debug('station_order_time: %s', overall_time_ideal)
+        logger.debug('station_order_time: %s', overall_time_ideal)
 
         # generate endless sequence
         while True:
@@ -591,8 +673,8 @@ class WIPSequenceSinglePA(SequenceSinglePA):
 
         # request StationGroupIDs by ProdAreaID in StationGroup database
         stat_groups = self.prod_area.subsystems_as_tuple()
-        loggers.loads.debug('stat_groups: %s', stat_groups)
-        loggers.loads.debug('total_num_proc_stations: %s', total_num_proc_stations)
+        logger.debug('stat_groups: %s', stat_groups)
+        logger.debug('total_num_proc_stations: %s', total_num_proc_stations)
 
         # duration for WIP build-up/tear-down phase
         # implicit in equation: 1 day

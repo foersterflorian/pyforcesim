@@ -69,7 +69,7 @@ from pyforcesim.errors import (
 )
 from pyforcesim.rl.agents import Agent, AllocationAgent, SequencingAgent
 from pyforcesim.simulation import databases as db
-from pyforcesim.simulation import monitors
+from pyforcesim.simulation import loads, monitors
 from pyforcesim.simulation.base_components import (
     SimulationComponent,
     StorageComponent,
@@ -2925,6 +2925,39 @@ class ContainerSystem(Generic[T], System):
 
         return WIP_ideal
 
+    def lead_time_planned(
+        self,
+        WIP_relative: float,
+        order_time_stats_info: StatDistributionInfo,
+        alpha: float = 10,
+    ) -> Timedelta:
+        num_stations = len(self.assoc_proc_stations)
+        mean = order_time_stats_info.mean
+        std = order_time_stats_info.std
+        var_K = std / mean
+        # WIP ideal
+        WIP_ideal = self.WIP_ideal(order_time_stats_info)
+        prod_capacities = self.processing_capacities(total=True)
+        # relative key indicators --> relative capacity with given relative WIP level
+        # indicates which average utilisation is to be expected
+        # approach uses logistics operation curves
+        calced_param_t = loads.calc_t_on_WIP_relative(WIP_relative, alpha)
+        calced_utilisation = loads.calc_capacity_relative(calced_param_t)
+        # planned lead time based on target WIP level (percentage of ideal WIP)
+        factors_relative = WIP_relative / calced_utilisation
+        factors_ideal = WIP_ideal / prod_capacities
+        order_time_deviation = mean * var_K**2
+        order_time_factor = pyf_dt.timedelta_from_val(
+            order_time_deviation, TimeUnitsTimedelta.HOURS
+        )
+        factors_deviations = (order_time_factor * num_stations) / prod_capacities
+        # planned lead time
+        lead_time_hours = factors_relative * factors_ideal - factors_deviations
+        lead_time = pyf_dt.timedelta_from_val(lead_time_hours, TimeUnitsTimedelta.HOURS)
+        lead_time = pyf_dt.round_td_by_seconds(lead_time, round_to_next_seconds=60)
+
+        return lead_time
+
     @override
     def initialise(self) -> None:
         self._init_proc_station_properties()
@@ -4537,9 +4570,8 @@ class Source(InfrastructureObject):
 
             yield self.sim_control.hold(proc_time_sim, priority=self.sim_put_prio)
 
-        # [STATE:Source] WAITING
         infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
-        # stop controller object
+
         if self.generation_controller is not None:
             self.generation_controller.stop_execution()
 

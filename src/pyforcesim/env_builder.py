@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import threading
 from typing import TYPE_CHECKING, cast
 
@@ -9,10 +11,16 @@ from pyforcesim.loggers import env_builder as logger
 from pyforcesim.rl import agents
 from pyforcesim.simulation import conditions, loads
 from pyforcesim.simulation import environment as sim
-from pyforcesim.types import AgentType, CustomID, EnvAgentConstructorReturn
 
 if TYPE_CHECKING:
     from pyforcesim.simulation.environment import Job
+    from pyforcesim.types import (
+        AgentType,
+        CustomID,
+        EnvAgentConstructorReturn,
+        StatDistributionInfo,
+        Timedelta,
+    )
 
 
 def standard_env_single_area(
@@ -200,7 +208,15 @@ def standard_env_single_area(
 
     stop_prod_event = threading.Event()
     WIP_limit = pyf_dt.timedelta_from_val(40, TimeUnitsTimedelta.HOURS)
-    controller_interval = pyf_dt.timedelta_from_val(30, TimeUnitsTimedelta.MINUTES)
+    controller_interval = pyf_dt.timedelta_from_val(20, TimeUnitsTimedelta.MINUTES)
+    stats_info: StatDistributionInfo | None = None
+    if isinstance(sequence_generator, loads.WIPSequenceSinglePA):
+        stats_info = sequence_generator.stat_info
+
+    WIP_limit: Timedelta | None = None
+    if stats_info is None:
+        WIP_limit = pyf_dt.timedelta_from_val(40, TimeUnitsTimedelta.HOURS)
+
     WIP_observer = conditions.WIPSourceController(
         env,
         'WIP-Observer',
@@ -209,6 +225,7 @@ def standard_env_single_area(
         prod_area=area_prod,
         target_sources=(source,),
         WIP_limit=WIP_limit,
+        stat_info=stats_info,
     )
     env.register_observer(WIP_observer)  # TODO: currently pointless
 
