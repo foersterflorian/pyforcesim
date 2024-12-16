@@ -14,7 +14,6 @@ from numpy.random._generator import Generator as NPRandomGenerator
 from pyforcesim import datetime as pyf_dt
 from pyforcesim.constants import SimStatesCommon, SimSystemTypes, TimeUnitsTimedelta
 from pyforcesim.loggers import loads as logger
-from pyforcesim.simulation.environment import SimulationEnvironment
 from pyforcesim.types import (
     JobGenerationInfo,
     OrderDates,
@@ -603,11 +602,15 @@ class WIPSequenceSinglePA(SequenceSinglePA):
         *,
         uniform_lb: float,
         uniform_ub: float,
+        WIP_relative_planned: float,
+        WIP_alpha: float = 10,
     ) -> None:
         super().__init__(env=env, prod_area_id=prod_area_id, seed=seed)
         self.uniform_lb = uniform_lb
         self.uniform_ub = uniform_ub
         self.stat_info = self.stat_info_uniform(uniform_lb, uniform_ub)
+        self.WIP_relative_planned = WIP_relative_planned
+        self.WIP_alpha = WIP_alpha
 
     @staticmethod
     def stat_info_uniform(
@@ -682,6 +685,13 @@ class WIPSequenceSinglePA(SequenceSinglePA):
         duration_non_ideal_sequence = pyf_dt.timedelta_from_val(104, TimeUnitsTimedelta.WEEKS)
         td_zero = Timedelta()
 
+        # ** planned lead time: identical for each job
+        lead_time_planned = self.prod_area.lead_time_planned(
+            WIP_relative=self.WIP_relative_planned,
+            order_time_stats_info=self.stat_info,
+            alpha=self.WIP_alpha,
+        )
+
         # generate endless sequence
         while True:
             # iterate over all StationGroups
@@ -699,8 +709,9 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                     overall_time = pyf_dt.round_td_by_seconds(
                         td=overall_time, round_to_next_seconds=60
                     )
-                    # generate random distribution of setup and processing time
+                    # generate constant/random distribution of setup and processing time
                     # setup_time_percentage = self.rnd_gen.uniform(low=0.1, high=0.8)
+                    # constant setup time percentage
                     setup_time_percentage = 0.2
                     setup_time = setup_time_percentage * overall_time
                     setup_time = pyf_dt.round_td_by_seconds(
@@ -718,10 +729,17 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                     # (2) WIP < WIP_ideal: actual lead time should also be equal to ideal
                     # (3) WIP > WIP_ideal: actual lead time should be greater than
                     # theoretical planned value
-                    due_date_factor: float = 1.0
-                    order_dates = self._get_order_times(
-                        time_operational=overall_time,
-                        due_date_factor=due_date_factor,
+                    # due_date_factor: float = 1.0
+                    # order_dates = self._get_order_times(
+                    #     time_operational=overall_time,
+                    #     due_date_factor=due_date_factor,
+                    # )
+                    # calc based on planned values: set relative WIP target to 1.5
+                    curr_time = self.env.t_as_dt()
+                    due_date_planned = curr_time + lead_time_planned
+                    order_dates = OrderDates(
+                        starting_planned=[curr_time],
+                        ending_planned=[due_date_planned],
                     )
 
                     stat_group_id = stat_group.system_id
@@ -750,5 +768,7 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                         duration_non_ideal_sequence -= interval_td
                     elif overload_condition and duration_non_ideal_sequence <= td_zero:
                         exp_val_interval = exp_val_interval_ideal
+
+                    logger.debug('Generated new job at %s', curr_time)
 
                     yield job_gen_info, interval_td

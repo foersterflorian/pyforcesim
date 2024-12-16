@@ -13,7 +13,7 @@ from pyforcesim import loggers
 from pyforcesim.errors import ViolationStartingConditionError
 from pyforcesim.simulation.base_components import SimulationComponent
 from pyforcesim.simulation.environment import ProductionArea, SimulationEnvironment
-from pyforcesim.types import AgentType, StatDistributionInfo
+from pyforcesim.types import AgentType
 
 if TYPE_CHECKING:
     from pyforcesim.simulation.environment import (
@@ -263,8 +263,7 @@ class WIPSourceController(Observer):
         *,
         prod_area: ProductionArea,
         target_sources: Iterable[Source],
-        WIP_limit: Timedelta | None = None,
-        stat_info: StatDistributionInfo | None = None,
+        WIP_limit: Timedelta,
     ) -> None:
         super().__init__(
             env=env,
@@ -277,7 +276,6 @@ class WIPSourceController(Observer):
         self.prod_area = prod_area
         self.target_sources = target_sources
         self.WIP_limit = WIP_limit
-        self.stat_info = stat_info
         self.sim_interval_time_units: float | None = None
 
         self._register_sources()
@@ -288,23 +286,27 @@ class WIPSourceController(Observer):
 
     @override
     def pre_process(self) -> None:
-        if not any((self.WIP_limit, self.stat_info)):
-            raise ValueError('Either WIP_Plan or source distribution info must be provided.')
-        elif self.WIP_limit is None:
-            assert self.stat_info is not None
-            self.WIP_limit = self.prod_area.WIP_ideal(self.stat_info)
-
+        if not self.sim_interval > Timedelta():
+            raise ValueError(
+                '[CONDITION] WIP-Controller: Simulation interval must be greater than 0.'
+            )
+        if not self.WIP_limit > Timedelta():
+            raise ValueError('[CONDITION] WIP-Controller: WIP limit must be greater than 0.')
         self.sim_interval_time_units = self.env.td_to_simtime(self.sim_interval)
 
     @override
     def sim_logic(self) -> Generator[None, None, None]:
-        assert self.WIP_limit is not None, 'Target WIP level must not be >>None<<'
         assert (
             self.sim_interval_time_units is not None
         ), 'Interval in simulation time units must not be >>None<<'
 
+        loggers.conditions.info('[CONDITION] WIP-Controller: WIP_limit = %s', self.WIP_limit)
+
         while not self.stop_execution_event.is_set():
             _, WIP_current, _ = self.prod_area.get_content_WIP()
+            loggers.conditions.debug(
+                '[CONDITION] WIP-Controller: WIP = %s at %s', WIP_current, self.env.t_as_dt()
+            )
             if WIP_current >= self.WIP_limit and not self.stop_production.is_set():
                 loggers.conditions.debug(
                     '[CONDITION] Stop production at %s', self.env.t_as_dt()
@@ -316,7 +318,7 @@ class WIPSourceController(Observer):
                 )
                 self.stop_production.clear()
 
-            yield self.sim_control.hold(self.sim_interval_time_units)
+            yield self.sim_control.hold(self.sim_interval_time_units, priority=-98)
 
     @override
     def post_process(self) -> None:

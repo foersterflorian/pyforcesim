@@ -11,12 +11,12 @@ from pyforcesim.loggers import env_builder as logger
 from pyforcesim.rl import agents
 from pyforcesim.simulation import conditions, loads
 from pyforcesim.simulation import environment as sim
+from pyforcesim.types import CustomID
 
 if TYPE_CHECKING:
     from pyforcesim.simulation.environment import Job
     from pyforcesim.types import (
         AgentType,
-        CustomID,
         EnvAgentConstructorReturn,
         StatDistributionInfo,
         Timedelta,
@@ -33,7 +33,10 @@ def standard_env_single_area(
     variable_source_sequence: bool = False,
     debug: bool = False,
     seed_layout: int | None = None,
-    factor_WIP: float = 0,
+    factor_WIP: float = 3,  # default: overload condition
+    WIP_relative_target: float = 1.5,
+    WIP_relative_planned: float = 1.5,  # util about 93 %
+    alpha: float = 10,
 ) -> EnvAgentConstructorReturn:
     layout_rng = np.random.default_rng(seed=seed_layout)
 
@@ -151,12 +154,16 @@ def standard_env_single_area(
         #     target_obj=source,
         #     delta_percentage=0.35,
         # )
+        # ** using WIP base target to calculate lead time based on
+        # ** a fixed planned WIP level
         sequence_generator = loads.WIPSequenceSinglePA(
             env=env,
             seed=None,  # use env's default seed
             prod_area_id=area_prod.system_id,
             uniform_lb=2,
             uniform_ub=4,
+            WIP_relative_planned=WIP_relative_planned,
+            WIP_alpha=alpha,
         )
         prod_sequence_PA = sequence_generator.retrieve(
             target_obj=source,
@@ -213,9 +220,14 @@ def standard_env_single_area(
     if isinstance(sequence_generator, loads.WIPSequenceSinglePA):
         stats_info = sequence_generator.stat_info
 
-    WIP_limit: Timedelta | None = None
+    WIP_limit: Timedelta
     if stats_info is None:
         WIP_limit = pyf_dt.timedelta_from_val(40, TimeUnitsTimedelta.HOURS)
+    else:
+        area_prod.initialise()
+        WIP_ideal = area_prod.WIP_ideal(stats_info)
+        WIP_limit = WIP_relative_target * WIP_ideal
+        WIP_limit = pyf_dt.round_td_by_seconds(WIP_limit, 60)
 
     WIP_observer = conditions.WIPSourceController(
         env,
@@ -225,7 +237,6 @@ def standard_env_single_area(
         prod_area=area_prod,
         target_sources=(source,),
         WIP_limit=WIP_limit,
-        stat_info=stats_info,
     )
     env.register_observer(WIP_observer)  # TODO: currently pointless
 

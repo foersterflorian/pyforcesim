@@ -66,6 +66,7 @@ from pyforcesim.errors import (
     SequencingAgentAssignmentError,
     SQLNotFoundError,
     SQLTooManyValuesFoundError,
+    SystemNotInitialisedError,
 )
 from pyforcesim.rl.agents import Agent, AllocationAgent, SequencingAgent
 from pyforcesim.simulation import databases as db
@@ -180,6 +181,8 @@ class SimulationEnvironment(salabim.Environment):
             yieldless=False,
             **kwargs,
         )
+        self._initialised: bool = False
+        self._finalised: bool = False
 
         # [RESOURCE] infrastructure manager
         self._infstruct_mgr = InfrastructureManager(env=self)
@@ -215,6 +218,14 @@ class SimulationEnvironment(salabim.Environment):
         self.observers: set[conditions.Observer] = set()
 
         loggers.pyf_env.info('New Environment >>%s<< created.', self.name())
+
+    @property
+    def initialised(self) -> bool:
+        return self._initialised
+
+    @property
+    def finalised(self) -> bool:
+        return self._finalised
 
     def get_system_id(self) -> SystemID:
         system_id = self._system_id_counter
@@ -303,21 +314,27 @@ class SimulationEnvironment(salabim.Environment):
         )
 
     def initialise(self) -> None:
-        # infrastructure manager instance
-        self.infstruct_mgr.initialise()
-        # dispatcher instance
-        self.dispatcher.initialise()
-        # establish websocket connection
-        if self.debug_dashboard and not self.servers_connected:
-            loggers.pyf_env.info('Starting websocket server...')
-            self.ws_server_process.start()
-            loggers.pyf_env.info('Starting dashboard server...')
-            self.dashboard_server_process.start()
-            loggers.pyf_env.info('Establish websocket connection...')
-            self.ws_con = create_connection(WS_URL)
-            self.servers_connected = True
+        if not self.initialised:
+            # infrastructure manager instance
+            self.infstruct_mgr.initialise()
+            # dispatcher instance
+            self.dispatcher.initialise()
+            # establish websocket connection
+            if self.debug_dashboard and not self.servers_connected:
+                loggers.pyf_env.info('Starting websocket server...')
+                self.ws_server_process.start()
+                loggers.pyf_env.info('Starting dashboard server...')
+                self.dashboard_server_process.start()
+                loggers.pyf_env.info('Establish websocket connection...')
+                self.ws_con = create_connection(WS_URL)
+                self.servers_connected = True
 
-        loggers.pyf_env.info('Initialisation for Environment >>%s<< successful.', self.name())
+            self._initialised = True
+            loggers.pyf_env.info(
+                'Initialisation for Environment >>%s<< successful.', self.name()
+            )
+        else:
+            raise RuntimeError('Tried to initialise already initialised environment')
 
     def finalise(self) -> None:
         """
@@ -325,31 +342,38 @@ class SimulationEnvironment(salabim.Environment):
         Can be used for finalising data collection, other related tasks or
         further processing pipelines
         """
-        # infrastructure manager instance
-        self._infstruct_mgr.finalise()
-        # dispatcher instance
-        self._dispatcher.finalise()
-        # close WS connection
-        if self.debug_dashboard and self.servers_connected:
-            # close websocket connection
-            loggers.pyf_env.info('Closing websocket connection...')
-            self.ws_con.close()
-            # stop websocket server
-            loggers.pyf_env.info('Shutting down websocket server...')
-            self.ws_server_process.terminate()
-            # stop dashboard server
-            loggers.pyf_env.info('Shutting down dasboard server...')
-            self.dashboard_server_process.terminate()
-            # reset internal flag indicating that servers are started
-            self.servers_connected = False
+        if not self.finalised:
+            # infrastructure manager instance
+            self._infstruct_mgr.finalise()
+            # dispatcher instance
+            self._dispatcher.finalise()
+            # close WS connection
+            if self.debug_dashboard and self.servers_connected:
+                # close websocket connection
+                loggers.pyf_env.info('Closing websocket connection...')
+                self.ws_con.close()
+                # stop websocket server
+                loggers.pyf_env.info('Shutting down websocket server...')
+                self.ws_server_process.terminate()
+                # stop dashboard server
+                loggers.pyf_env.info('Shutting down dasboard server...')
+                self.dashboard_server_process.terminate()
+                # reset internal flag indicating that servers are started
+                self.servers_connected = False
+
+            self._finalised = True
+        else:
+            raise RuntimeError('Tried to finalise already finalised environment')
 
     def start_open_run(self) -> None:
         """Starts a run without termination criteria.
         Initialisation und finalisation are done before.
         """
         self.initialise()
+        assert self.initialised, 'Env not initialised'
         self.run()
         self.finalise()
+        assert self.finalised, 'Env not finalised'
 
     def dashboard_update(self) -> None:
         # infrastructure manager instance
@@ -1654,17 +1678,6 @@ class Dispatcher:
     ) -> tuple[bool, SequencingAgent | None]:
         is_agent: bool = False
         agent: SequencingAgent | None = None
-        # TODO: check removal
-        # if self.seq_rule == 'AGENT':
-        #     # check agent availability
-        #     is_agent = req_obj.check_seq_agent()
-        #     if is_agent:
-        #         logical_queue = req_obj.logical_queue
-        #         agent = logical_queue.seq_agent
-        #         agent.action_feasible = False
-        #     else:
-        #         raise ValueError('Allocation rule set to agent, but no agent instance found.')
-
         # check agent availability
         logical_queue = req_obj.logical_queue
         is_agent = logical_queue.check_seq_agent()
@@ -2203,6 +2216,8 @@ class System(metaclass=ABCMeta):
         self.supersystems_custom_ids: set[CustomID] = set()
         # number of lower levels, how many levels of subsystems are possible
         self._abstraction_level = abstraction_level
+        self._initialised: bool = False
+        self._finalised: bool = False
 
         infstruct_mgr = self.env.infstruct_mgr
         self._system_id, self._name = infstruct_mgr.register_system(
@@ -2257,6 +2272,14 @@ class System(metaclass=ABCMeta):
         val: int,
     ) -> None:
         self._sim_put_prio = val
+
+    @property
+    def initialised(self) -> bool:
+        return self._initialised
+
+    @property
+    def finalised(self) -> bool:
+        return self._finalised
 
     @property
     def alloc_agent(self) -> AllocationAgent:
@@ -2913,6 +2936,10 @@ class ContainerSystem(Generic[T], System):
         self,
         order_time_stats_info: StatDistributionInfo,
     ) -> Timedelta:
+        if not self.initialised:
+            raise SystemNotInitialisedError(
+                f'System {self} must be initialised, before WIP ideal can be calculated.'
+            )
         stations = self.assoc_proc_stations
         mean = order_time_stats_info.mean
         std = order_time_stats_info.std
@@ -2931,7 +2958,14 @@ class ContainerSystem(Generic[T], System):
         order_time_stats_info: StatDistributionInfo,
         alpha: float = 10,
     ) -> Timedelta:
-        num_stations = len(self.assoc_proc_stations)
+        if not self.initialised:
+            raise SystemNotInitialisedError(
+                (
+                    f'System {self} must be initialised, before '
+                    f'the planned lead time can be calculated.'
+                )
+            )
+        num_stations = self.num_assoc_proc_station
         mean = order_time_stats_info.mean
         std = order_time_stats_info.std
         var_K = std / mean
@@ -2962,6 +2996,7 @@ class ContainerSystem(Generic[T], System):
     def initialise(self) -> None:
         self._init_proc_station_properties()
         self._workload_distribution_ideal()
+        self._initialised = True
 
     @override
     def finalise(self) -> None:

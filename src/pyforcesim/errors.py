@@ -1,6 +1,11 @@
 """This module contains custom exceptions that are raised within the pyforcesim package."""
 
 
+class SystemNotInitialisedError(Exception):
+    """error which is raised if a system is not initialised, but the
+    initial state is required"""
+
+
 class AssociationError(Exception):
     """error that describes cases in which systems are not associated with each other"""
 
@@ -8,11 +13,6 @@ class AssociationError(Exception):
 class SequencingAgentAssignmentError(Exception):
     """error that describes cases in which a sequencing agent is assigned to a
     non-supported system type"""
-
-
-# TODO check deletion
-# class NoAllocationAgentAssignedError(Exception):
-#     """error that describes that a system has no assigned allocation agent"""
 
 
 class ViolationStartingConditionError(Exception):
