@@ -5,7 +5,7 @@
 groups = ["default", "db", "linting", "notebooks", "rl", "tests"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:2e3c9627bf64b727ab6178781acf4b213ef070710c82cd436c54e6bb27a97886"
+content_hash = "sha256:54f62133cb18d58677d6cc8efce9376ebd8260692fd9cc012227834fe8140fa4"
 
 [[metadata.targets]]
 requires_python = ">=3.11"
@@ -2627,12 +2627,13 @@ files = [
 
 [[package]]
 name = "salabim"
-version = "24.0.2"
-requires_python = ">=3.6"
-summary = "discrete event simulation in Python"
+version = "24.0.17"
+requires_python = ">=3.7"
+summary = "salabim - discrete event simulation in Python"
 groups = ["default"]
 files = [
-    {file = "salabim-24.0.2.tar.gz", hash = "sha256:68c8a5666ff8fa0b3d326ec8198a61252b1b73dde078c7155e72387c8920b300"},
+    {file = "salabim-24.0.17-py3-none-any.whl", hash = "sha256:459aa5bbedaaa07e9de1445d38f69c0c94e16ee5117583bce5e5b1451a0b6a03"},
+    {file = "salabim-24.0.17.tar.gz", hash = "sha256:8370f5edcbc2d8a422edf00579a211f140ed915d362c981d668c8e3acf0b529b"},
 ]
 
 [[package]]
