@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
@@ -34,9 +35,9 @@ def standard_env_single_area(
     debug: bool = False,
     seed_layout: int | None = None,
     factor_WIP: float = 3,  # default: overload condition
-    WIP_relative_target: float = 1.5,
-    WIP_relative_planned: float = 1.5,  # util about 93 %
-    alpha: float = 10,
+    WIP_relative_target: Sequence[float] = (1.5,),
+    WIP_relative_planned: float = 1.5,  # util about 95 % with alpha = 7
+    alpha: float = 7,
 ) -> EnvAgentConstructorReturn:
     layout_rng = np.random.default_rng(seed=seed_layout)
 
@@ -181,14 +182,16 @@ def standard_env_single_area(
     source.register_job_sequence(prod_sequence_PA)
 
     # conditions
+    # ** simulation duration and transient condition
     duration_transient = pyf_dt.timedelta_from_val(val=8, time_unit=TimeUnitsTimedelta.HOURS)
     conditions.TransientCondition(env=env, duration_transient=duration_transient)
     if not debug:
-        sim_dur = pyf_dt.timedelta_from_val(val=12, time_unit=TimeUnitsTimedelta.WEEKS)
+        sim_dur = pyf_dt.timedelta_from_val(val=24, time_unit=TimeUnitsTimedelta.WEEKS)
         conditions.JobGenDurationCondition(
             env=env, target_obj=source, sim_run_duration=sim_dur
         )
 
+    # ** agents
     alloc_agent: agents.AllocationAgent | None = None
     seq_agent: agents.SequencingAgent | None = None
     if not sequencing and with_agent and not validate:
@@ -213,21 +216,28 @@ def standard_env_single_area(
 
         conditions.TriggerAgentCondition(env=env, agent=agent)
 
+    # ** WIP control
     stop_prod_event = threading.Event()
-    WIP_limit = pyf_dt.timedelta_from_val(40, TimeUnitsTimedelta.HOURS)
     controller_interval = pyf_dt.timedelta_from_val(20, TimeUnitsTimedelta.MINUTES)
     stats_info: StatDistributionInfo | None = None
     if isinstance(sequence_generator, loads.WIPSequenceSinglePA):
         stats_info = sequence_generator.stat_info
 
     WIP_limit: Timedelta
+    WIP_limits: list[Timedelta] = []
     if stats_info is None:
         WIP_limit = pyf_dt.timedelta_from_val(40, TimeUnitsTimedelta.HOURS)
     else:
         area_prod.initialise()
         WIP_ideal = area_prod.WIP_ideal(stats_info)
-        WIP_limit = WIP_relative_target * WIP_ideal
-        WIP_limit = pyf_dt.round_td_by_seconds(WIP_limit, 60)
+        if len(WIP_relative_target) == 1:
+            WIP_limit = WIP_relative_target[0] * WIP_ideal
+            WIP_limit = pyf_dt.round_td_by_seconds(WIP_limit, 60)
+        else:
+            for WIP_relative in WIP_relative_target:
+                WIP_limit = WIP_relative * WIP_ideal
+                WIP_limit = pyf_dt.round_td_by_seconds(WIP_limit, 60)
+                WIP_limits.append(WIP_limit)
 
     WIP_observer = conditions.WIPSourceController(
         env,
@@ -239,5 +249,16 @@ def standard_env_single_area(
         WIP_limit=WIP_limit,
     )
     env.register_observer(WIP_observer)  # TODO: currently pointless
+
+    if WIP_limits:
+        WIP_setter_interval = pyf_dt.timedelta_from_val(3, TimeUnitsTimedelta.WEEKS)
+        WIP_limit_setter = conditions.WIPLimitSetter(
+            env,
+            'WIP-Limit-Setter',
+            WIP_setter_interval,
+            WIP_source_controller=WIP_observer,
+            WIP_limits=WIP_limits,
+        )
+        env.register_observer(WIP_limit_setter)  # TODO: currently pointless
 
     return env, alloc_agent, seq_agent
