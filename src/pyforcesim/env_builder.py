@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 
 import pyforcesim.datetime as pyf_dt
-from pyforcesim.constants import TimeUnitsTimedelta
+from pyforcesim.constants import MAX_LOGICAL_QUEUE_SIZE, TimeUnitsTimedelta
 from pyforcesim.loggers import env_builder as logger
 from pyforcesim.rl import agents
 from pyforcesim.simulation import conditions, loads
@@ -38,7 +38,57 @@ def standard_env_single_area(
     WIP_relative_target: Sequence[float] = (1.5,),
     WIP_relative_planned: float = 1.5,  # util about 95 % with alpha = 7
     alpha: float = 7,
+    buffer_size: int = MAX_LOGICAL_QUEUE_SIZE,
 ) -> EnvAgentConstructorReturn:
+    """constructor function for simulation environment of a single production area
+
+    Parameters
+    ----------
+    sequencing : bool, optional
+        decision between sequencing and validation, by default False
+    with_agent : bool, optional
+        implement agent or not, by default False
+    validate : bool, optional
+        use validation agent (set of rules) instead of RL-agent, by default False
+    seed : int | None, optional
+        RNG seed, by default None
+    num_station_groups : int, optional
+        number of station groups within environment, by default 2
+    num_machines : int, optional
+        number of stations within environment, by default 3
+    variable_source_sequence : bool, optional
+        use a variable sequence of jobs, by default False
+    debug : bool, optional
+        debug environment with short simulation duration, by default False
+    seed_layout : int | None, optional
+        seed for RNG controlling the random assignment of stations to station groups,
+        by default None
+    factor_WIP : float, optional
+        defines the interval in which jobs arrive, value of 1 equals equilibrium:
+        inflow = outflow, by default 3
+    WIP_relative_target: Sequence[float], optional
+        defines the WIP levels which should be used for WIP control, the system iterates
+        through each entry repeatedly, by default (1.5,)
+    WIP_relative_planned : float, optional
+        planned WIP based on factor of ideal WIP calculated by system properties, defines how
+        planned ending dates are calculated (assumes systematic planning approach),
+        by default 1.5
+    alpha: float, optional
+        defines the curvature of the underlying logistics operation curve, by default 7
+    buffer_size : int, optional
+        buffer size of the shared buffer if sequencing is chosen,
+        by default MAX_LOGICAL_QUEUE_SIZE
+
+    Returns
+    -------
+    EnvAgentConstructorReturn
+        simulation environment with corresponding agents if appropriate
+
+    Raises
+    ------
+    ValueError
+        if agent decision is desired and no agent was provided (should never occur)
+    """
     layout_rng = np.random.default_rng(seed=seed_layout)
 
     starting_dt = pyf_dt.dt_with_tz_UTC(2024, 3, 28, 0)
@@ -108,14 +158,16 @@ def standard_env_single_area(
     if sequencing:
         log_q = cast(
             sim.LogicalQueue['Job'],
-            sim.LogicalQueue(env=env, custom_identifier=CustomID('logQ_seq')),
+            sim.LogicalQueue(
+                env=env, custom_identifier=CustomID('logQ_seq'), size=buffer_size
+            ),
         )
 
     group_buffer = sim.StationGroup(
         env=env, supersystem=area_prod, custom_identifier=CustomID('buffer_group')
     )
     buffer = sim.Buffer(
-        capacity=sim.MAX_LOGICAL_QUEUE_SIZE,
+        capacity=buffer_size,
         env=env,
         supersystem=group_buffer,
         custom_identifier=CustomID('buffer'),
@@ -130,7 +182,7 @@ def standard_env_single_area(
 
         if not sequencing:
             buffer = sim.Buffer(
-                capacity=10_000,
+                capacity=100,
                 env=env,
                 supersystem=target_stat_group,
                 custom_identifier=CustomID(str(10 + machine).zfill(2)),
@@ -186,7 +238,7 @@ def standard_env_single_area(
     duration_transient = pyf_dt.timedelta_from_val(val=8, time_unit=TimeUnitsTimedelta.HOURS)
     conditions.TransientCondition(env=env, duration_transient=duration_transient)
     if not debug:
-        sim_dur = pyf_dt.timedelta_from_val(val=24, time_unit=TimeUnitsTimedelta.WEEKS)
+        sim_dur = pyf_dt.timedelta_from_val(val=26, time_unit=TimeUnitsTimedelta.WEEKS)
         conditions.JobGenDurationCondition(
             env=env, target_obj=source, sim_run_duration=sim_dur
         )
@@ -251,7 +303,7 @@ def standard_env_single_area(
     env.register_observer(WIP_observer)  # TODO: currently pointless
 
     if WIP_limits:
-        WIP_setter_interval = pyf_dt.timedelta_from_val(3, TimeUnitsTimedelta.WEEKS)
+        WIP_setter_interval = pyf_dt.timedelta_from_val(2, TimeUnitsTimedelta.WEEKS)
         WIP_limit_setter = conditions.WIPLimitSetter(
             env,
             'WIP-Limit-Setter',
@@ -260,5 +312,7 @@ def standard_env_single_area(
             WIP_limits=WIP_limits,
         )
         env.register_observer(WIP_limit_setter)  # TODO: currently pointless
+
+    logger.info('[ENV-BUILDER] Successfully created new simulation environment.')
 
     return env, alloc_agent, seq_agent

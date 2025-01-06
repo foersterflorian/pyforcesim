@@ -134,7 +134,20 @@ class EnvBuilderFunc(Protocol):
         variable_source_sequence: bool = ...,
         debug: bool = ...,
         seed_layout: int | None = ...,
+        factor_WIP: float = ...,
+        WIP_relative_target: Sequence[float] = ...,
+        WIP_relative_planned: float = ...,
+        alpha: float = ...,
+        buffer_size: int = ...,
     ) -> EnvAgentConstructorReturn: ...
+
+
+class EnvBuilderWIPConfig(TypedDict):
+    factor_WIP: float
+    WIP_relative_target: Sequence[float]
+    WIP_relative_planned: float
+    alpha: float
+    buffer_size: int
 
 
 class BuilderFuncFamilies(enum.StrEnum):

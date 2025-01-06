@@ -1,7 +1,7 @@
 import re
 from dataclasses import asdict
 from datetime import timedelta as Timedelta
-from typing import Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 import gymnasium as gym
 import numpy as np
@@ -24,10 +24,15 @@ from pyforcesim.simulation import environment as sim
 from pyforcesim.types import (
     AgentDecisionTypes,
     BuilderFuncFamilies,
-    EnvBuilderFunc,
-    EnvGenerationInfo,
-    PlotlyFigure,
 )
+
+if TYPE_CHECKING:
+    from pyforcesim.types import (
+        EnvBuilderFunc,
+        EnvBuilderWIPConfig,
+        EnvGenerationInfo,
+        PlotlyFigure,
+    )
 
 MAX_WIP_TIME: Final[int] = 300
 MAX_NON_FEASIBLE: Final[int] = 20
@@ -36,10 +41,14 @@ NORM_TD: Final[Timedelta] = pyf_dt.timedelta_from_val(1, time_unit=TimeUnitsTime
 BUILDER_FUNCS: Final[dict[BuilderFuncFamilies, EnvBuilderFunc]] = {
     BuilderFuncFamilies.SINGLE_PRODUCTION_AREA: standard_env_single_area,
 }
-
-
-def dummy_action() -> int:
-    return 0
+BUILDER_FUNC_WIP_CFG: Final[EnvBuilderWIPConfig] = {
+    'factor_WIP': 3,
+    #'WIP_relative_target': (0.5, 3, 6),
+    'WIP_relative_target': (3,),
+    'WIP_relative_planned': 1.5,
+    'alpha': 7,
+    'buffer_size': 30,
+}
 
 
 def parse_exp_type(
@@ -124,6 +133,7 @@ class JSSEnv(gym.Env):
 
         self.builder_func = BUILDER_FUNCS[builder_func_family]
         self.builder_kw = asdict(self.exp_type)
+        self.builder_kw.update(BUILDER_FUNC_WIP_CFG)
         self.agent: agents.AllocationAgent | agents.SequencingAgent
         self._build_env(seed=self.seed)
 

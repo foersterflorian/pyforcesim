@@ -45,13 +45,13 @@ LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_SINKS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_PRODSTATIONS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_JOBS: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_BUFFERS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_QUEUES: Final[loglevel] = loglevel.ERROR
-LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.DEBUG
+LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.DEBUG
+LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_POLICIES: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_DB: Final[loglevel] = loglevel.ERROR
 
@@ -96,28 +96,6 @@ SLACK_THRESHOLD_LOWER: Final[Timedelta] = Timedelta()
 DB_HANDLE: Final[str] = 'sqlite:///:memory:'
 DB_ECHO: Final[bool] = False
 DB_ROOT: Final[str] = 'databases'
-# DB_DATA_TYPES: Final[set[str]] = {
-#     'INTEGER',
-#     'REAL',
-#     'BOOLEAN',
-#     'TEXT',
-#     'BLOB',
-#     'DATE',
-#     'DATETIME',
-#     'TIMEDELTA',
-# }
-# # SQLite supports more column constraints than these,
-# # but only these are currently supported by the database module
-# DB_SUPPORTED_COL_CONSTRAINTS: Final[frozenset[str]] = frozenset(
-#     [
-#         'NOT NULL',
-#         'UNIQUE',
-#         'PRIMARY KEY',
-#     ]
-# )
-# DB_INJECTION_PATTERN: Final[str] = (
-#     r'(^[_0-9]+)|[^\w ]|(true|false|select|where|drop|delete|create)'
-# )
 
 
 # ** simulation
