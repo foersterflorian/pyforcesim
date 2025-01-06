@@ -20,11 +20,13 @@ from train import (
 
 from pyforcesim import common, loggers
 from pyforcesim.rl.gym_env import JSSEnv
+from pyforcesim.types import AgentDecisionTypes, BuilderFuncFamilies
 
 if TYPE_CHECKING:
-    from pyforcesim.rl.agents import ValidateSequencingAgent
+    from pyforcesim.rl.agents import ValidateAllocationAgent, ValidateSequencingAgent
 
 
+DEC_TYPE: Final[AgentDecisionTypes] = AgentDecisionTypes.SEQ
 USE_TRAIN_CONFIG: Final[bool] = False
 NORMALISE_OBS: Final[bool] = True
 NUM_EPISODES: Final[int] = 1
@@ -235,7 +237,7 @@ def eval_agent_policy(
     model.set_env(env)
 
     loggers.base.info('[MODEL EVAL] Start evaluation...')
-    episodes_cum_rewards, episode_lengths = evaluate_policy(
+    episodes_cum_rewards, _episode_lengths = evaluate_policy(
         model=model,
         env=env,
         n_eval_episodes=num_episodes,
@@ -257,22 +259,25 @@ def eval_agent_benchmark(
 ) -> None:
     env = JSSEnv(
         VAL_EXP_TYPE,
+        agent_type=DEC_TYPE,
         seed=ROOT_RNG_SEED,
         sim_randomise_reset=False,
         gantt_chart_on_termination=True,
+        sim_check_agent_feasibility=True,
+        builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
     )
     loggers.base.info('[MODEL EVAL - ValAgent] Start evaluation with validation agent...')
     episodes_cum_rewards: list[float] = []
-    obs, _ = env.reset(seed=ROOT_RNG_SEED)
+    _obs, _ = env.reset(seed=ROOT_RNG_SEED)
 
     for episode_num in range(num_episodes):
         if episode_num != 0:
-            obs, _ = env.reset()
+            _obs, _ = env.reset()
         episode_rewards: list[float] = []
         episode_actions: list[int] = []
         terminated: bool = False
         truncated: bool = False
-        val_agent = cast('ValidateAllocationAgent', env.agent)
+        val_agent = cast('ValidateAllocationAgent | ValidateSequencingAgent', env.agent)
 
         while not (terminated or truncated):
             action = val_agent.simulate_decision_making()
@@ -308,7 +313,14 @@ def eval_agent_benchmark(
 
 
 def benchmark() -> None:
-    env = JSSEnv(ROOT_EXP_TYPE, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
+    env = JSSEnv(
+        ROOT_EXP_TYPE,
+        agent_type=DEC_TYPE,
+        seed=ROOT_RNG_SEED,
+        sim_randomise_reset=False,
+        sim_check_agent_feasibility=True,
+        builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
+    )
 
     sim_env = env.run_without_agent()
     cycle_time = sim_env.dispatcher.cycle_time
