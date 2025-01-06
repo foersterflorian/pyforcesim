@@ -1544,6 +1544,17 @@ class Dispatcher:
             self.update_operation_db(
                 op=op, property='ending_date_deviation', val=op.ending_date_deviation
             )
+            loggers.operations.debug(
+                'Ending dates: planned %s, actual %s',
+                op.time_planned_ending,
+                op.time_actual_ending,
+            )
+            loggers.operations.debug(
+                'Update databases for OP %s ID %s with ending date deviation %s',
+                op,
+                op.op_id,
+                op.ending_date_deviation,
+            )
 
         # update databases
         loggers.dispatcher.debug(
@@ -1695,15 +1706,6 @@ class Dispatcher:
         next_op = self.get_next_operation(job=job)
         is_agent: bool = False
         agent: AllocationAgent | None = None
-        # TODO: check removal
-        # if self.alloc_rule == 'AGENT' and next_op is not None:
-        #     # check agent availability
-        #     is_agent = next_op.target_exec_system.check_alloc_agent()
-        #     if is_agent:
-        #         agent = next_op.target_exec_system.alloc_agent
-        #         agent.action_feasible = False
-        #     else:
-        #         raise ValueError('Allocation rule set to agent, but no agent instance found.')
 
         if next_op is not None:
             # check agent availability
@@ -2986,9 +2988,9 @@ class ContainerSystem(Generic[T], System):
         )
         factors_deviations = (order_time_factor * num_stations) / prod_capacities
         # planned lead time
-        lead_time_hours = factors_relative * factors_ideal - factors_deviations
-        lead_time = pyf_dt.timedelta_from_val(lead_time_hours, TimeUnitsTimedelta.HOURS)
-        lead_time = pyf_dt.round_td_by_seconds(lead_time, round_to_next_seconds=60)
+        lead_time_days = factors_relative * factors_ideal - factors_deviations
+        lead_time_hours = MAX_PROCESSING_CAPACITY * lead_time_days
+        lead_time = pyf_dt.round_td_by_seconds(lead_time_hours, round_to_next_seconds=60)
 
         return lead_time
 

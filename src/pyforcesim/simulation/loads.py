@@ -691,6 +691,7 @@ class WIPSequenceSinglePA(SequenceSinglePA):
             order_time_stats_info=self.stat_info,
             alpha=self.WIP_alpha,
         )
+        logger.info('Calculated planned lead time: %s', lead_time_planned)
 
         # generate endless sequence
         while True:
