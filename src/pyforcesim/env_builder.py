@@ -97,7 +97,6 @@ def standard_env_single_area(
         time_unit='seconds',
         starting_datetime=starting_dt,
         seed=seed,
-        debug_dashboard=False,
     )
     env.dispatcher.seq_rule = 'FIFO'
     # env.dispatcher.alloc_rule = 'LOAD_TIME'
