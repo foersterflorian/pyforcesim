@@ -24,10 +24,10 @@ RNG_SEED: Final[int] = 42
 DATE = common.get_timestamp(with_time=False)
 DEC_TYPE: Final[AgentDecisionTypes] = AgentDecisionTypes.SEQ
 EXP_NUM: Final[str] = '1'
-ENV_STRUCTURE: Final[str] = '1-3-7'
-JOB_GEN_METHOD: Final[str] = 'ConstIdeal'
+ENV_STRUCTURE: Final[str] = '1-2-3'
+JOB_GEN_METHOD: Final[str] = 'VarIdeal'
 EXP_TYPE: Final[str] = f'{ENV_STRUCTURE}_{JOB_GEN_METHOD}'
-FEEDBACK_MACHANISM: Final[str] = 'Util'
+FEEDBACK_MACHANISM: Final[str] = 'Slack'
 EXPERIMENT_FOLDER: Final[str] = (
     f'{DATE}-{EXP_NUM.zfill(2)}__{ENV_STRUCTURE}__{JOB_GEN_METHOD}__{FEEDBACK_MACHANISM}'
 )

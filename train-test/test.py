@@ -19,6 +19,8 @@ from train import (
 )
 
 from pyforcesim import common, loggers
+from pyforcesim import datetime as pyf_dt
+from pyforcesim.constants import TimeUnitsTimedelta
 from pyforcesim.rl.gym_env import JSSEnv
 from pyforcesim.types import AgentDecisionTypes, BuilderFuncFamilies
 
@@ -30,7 +32,7 @@ DEC_TYPE: Final[AgentDecisionTypes] = AgentDecisionTypes.SEQ
 USE_TRAIN_CONFIG: Final[bool] = False
 NORMALISE_OBS: Final[bool] = True
 NUM_EPISODES: Final[int] = 1
-FILENAME_TARGET_MODEL: Final[str] = '2024-09-05--19-47-42_pyf_sim_PPO_mask_TS-999999'
+FILENAME_TARGET_MODEL: Final[str] = '2025-01-07--10-32-05_pyf_sim_PPO_mask_TS-40961'
 
 model_properties_pattern = re.compile(r'(?:pyf_sim_)([\w]+)_(TS-[\d]+)$')
 matches = model_properties_pattern.search(FILENAME_TARGET_MODEL)
@@ -42,7 +44,7 @@ ALGO_TYPE: Final[str] = matches.group(1)
 TIMESTEPS: Final[str] = matches.group(2)
 
 # USER_TARGET_FOLDER: Final[str] = '2024-06-24-01__1-3-7__ConstIdeal__Util'
-USER_TARGET_FOLDER: Final[str] = '2024-09-05-01__1-3-7__VarIdeal__Util'
+USER_TARGET_FOLDER: Final[str] = '2025-01-07-01__1-2-3__VarIdeal__Slack'
 USER_FOLDER: Final[str] = f'results/{USER_TARGET_FOLDER}'
 user_exp_type_pattern = re.compile(
     r'^([\d\-]*)(?:[_]*)([\d\-]*)(?:[_]*)([a-zA-Z]*)(?:[_]*)([a-zA-Z]*)$'
@@ -104,6 +106,7 @@ def export_gantt_chart(
     auto_open_html: bool = False,
 ) -> None:
     gantt_chart = env.last_gantt_chart
+    # ** KPIs
     if gantt_chart is None:
         raise ValueError('Gantt chart is >>None<<')
 
@@ -115,26 +118,45 @@ def export_gantt_chart(
     if mean_utilisation is None:
         raise ValueError('Mean utilisation is >>None<<')
 
+    end_dev_mean = env.end_date_dev_mean
+    end_dev_std = env.end_date_dev_std
+    if end_dev_mean is None or end_dev_std is None:
+        raise ValueError(
+            'One statistical metric for the ending date deviation not available.'
+        )
+    norm_td = pyf_dt.timedelta_from_val(1, TimeUnitsTimedelta.HOURS)
+    end_dev_mean_hours = end_dev_mean / norm_td
+    end_dev_std_hours = end_dev_std / norm_td
+
+    jobs_total = env.jobs_total
+    jobs_tardy = env.jobs_tardy
+    jobs_early = env.jobs_early
+    jobs_punctual = env.jobs_punctual
+
+    title_KPIs = (
+        f'mean util: {mean_utilisation:.6%}<br>ending date deviation: '
+        f'mean: {end_dev_mean_hours:.6f}, std: {end_dev_std_hours:.6f}<br>'
+        f'jobs: total={jobs_total}, punctual={jobs_punctual}, '
+        f'early={jobs_early}, tardy={jobs_tardy}, '
+    )
+    title_reward = f'<br>Episode: {episode_num}, Cum Reward: {cum_reward:.4f}'
+
     if is_benchmark:
         title = (
             f'Gantt Chart<br>Benchmark '
             f'<br>ExpType: {VAL_EXP_TYPE}, cycle time: {cycle_time}, '
-            f'mean util: {mean_utilisation:.6%}'
         )
-        title_reward = f'<br>Episode: {episode_num}, Cum Reward: {cum_reward:.4f}'
-        title_chart = title + title_reward
+        title_chart = title + title_KPIs + title_reward
         filename = f'Benchmark_Episode_{episode_num}'
     else:
         title = (
             f'Gantt Chart<br>Model(Algo: {ALGO_TYPE}, Timesteps: '
             f'{TIMESTEPS})<br>ExpType: {ROOT_EXP_TYPE}, cycle time: {cycle_time}, '
-            f'mean util: {mean_utilisation:.6%}'
         )
-        title_reward = f'<br>Episode: {episode_num}, Cum Reward: {cum_reward:.4f}'
-        title_chart = title + title_reward
+        title_chart = title + title_KPIs + title_reward
         filename = f'{ALGO_TYPE}_{TIMESTEPS}_Episode_{episode_num}'
 
-    gantt_chart.update_layout(title=title_chart, margin=dict(t=150))
+    gantt_chart.update_layout(title=title_chart, margin=dict(t=230))
     save_pth = common.prepare_save_paths(
         base_folder=ROOT_FOLDER,
         target_folder=None,
