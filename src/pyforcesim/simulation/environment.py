@@ -146,9 +146,6 @@ class SimulationEnvironment(salabim.Environment):
             time unit internally used to represent intervals, by default 'seconds'
         starting_datetime : Datetime | None, optional
             starting date and time (t=0 for environment), by default None
-        debug_dashboard : bool, optional
-            using a debug dashboard implemented in Dash for testing purposes,
-            by default False
         """
         # time units and timezone
         self.time_unit = time_unit
@@ -369,13 +366,6 @@ class SimulationEnvironment(salabim.Environment):
         self.run()
         self.finalise()
         assert self.finalised, 'Env not finalised'
-
-    def dashboard_update(self) -> None:
-        # infrastructure manager instance
-        self._infstruct_mgr.dashboard_update()
-
-        # dispatcher instance
-        self._dispatcher.dashboard_update()
 
 
 # ** environment management
@@ -946,10 +936,6 @@ class InfrastructureManager:
         loggers.infstrct.info(
             'Successful finalisation of the state information for all resource objects.'
         )
-
-    def dashboard_update(self) -> None:
-        # !! Placeholder, not implemented yet
-        ...
 
 
 class Dispatcher:
@@ -2151,7 +2137,7 @@ class Dispatcher:
                 filename=filename,
                 suffix='html',
             )
-            fig.write_html(save_pth, auto_open=auto_open_html)
+            fig.write_html(save_pth, auto_open=auto_open_html, include_plotlyjs='cdn')
 
         if save_img:
             save_pth = common.prepare_save_paths(
@@ -2165,7 +2151,6 @@ class Dispatcher:
         return fig
 
     def initialise(self) -> None:
-        # !! Placeholder, do nothing at the moment
         pass
 
     def finalise(self) -> None:
@@ -2174,13 +2159,6 @@ class Dispatcher:
         the environment's "finalise_sim" method
         """
         self._calc_cycle_time()
-
-    def dashboard_update(self) -> None:
-        """
-        method to be called by the environment's "update_dashboard" method
-        """
-        # !! Placeholder, do nothing at the moment
-        pass
 
 
 # ** systems
