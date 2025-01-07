@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import multiprocessing as mp
 import threading
 from abc import ABCMeta, abstractmethod
 from collections import deque
@@ -30,12 +29,11 @@ from typing import (
 )
 from typing_extensions import override
 
+import numpy as np
 import plotly.express as px
-import plotly.io
 import salabim
 import sqlalchemy as sql
 from pandas import DataFrame
-from websocket import create_connection
 
 from pyforcesim import common, loggers
 from pyforcesim import datetime as pyf_dt
@@ -56,11 +54,6 @@ from pyforcesim.constants import (
     SimSystemTypes,
     TimeUnitsTimedelta,
 )
-from pyforcesim.dashboard.dashboard import (
-    WS_URL,
-    start_dashboard,
-)
-from pyforcesim.dashboard.websocket_server import start_websocket_server
 from pyforcesim.errors import (
     AssociationError,
     SequencingAgentAssignmentError,
@@ -139,7 +132,6 @@ class SimulationEnvironment(salabim.Environment):
         starting_datetime: Datetime | None = None,
         local_timezone: TZInfo = TIMEZONE_CEST,
         db_handle: str | None = None,
-        debug_dashboard: bool = False,
         seed: int | None = DEFAULT_SEED,
         check_agent_feasibility: bool = True,
         **kwargs,
@@ -161,7 +153,9 @@ class SimulationEnvironment(salabim.Environment):
         # time units and timezone
         self.time_unit = time_unit
         self.local_timezone = local_timezone
+        # random numbers and agent behaviour
         self.seed = seed
+        self.rng = np.random.default_rng(self.seed)
         self.check_agent_feasibility = check_agent_feasibility
         # if starting datetime not provided use current time
         if starting_datetime is None:
@@ -203,19 +197,16 @@ class SimulationEnvironment(salabim.Environment):
         db.metadata_obj.create_all(self.db_engine)
         # ** systems
         self._system_id_counter = SystemID(0)
-        # ** debug dashboard
-        self.debug_dashboard = debug_dashboard
-        self.servers_connected: bool = False
-        if self.debug_dashboard:
-            self.ws_server_process = mp.Process(target=start_websocket_server)
-            self.dashboard_server_process = mp.Process(target=start_dashboard)
-
         # ** simulation run
         self.FAIL_DELAY: Final[float] = self.td_to_simtime(timedelta=FAIL_DELAY)
         # waiting action
         self.seq_waiting_time = self.env.td_to_simtime(SEQUENCING_WAITING_TIME)
         # observers
         self.observers: set[conditions.Observer] = set()
+        # agents
+        self._agents: set[Agent] = set()
+        self._alloc_agents: set[AllocationAgent] = set()
+        self._seq_agents: set[SequencingAgent] = set()
 
         loggers.pyf_env.info('New Environment >>%s<< created.', self.name())
 
@@ -276,6 +267,32 @@ class SimulationEnvironment(salabim.Environment):
         if observer not in self.observers:
             self.observers.add(observer)
 
+    def register_agent(
+        self,
+        agent: Agent,
+    ) -> None:
+        if agent not in self._agents:
+            self._agents.add(agent)
+
+        if agent.agent_task == 'ALLOC' and agent not in self._alloc_agents:
+            agent = cast(AllocationAgent, agent)
+            self._alloc_agents.add(agent)
+        elif agent.agent_task == 'SEQ' and agent not in self._seq_agents:
+            agent = cast(SequencingAgent, agent)
+            self._seq_agents.add(agent)
+
+    @property
+    def agents(self) -> tuple[Agent, ...]:
+        return tuple(self._agents)
+
+    @property
+    def alloc_agents(self) -> tuple[AllocationAgent, ...]:
+        return tuple(self._alloc_agents)
+
+    @property
+    def seq_agents(self) -> tuple[SequencingAgent, ...]:
+        return tuple(self._seq_agents)
+
     def check_feasible_agent_choice(
         self,
         target_station: InfrastructureObject,
@@ -319,15 +336,6 @@ class SimulationEnvironment(salabim.Environment):
             self.infstruct_mgr.initialise()
             # dispatcher instance
             self.dispatcher.initialise()
-            # establish websocket connection
-            if self.debug_dashboard and not self.servers_connected:
-                loggers.pyf_env.info('Starting websocket server...')
-                self.ws_server_process.start()
-                loggers.pyf_env.info('Starting dashboard server...')
-                self.dashboard_server_process.start()
-                loggers.pyf_env.info('Establish websocket connection...')
-                self.ws_con = create_connection(WS_URL)
-                self.servers_connected = True
 
             self._initialised = True
             loggers.pyf_env.info(
@@ -347,19 +355,6 @@ class SimulationEnvironment(salabim.Environment):
             self._infstruct_mgr.finalise()
             # dispatcher instance
             self._dispatcher.finalise()
-            # close WS connection
-            if self.debug_dashboard and self.servers_connected:
-                # close websocket connection
-                loggers.pyf_env.info('Closing websocket connection...')
-                self.ws_con.close()
-                # stop websocket server
-                loggers.pyf_env.info('Shutting down websocket server...')
-                self.ws_server_process.terminate()
-                # stop dashboard server
-                loggers.pyf_env.info('Shutting down dasboard server...')
-                self.dashboard_server_process.terminate()
-                # reset internal flag indicating that servers are started
-                self.servers_connected = False
 
             self._finalised = True
         else:
@@ -1944,6 +1939,7 @@ class Dispatcher:
         req_obj: InfrastructureObject,
         queue: LogicalQueue[Job],
         is_agent: bool,
+        remove_job: bool = True,
     ) -> Job | None:
         """apply priority rules to a pool of jobs"""
         # if job is None: --> no job available --> waiting
@@ -1974,11 +1970,15 @@ class Dispatcher:
                 raise RuntimeError('action not feasible')
 
             loggers.agents.debug(
-                '[AGENT][SEQ] Action feasibility status: %s', agent.action_feasible
+                '[AGENT][SEQ] Action feasibility status: %s at %s',
+                agent.action_feasible,
+                self.env.t_as_dt(),
             )
 
         # job_collection = queue.as_tuple()
-        if job is not None:
+        loggers.agents.debug('[AGENT][SEQ] Job item: %s', job)
+        if job is not None and remove_job:
+            loggers.agents.debug('[AGENT][SEQ] Queue items: %s', queue.as_tuple())
             queue.remove(job)
 
         return job
@@ -2143,12 +2143,6 @@ class Dispatcher:
                 line_dash='dash',
                 line_color='black',
             )
-
-        if self.env.debug_dashboard:
-            fig_json = cast(str | None, plotly.io.to_json(fig=fig))
-            if fig_json is None:
-                raise ValueError('Could not convert figure to JSON. Returned >>None<<.')
-            self.env.ws_con.send(fig_json)
 
         if save_html:
             save_pth = common.prepare_save_paths(
@@ -2384,7 +2378,7 @@ class System(metaclass=ABCMeta):
         self,
         agent: Agent,
         agent_task: AgentTasks,
-    ) -> tuple[Self, SimulationEnvironment]:
+    ) -> SimulationEnvironment:
         if agent_task not in self._agent_types:
             raise ValueError(
                 (
@@ -2399,7 +2393,9 @@ class System(metaclass=ABCMeta):
             case 'SEQ':
                 self._assign_seq_agent(agent=agent)
 
-        return self, self.env
+        self.env.register_agent(agent)
+
+        return self.env
 
     def check_alloc_agent(self) -> bool:
         """checks if an allocation agent is registered for the system"""
@@ -3646,6 +3642,10 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # ** ALLOCATION REQUEST
         dispatcher = self.env.dispatcher
         infstruct_mgr = self.env.infstruct_mgr
+        # TODO check for better method
+        # generate small random simulation time to avoid requests at the same time
+        random_sim_time = self.env.rng.random() / 1000
+        yield self.sim_control.hold(random_sim_time, priority=self.sim_put_prio)
         # call dispatcher to check for allocation rule
         # resets current feasibility status
         dispatcher.jobs_temp_state(jobs=[job], reset_temp=False)
@@ -3744,11 +3744,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # !! in this case the allocation is predetermined
         # !! otherwise the WIP had to be calculated for each associated resource
         # !! which does not seem to be correct as the job is not yet allocated
-        # remove only if it was added before, only case if the last operation exists
-        # TODO check if explicit removal is necessary
-        # could use content of processing station
-        # if job.last_op is not None and len(self.logical_queue.assoc_resources) == 1:
-        #     self.stat_monitor.change_WIP(job=job, remove=True)
         self.current_job = None
         self.current_op = None
         self.stat_monitor.calc_KPI()
@@ -3756,13 +3751,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         # [STATS:WIP] ADDING WIP TO TARGET STATION
         # add only if there is a next operation, only case if the current operation exists
         target_station_group: StationGroup | None = None
-        # TODO not necessary: possible solution: implicit over associated buffers / LogQueues
-        # if job.current_op is not None:
-        #     if len(logical_queue.assoc_resources) == 1:
-        #         target_station.stat_monitor.change_WIP(job=job, remove=False)
-        #     target_station_group = job.current_op.target_station_group
-
-        # TODO
+        # !! not necessary: possible solution: implicit over associated buffers / LogQueues
         # choose target station --> get StationGroup -->
         # calc KPI for all stations in StationGroup
         if job.current_op is not None:
@@ -3772,8 +3761,6 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         relevant_resources = logical_queue.get_relevant_resources(target_station_group)
         logical_queue.calc_KPI_resources(relevant_resources)
         logical_queue.activate_resources(target_station_group)
-        # if target_station.sim_control.ispassive():
-        #     target_station.sim_control.activate()
 
         loggers.prod_stations.debug('[%s] Put Job %s in queue %s', self, job, logical_queue)
 
@@ -3808,11 +3795,13 @@ class InfrastructureObject(System, metaclass=ABCMeta):
 
         dispatcher = self.env.dispatcher
         infstruct_mgr = self.env.infstruct_mgr
+        # TODO check for better method
+        # generate small random simulation time to avoid requests at the same time
+        random_sim_time = self.env.rng.random() / 1000
+        yield self.sim_control.hold(random_sim_time, priority=self.sim_put_prio)
         # call dispatcher to check for allocation rule
         # resets current feasibility status
-        yield self.sim_control.hold(0, priority=self.sim_put_prio)
-
-        loggers.agents.debug('[%s] Checking agent allocation at %s', self, self.env.t_as_dt())
+        loggers.agents.debug('[%s] Checking agent sequencing at %s', self, self.env.t_as_dt())
         is_agent, seq_agent = dispatcher.check_seq_dispatch(req_obj=self)
         # target_station: InfrastructureObject
         job: Job | None = None
@@ -3822,6 +3811,8 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             # if agent is set, set flags and calculate feature vector
             # as long as there is no feasible action
             while (not seq_agent.action_feasible) or (job is None):
+                loggers.agents.debug('----------------- Entry loop of %s...', self)
+                loggers.agents.debug('--- event list: %s', self.env._event_list)
                 # ** SET external Gym flag, build feature vector
                 dispatcher.request_agent_seq(req_obj=self)
                 # ** Break external loop
@@ -3834,6 +3825,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                     seq_agent.action_feasible,
                     seq_agent.past_action_feasible,
                 )
+                loggers.agents.debug('--- event list: %s', self.env._event_list)
                 # obtain target station, check for feasibility
                 # --> SET ``agent.action_feasible``
                 job = dispatcher.request_job_sequencing(req_obj=self, is_agent=is_agent)
@@ -3851,6 +3843,8 @@ class InfrastructureObject(System, metaclass=ABCMeta):
                     yield self.sim_control.hold(self.env.seq_waiting_time)
                     loggers.infstrct.debug('[%s] SEQ: Performing waiting action...', self)
 
+        loggers.agents.debug('----------------- Do stuff after job choice...')
+        loggers.agents.debug('--- event list: %s\n', self.env._event_list)
         # request job and its time characteristics from associated queue
         # yield self.sim_control.hold(0, priority=self.sim_get_prio)
         # job = dispatcher.request_job_sequencing(req_obj=self)
@@ -3924,6 +3918,8 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
         # [STATE:Job] PROCESSING
         dispatcher.update_job_state(job=job, state=SimStatesCommon.PROCESSING)
+
+        loggers.agents.debug('Job things done.')
 
         return job
 

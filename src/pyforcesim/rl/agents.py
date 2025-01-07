@@ -51,9 +51,8 @@ class Agent(Generic[S], ABC):
         seed: int | None = None,
     ) -> None:
         self._agent_task = agent_task
-        self._assoc_system, self._env = assoc_system.register_agent(
-            agent=self, agent_task=self._agent_task
-        )
+        self._assoc_system = assoc_system
+        self._env = self._assoc_system.register_agent(agent=self, agent_task=self._agent_task)
 
         if seed is None and self.env.seed is not None:
             seed = self.env.seed
@@ -75,6 +74,12 @@ class Agent(Generic[S], ABC):
         self.past_action_feasible: bool = False
         # count number of consecutive non-feasible actions
         self.non_feasible_counter: int = 0
+
+    def __key(self) -> tuple[str, SystemID]:
+        return (self._agent_task, self._assoc_system.system_id)
+
+    def __hash__(self) -> int:
+        return hash(self.__key())
 
     def __repr__(self) -> str:
         return self.__str__()
@@ -787,27 +792,6 @@ class ValidateAllocationAgent(AllocationAgent):
             target_station_group=target_stat_group,
             is_agent=False,
         )
-        # TODO check removal
-        # # obtain policy which should be applied
-        # policy: GeneralPolicy | AllocationPolicy
-
-        # if target_stat_group.alloc_policy is not None:
-        #     policy = target_stat_group.alloc_policy
-        # elif exec_system.alloc_policy is not None:
-        #     policy = exec_system.alloc_policy
-        # elif self.env.dispatcher.alloc_policy is not None:
-        #     policy = self.env.dispatcher.alloc_policy
-        # else:
-        #     raise ValueError('Validation Agent could not retrieve allocation policy')
-        # # mimic approach of dispatcher
-        # stations = target_stat_group.assoc_proc_stations
-        # candidates = tuple(ps for ps in stations if ps.stat_monitor.is_available)
-        # # if there are no available ones: use all stations
-        # if candidates:
-        #     avail_stations = candidates
-        # else:
-        #     avail_stations = stations
-
         # target_station = self.alloc_policy.apply(items=avail_stations)
         action_idx = self.assoc_proc_stations.index(target_station)
 
@@ -828,6 +812,11 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
         self._relevant_jobs: tuple[Job, ...] | None = None
         self._chosen_job: Job | None = None
         self._req_obj: InfrastructureObject | None = None
+        # results
+        self.jobs_total: int = 0
+        self.jobs_tardy: int = 0
+        self.jobs_early: int = 0
+        self.jobs_punctual: int = 0
 
     @property
     def assoc_contents(self) -> tuple[Job, ...]:
@@ -887,6 +876,7 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
         num_q_slots = req_object.logical_queue.size
         num_jobs = len(jobs)
         job_data: list[float] = []
+        job_info: tuple[float, ...] = (0, 0, 0, 0, 0)
         action_waiting_feasible: bool = True
 
         for job in jobs:
@@ -952,6 +942,9 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
         loggers.agents.debug(
             '[Agent %s]: Possible jobs are >>%s<<', self, self._relevant_jobs
         )
+        loggers.agents.debug(
+            '[Agent %s]: Associated queue jobs are >>%s<<', self, self.assoc_contents
+        )
         if action != 0:
             if action > len(self._relevant_jobs) and self.env.check_agent_feasibility:
                 raise IndexError('Chosen action out of bounds of relevant jobs.')
@@ -995,27 +988,31 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
         slack_upper_bound: float,
         slack_lower_bound: float = 0.0,
     ) -> float:
-        # TODO What happens if initial slack is smaller than lower bound?
-        # TODO What happens if current slack is greater than slack_init under the condition
-        # TODO that slack_init was already tardy?
+        # !! What happens if initial slack is smaller than lower bound?
+        # !! What happens if current slack is greater than slack_init under the condition
+        # !! that slack_init was already tardy?
         # target value needed
         # if a job starts with an initial slack lower than the defined threshold
         # for the upper bound, a target value has to be set
         # every initial slack lower than a given threshold value results in this threshold
         # value as target
+        self.jobs_total += 1
         delta: float
         is_target_state: bool = False
         slack_range = abs(slack_upper_bound - slack_lower_bound)
         if slack < slack_lower_bound:
             # tardy
             delta = slack - slack_lower_bound  # negative value
+            self.jobs_tardy += 1
         elif slack > slack_upper_bound:
             # premature
             delta = slack - slack_upper_bound
+            self.jobs_early += 1
         else:
             # target state: slack_lower_bound <= slack <= slack_upper_bound
             is_target_state = True
             delta = slack - slack_lower_bound  # positive value
+            self.jobs_punctual += 1
 
         proportion = delta / slack_range
         reward: float
@@ -1107,6 +1104,7 @@ class ValidateSequencingAgent(SequencingAgent):
             req_obj=req_obj,
             queue=self.assoc_system,
             is_agent=False,
+            remove_job=False,
         )
         action_idx: int
         if job_selected is None:

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 from dataclasses import asdict
 from datetime import timedelta as Timedelta
@@ -24,13 +26,15 @@ from pyforcesim.simulation import environment as sim
 from pyforcesim.types import (
     AgentDecisionTypes,
     BuilderFuncFamilies,
+    EnvGenerationInfo,
 )
 
 if TYPE_CHECKING:
+    from pandas import Timedelta as PDTimedelta
+
     from pyforcesim.types import (
         EnvBuilderFunc,
         EnvBuilderWIPConfig,
-        EnvGenerationInfo,
         PlotlyFigure,
     )
 
@@ -42,9 +46,9 @@ BUILDER_FUNCS: Final[dict[BuilderFuncFamilies, EnvBuilderFunc]] = {
     BuilderFuncFamilies.SINGLE_PRODUCTION_AREA: standard_env_single_area,
 }
 BUILDER_FUNC_WIP_CFG: Final[EnvBuilderWIPConfig] = {
-    'factor_WIP': 3,
+    'factor_WIP': 8,
     #'WIP_relative_target': (0.5, 3, 6),
-    'WIP_relative_target': (3,),
+    'WIP_relative_target': (0.5,),
     'WIP_relative_planned': 1.5,
     'alpha': 7,
     'buffer_size': 30,
@@ -247,6 +251,13 @@ class JSSEnv(gym.Env):
         self.last_op_db: DataFrame | None = None
         self.cycle_time: Timedelta | None = None
         self.sim_utilisation: float | None = None
+        self.end_date_dev_mean: Timedelta | None = None
+        self.end_date_dev_std: Timedelta | None = None
+        # only SEQ agents
+        self.jobs_total: int = 0
+        self.jobs_tardy: int = 0
+        self.jobs_early: int = 0
+        self.jobs_punctual: int = 0
 
     def _build_env(
         self,
@@ -405,6 +416,20 @@ class JSSEnv(gym.Env):
         self.cycle_time = self.sim_env.dispatcher.cycle_time
         mean_util = np.mean(self.sim_env.infstruct_mgr.final_utilisations)
         self.sim_utilisation = mean_util.item()
+        op_db = self.sim_env.dispatcher.op_db
+        end_date_dev_mean = cast('PDTimedelta', op_db['ending_date_deviation'].mean())
+        end_date_dev_std = cast('PDTimedelta', op_db['ending_date_deviation'].std())
+        self.end_date_dev_mean = end_date_dev_mean.to_pytimedelta()
+        self.end_date_dev_std = end_date_dev_std.to_pytimedelta()
+
+        seq_agent: agents.SequencingAgent | None = None
+        if self.sim_env.seq_agents:
+            seq_agent = self.sim_env.seq_agents[0]  # only first one
+        if seq_agent is not None:
+            self.jobs_total = seq_agent.jobs_total
+            self.jobs_tardy = seq_agent.jobs_tardy
+            self.jobs_early = seq_agent.jobs_early
+            self.jobs_punctual = seq_agent.jobs_punctual
 
     def draw_gantt_chart(
         self,
