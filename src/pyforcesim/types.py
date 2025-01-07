@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import enum
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
@@ -13,6 +13,7 @@ from typing import (
     Protocol,
     TypeAlias,
     TypedDict,
+    TypeVar,
 )
 
 from plotly.graph_objs._figure import Figure
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
     from pyforcesim.constants import SimStatesCommon
     from pyforcesim.rl import agents
     from pyforcesim.simulation import environment as sim
+
+T = TypeVar('T')
 
 
 # ** logging
@@ -66,6 +69,25 @@ TimeTillDue: TypeAlias = Timedelta
 DueDate: TypeAlias = Datetime
 
 
+@dataclass(kw_only=True, slots=True, order=False)
+class StatDistributionInfo:
+    mean: float
+    std: float
+
+
+class QueueLike(Protocol[T]):
+    def env(self) -> sim.SimulationEnvironment: ...
+    def custom_identifier(self) -> CustomID: ...
+    def name(self) -> str: ...
+    def pop(self, index: int | None = None) -> T: ...
+    def append(self, item: T) -> None: ...
+    def remove(self, item: Any) -> None: ...
+    def as_list(self) -> list[T]: ...
+    def __getitem__(self, index: int) -> T: ...
+    def __len__(self) -> int: ...
+    def __iter__(self) -> Iterator[T]: ...
+
+
 @dataclass(kw_only=True, slots=True, eq=False, match_args=False)
 class OrderTimes:
     proc: Sequence[Timedelta]
@@ -82,24 +104,71 @@ class OrderDates:
 class JobGenerationInfo:
     custom_id: CustomID | None = field(default=None)
     execution_systems: Sequence[SystemID]
-    station_groups: Sequence[SystemID | None] | None = field(default=None)
+    station_groups: Sequence[SystemID]
     order_time: OrderTimes
     dates: OrderDates
     prio: OrderPriority | Sequence[OrderPriority | None] | None = field(default=None)
     current_state: SimStatesCommon
 
 
+SourceSequence: TypeAlias = tuple[JobGenerationInfo, Timedelta]
+
 # ** simulation environments
+AgentType: TypeAlias = 'agents.AllocationAgent | agents.SequencingAgent'
+EnvAgentConstructorReturn: TypeAlias = tuple[
+    'sim.SimulationEnvironment',
+    'agents.AllocationAgent | None',
+    'agents.SequencingAgent | None',
+]
+
+
 class EnvBuilderFunc(Protocol):
     def __call__(
         self,
+        sequencing: bool = ...,
         with_agent: bool = ...,
+        validate: bool = ...,
         seed: int | None = ...,
-    ) -> tuple[sim.SimulationEnvironment, agents.AllocationAgent]: ...
+        num_station_groups: int = ...,
+        num_machines: int = ...,
+        variable_source_sequence: bool = ...,
+        debug: bool = ...,
+        seed_layout: int | None = ...,
+        factor_WIP: float = ...,
+        WIP_relative_target: Sequence[float] = ...,
+        WIP_relative_planned: float = ...,
+        alpha: float = ...,
+        buffer_size: int = ...,
+    ) -> EnvAgentConstructorReturn: ...
+
+
+class EnvBuilderWIPConfig(TypedDict):
+    factor_WIP: float
+    WIP_relative_target: Sequence[float]
+    WIP_relative_planned: float
+    alpha: float
+    buffer_size: int
+
+
+class BuilderFuncFamilies(enum.StrEnum):
+    SINGLE_PRODUCTION_AREA = enum.auto()
+
+
+@dataclass(slots=True, kw_only=True, eq=False)
+class EnvGenerationInfo:
+    num_station_groups: int
+    num_machines: int
+    variable_source_sequence: bool
+    validate: bool
 
 
 # ** agents
 AgentTasks: TypeAlias = Literal['SEQ', 'ALLOC']
+
+
+class AgentDecisionTypes(enum.StrEnum):
+    ALLOC = enum.auto()
+    SEQ = enum.auto()
 
 
 # ** database

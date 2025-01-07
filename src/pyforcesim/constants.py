@@ -28,23 +28,30 @@ from pyforcesim.types import Infinite
 from pyforcesim.types import LoggingLevels as loglevel
 
 # ** logging
-LOGGING_TO_FILE: Final[bool] = True
+LOG_FMT: Final[str] = ' %(asctime)s | pyfsim:%(module)s:%(levelname)s | %(message)s'
+LOG_DATE_FMT: Final[str] = '%Y-%m-%d %H:%M:%S +0000'
+LOGGING_ENABLED: Final[bool] = True
+LOGGING_TO_FILE: Final[bool] = False
+LOGGING_FILE_SIZE: Final[int] = 10485760  # in bytes
+LOGGING_LEVEL_STD_OUT: Final[loglevel] = loglevel.INFO
+LOGGING_LEVEL_FILE: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_BASE: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_ENV: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_GYM_ENV: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_ENV_BUILDER: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_DISPATCHER: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_DISPATCHER: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_INFSTRCT: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_SINKS: Final[loglevel] = loglevel.ERROR
-LOGGING_LEVEL_PRODSTATIONS: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_PRODSTATIONS: Final[loglevel] = loglevel.ERROR
 LOGGING_LEVEL_JOBS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_BUFFERS: Final[loglevel] = loglevel.ERROR
-LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.ERROR
+LOGGING_LEVEL_QUEUES: Final[loglevel] = loglevel.ERROR
+LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.DEBUG
-LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_POLICIES: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_DB: Final[loglevel] = loglevel.ERROR
 
@@ -54,6 +61,7 @@ LOGGING_LEVEL_DB: Final[loglevel] = loglevel.ERROR
 INF: Final[Infinite] = float('inf')
 DEFAULT_SEED: Final[int] = 42
 EPSILON: Final[float] = 1e-8
+ROUNDING_PRECISION: Final[int] = 6
 
 
 # ** dates and times
@@ -80,34 +88,14 @@ class TimeUnitsTimedelta(enum.StrEnum):
 TIMEZONE_CEST: Final[ZoneInfo] = ZoneInfo('Europe/Berlin')
 TIMEZONE_UTC: Final[Timezone] = Timezone.utc
 DEFAULT_DATETIME: Final[Datetime] = Datetime(1970, 1, 1, tzinfo=TIMEZONE_UTC)
+SLACK_THRESHOLD_UPPER: Final[Timedelta] = Timedelta(hours=2)
+SLACK_THRESHOLD_LOWER: Final[Timedelta] = Timedelta()
 
 
 # ** database
 DB_HANDLE: Final[str] = 'sqlite:///:memory:'
 DB_ECHO: Final[bool] = False
 DB_ROOT: Final[str] = 'databases'
-DB_DATA_TYPES: Final[set[str]] = {
-    'INTEGER',
-    'REAL',
-    'BOOLEAN',
-    'TEXT',
-    'BLOB',
-    'DATE',
-    'DATETIME',
-    'TIMEDELTA',
-}
-# SQLite supports more column constraints than these,
-# but only these are currently supported by the database module
-DB_SUPPORTED_COL_CONSTRAINTS: Final[frozenset[str]] = frozenset(
-    [
-        'NOT NULL',
-        'UNIQUE',
-        'PRIMARY KEY',
-    ]
-)
-DB_INJECTION_PATTERN: Final[str] = (
-    r'(^[_0-9]+)|[^\w ]|(true|false|select|where|drop|delete|create)'
-)
 
 
 # ** simulation
@@ -115,6 +103,9 @@ DB_INJECTION_PATTERN: Final[str] = (
 # since a day has 24 hours each infrastructure object can process
 # 24 hours of workload per day at the maximum
 MAX_PROCESSING_CAPACITY: Final[Timedelta] = Timedelta(hours=24)
+MAX_LOGICAL_QUEUE_SIZE: Final[int] = 60
+SEQUENCING_WAITING_TIME: Final[Timedelta] = Timedelta(minutes=15)
+SOURCE_GENERATION_WAITING_TIME: Final[Timedelta] = Timedelta(minutes=15)
 
 
 class SimResourceTypes(enum.StrEnum):
@@ -180,6 +171,7 @@ class SimSystemTypes(enum.StrEnum):
     PRODUCTION_AREA = enum.auto()
     STATION_GROUP = enum.auto()
     RESOURCE = enum.auto()
+    LOGICAL_QUEUE = enum.auto()
 
 
 class JobGeneration(enum.StrEnum):

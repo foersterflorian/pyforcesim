@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from datetime import timedelta as Timedelta
-from typing import TYPE_CHECKING, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Final, Generic, TypeVar, cast
 from typing_extensions import override
 
 import numpy as np
@@ -12,7 +12,14 @@ from numpy.random._generator import Generator as NPRandomGenerator
 
 from pyforcesim import datetime as pyf_dt
 from pyforcesim import loggers
-from pyforcesim.constants import HELPER_STATES, UTIL_PROPERTIES, TimeUnitsTimedelta
+from pyforcesim.constants import (
+    EPSILON,
+    HELPER_STATES,
+    ROUNDING_PRECISION,
+    SEQUENCING_WAITING_TIME,
+    UTIL_PROPERTIES,
+    TimeUnitsTimedelta,
+)
 from pyforcesim.types import (
     AgentTasks,
     LoadDistribution,
@@ -22,7 +29,9 @@ from pyforcesim.types import (
 
 if TYPE_CHECKING:
     from pyforcesim.simulation.environment import (
+        InfrastructureObject,
         Job,
+        LogicalQueue,
         Operation,
         ProcessingStation,
         ProductionArea,
@@ -42,21 +51,44 @@ class Agent(Generic[S], ABC):
         seed: int | None = None,
     ) -> None:
         self._agent_task = agent_task
-        self._assoc_system, self._env = assoc_system.register_agent(
-            agent=self, agent_task=self._agent_task
-        )
+        self._assoc_system = assoc_system
+        self._env = self._assoc_system.register_agent(agent=self, agent_task=self._agent_task)
 
         if seed is None and self.env.seed is not None:
             seed = self.env.seed
         self._seed = seed
         self._rng = np.random.default_rng(seed=self.seed)
+        self.NORM_TD: Final[Timedelta] = pyf_dt.timedelta_from_val(
+            1.0, TimeUnitsTimedelta.HOURS
+        )
 
         self._dispatching_signal: bool = False
         self.num_decisions: int = 0
         self.cum_reward: float = 0.0
+        # RL related properties
+        self.feat_vec: npt.NDArray[np.float32] | None = None
+        # action chosen by RL agent
+        self._action: int | None = None
+        self._action_mask: npt.NDArray[np.bool_] = np.empty((1,), dtype=np.bool_)
+        self._action_feasible: bool = False
+        self.past_action_feasible: bool = False
+        # count number of consecutive non-feasible actions
+        self.non_feasible_counter: int = 0
+
+    def __key(self) -> tuple[str, SystemID]:
+        return (self._agent_task, self._assoc_system.system_id)
+
+    def __hash__(self) -> int:
+        return hash(self.__key())
+
+    def __repr__(self) -> str:
+        return self.__str__()
 
     def __str__(self) -> str:
-        return f'Agent(type={self._agent_task}, Assoc_Syst_ID={self._assoc_system.system_id})'
+        return (
+            f'{self.__class__.__name__}(type={self._agent_task}, '
+            f'Assoc_Syst_ID={self._assoc_system.system_id})'
+        )
 
     @property
     def assoc_system(self) -> S:
@@ -81,6 +113,44 @@ class Agent(Generic[S], ABC):
     @property
     def dispatching_signal(self) -> bool:
         return self._dispatching_signal
+
+    @property
+    def action(self) -> int | None:
+        return self._action
+
+    @property
+    def action_mask(self) -> npt.NDArray[np.bool_]:
+        return self._action_mask
+
+    @action_mask.setter
+    def action_mask(
+        self,
+        val: npt.NDArray[np.bool_],
+    ) -> None:
+        self._action_mask = val
+
+    @property
+    def action_feasible(self) -> bool:
+        return self._action_feasible
+
+    @action_feasible.setter
+    def action_feasible(
+        self,
+        feasible: bool,
+    ) -> None:
+        if feasible:
+            self.non_feasible_counter = 0
+        else:
+            self.non_feasible_counter += 1
+        self.past_action_feasible = self._action_feasible
+        self._action_feasible = feasible
+
+    def random_action(self) -> int:
+        """
+        Generate random action based on associated objects
+        """
+        feasible_actions = np.flatnonzero(self.action_mask)
+        return self.rng.choice(feasible_actions)
 
     def set_dispatching_signal(
         self,
@@ -131,13 +201,11 @@ class AllocationAgent(Agent['ProductionArea']):
         super().__init__(assoc_system=assoc_system, agent_task='ALLOC', seed=seed)
 
         # get associated systems
-        self._assoc_proc_stations = self._assoc_system.lowest_level_subsystems(
+        self._assoc_proc_stations = self.assoc_system.lowest_level_subsystems(
             only_processing_stations=True
         )
         # default action mask: allow all actions
-        self._action_mask: npt.NDArray[np.bool_] = np.tile(
-            [True], len(self._assoc_proc_stations)
-        )
+        self._action_mask = np.tile([True], len(self._assoc_proc_stations))
 
         # job-related properties
         self._current_job: Job | None = None
@@ -151,18 +219,9 @@ class AllocationAgent(Agent['ProductionArea']):
         self.utilisations: dict[SystemID, float] = {}
         self.last_station_group: StationGroup | None = None
 
-        # RL related properties
-        self.feat_vec: npt.NDArray[np.float32] | None = None
-
         # execution control
         # [ACTIONS]
-        # action chosen by RL agent
-        self._action: int | None = None
-        self._action_feasible: bool = False
-        self.past_action_feasible: bool = False
         self._chosen_station: ProcessingStation | None = None
-        # count number of consecutive non-feasible actions
-        self.non_feasible_counter: int = 0
 
     @property
     def current_job(self) -> Job | None:
@@ -181,10 +240,6 @@ class AllocationAgent(Agent['ProductionArea']):
         return self._last_op
 
     @property
-    def action(self) -> int | None:
-        return self._action
-
-    @property
     def chosen_station(self) -> ProcessingStation | None:
         return self._chosen_station
 
@@ -192,27 +247,8 @@ class AllocationAgent(Agent['ProductionArea']):
     def assoc_proc_stations(self) -> tuple[ProcessingStation, ...]:
         return self._assoc_proc_stations
 
-    @property
-    def action_feasible(self) -> bool:
-        return self._action_feasible
-
-    @action_feasible.setter
-    def action_feasible(
-        self,
-        feasible: bool,
-    ) -> None:
-        if feasible:
-            self.non_feasible_counter = 0
-        else:
-            self.non_feasible_counter += 1
-        self.past_action_feasible = self._action_feasible
-        self._action_feasible = feasible
-
-    @property
-    def action_mask(self) -> npt.NDArray[np.bool_]:
-        return self._action_mask
-
-    @action_mask.setter
+    @Agent.action_mask.setter
+    @override
     def action_mask(
         self,
         val: npt.NDArray[np.bool_],
@@ -223,7 +259,7 @@ class AllocationAgent(Agent['ProductionArea']):
 
     def update_assoc_proc_stations(self) -> None:
         # get associated systems
-        self._assoc_proc_stations = self._assoc_system.lowest_level_subsystems(
+        self._assoc_proc_stations = self.assoc_system.lowest_level_subsystems(
             only_processing_stations=True
         )
 
@@ -434,8 +470,7 @@ class AllocationAgent(Agent['ProductionArea']):
         # needed properties: target station group ID, order time
         if job.current_order_time is None:
             raise ValueError(f'Current order time of job {job} >>None<<')
-        norm_td = pyf_dt.timedelta_from_val(1.0, TimeUnitsTimedelta.HOURS)
-        order_time = job.current_order_time / norm_td
+        order_time = job.current_order_time / self.NORM_TD
         slack = job.stat_monitor.slack_hours
         # current op: obtain StationGroupID
         current_op = job.current_op
@@ -452,7 +487,7 @@ class AllocationAgent(Agent['ProductionArea']):
         # resources
         # needed properties
         # station group, availability, WIP_time
-        for i, res in enumerate(self._assoc_proc_stations):
+        for i, res in enumerate(self.assoc_proc_stations):
             # T1 build feature vector for one machine
             monitor = res.stat_monitor
             # station group identifier should be the system's one
@@ -489,12 +524,6 @@ class AllocationAgent(Agent['ProductionArea']):
         self.action_mask = np.array(action_mask, dtype=np.bool_)
 
         return res_info_arr_all
-
-    def random_action(self) -> int:
-        """
-        Generate random action based on associated objects
-        """
-        return self.rng.integers(0, len(self._assoc_proc_stations))
 
     @staticmethod
     def load_distribution_diff(
@@ -559,7 +588,38 @@ class AllocationAgent(Agent['ProductionArea']):
     ) -> float:
         return x / (abs(x) + beta)
 
-    def reward_slack(
+    @staticmethod
+    def _reward_gaussian(
+        x: float,
+        b: float = 0.0,
+        c: float = 1.0,
+    ) -> float:
+        return 2 * np.exp(-np.power((x - b), 2) / (2 * np.power(c, 2))) - 1
+
+    def reward_slack_delta_current(
+        self,
+        chosen_station: ProcessingStation,
+        c_gaussian: float = 2.5,
+    ) -> float:
+        # current slack
+        # job = op_reward.job
+        # slack_current = job.stat_monitor.slack_hours
+        # calc average slack
+        # workload_total = target_station_group.workload_current(total=True)
+        # workload_capacity_total = target_station_group.processing_capacities(total=True)
+        # t_till_work_done = workload_total / workload_capacity_total
+        # slack_average = current_slack - t_till_work_done
+        # calc actual slack (only applicable if FIFO is chosen -> deterministic behaviour)
+        workload_station = chosen_station.stat_monitor.WIP_load_time_remaining
+        workload_capacity_station = chosen_station.processing_capacity
+        t_till_work_done_station = workload_station / workload_capacity_station
+        slack_delta = -t_till_work_done_station
+
+        reward = self._reward_gaussian(slack_delta, c=c_gaussian)
+
+        return reward
+
+    def reward_slack_estimate(
         self,
         target_station_group: StationGroup,
         chosen_station: ProcessingStation,
@@ -605,7 +665,7 @@ class AllocationAgent(Agent['ProductionArea']):
         loggers.agents.debug('[Agent Reward] Target station group: %s', target_station_group)
         loggers.agents.debug('[Agent Reward] Chosen station: %s', chosen_station)
         # perform feasibility check + set flag
-        self.action_feasible = self.env.check_feasible_agent_alloc(
+        self.action_feasible = self.env.check_feasible_agent_choice(
             target_station=chosen_station, op=op_rew
         )
 
@@ -618,10 +678,13 @@ class AllocationAgent(Agent['ProductionArea']):
             #     op_reward=op_rew,
             #     enable_masking=False,
             # )
-            reward = self.reward_slack(
-                target_station_group=target_station_group,
+            # reward = self.reward_slack_estimate(
+            #     target_station_group=target_station_group,
+            #     chosen_station=chosen_station,
+            #     op_reward=op_rew,
+            # )
+            reward = self.reward_slack_delta_current(
                 chosen_station=chosen_station,
-                op_reward=op_rew,
             )
 
         else:
@@ -713,40 +776,341 @@ class ValidateAllocationAgent(AllocationAgent):
     ) -> None:
         super().__init__(assoc_system=assoc_system, seed=seed)
 
-        alloc_policy = self.env.dispatcher.alloc_policy
-        if alloc_policy is None:
-            raise ValueError('Validation Agent could not retrieve allocation policy')
-        else:
-            self.alloc_policy = alloc_policy
-
     def simulate_decision_making(self) -> int:
         # sets decision based on allocation policy returns action index
         # use current op
         op = self._current_op
         if op is None:
-            raise ValueError('[Validation Agent] Operation >>None<<')
+            raise ValueError('[ALLOC Validation Agent] Operation >>None<<')
         target_stat_group = op.target_station_group
         if target_stat_group is None:
-            raise ValueError('[Validation Agent] Target station group >>None<<')
-        # mimic approach of dispatcher
-        stations = target_stat_group.assoc_proc_stations
-        candidates = tuple(ps for ps in stations if ps.stat_monitor.is_available)
-        # if there are no available ones: use all stations
-        if candidates:
-            avail_stations = candidates
-        else:
-            avail_stations = stations
+            raise ValueError('[ALLOC Validation Agent] Target station group >>None<<')
 
-        target_station = self.alloc_policy.apply(items=avail_stations)
+        exec_system = self.assoc_system
+        target_station = self.env.dispatcher.choose_target_station_from_exec_system(
+            exec_system=exec_system,
+            target_station_group=target_stat_group,
+            is_agent=False,
+        )
+        # target_station = self.alloc_policy.apply(items=avail_stations)
         action_idx = self.assoc_proc_stations.index(target_station)
 
         return action_idx
 
 
-class SequencingAgent(Agent):
+class SequencingAgent(Agent['LogicalQueue[Job]']):
     def __init__(
         self,
-        assoc_system: System,
+        assoc_system: LogicalQueue[Job],
+        seed: int | None = None,
     ) -> None:
-        raise NotImplementedError('SequencingAgent not implemented yet.')
-        # super().__init__(assoc_system=assoc_system, agent_task='SEQ')
+        super().__init__(assoc_system=assoc_system, agent_task='SEQ', seed=seed)
+
+        # execution control
+        # [ACTIONS]
+        self.waiting_time = SEQUENCING_WAITING_TIME / self.NORM_TD
+        self._relevant_jobs: tuple[Job, ...] | None = None
+        self._chosen_job: Job | None = None
+        self._req_obj: InfrastructureObject | None = None
+        # results
+        self.jobs_total: int = 0
+        self.jobs_tardy: int = 0
+        self.jobs_early: int = 0
+        self.jobs_punctual: int = 0
+
+    @property
+    def assoc_contents(self) -> tuple[Job, ...]:
+        return self.assoc_system.as_tuple()
+
+    @property
+    def chosen_job(self) -> Job | None:
+        return self._chosen_job
+
+    @override
+    def activate(self) -> None:
+        pass
+
+    @override
+    def request_decision(
+        self,
+        req_obj: InfrastructureObject,
+    ) -> None:
+        # indicator that request is being made
+        self.set_dispatching_signal(reset=False)
+        self._relevant_jobs = self.assoc_contents
+        self._req_obj = req_obj
+        # build feature vector
+        self.feat_vec = self.build_feat_vec(req_object=req_obj)
+        loggers.agents.debug(
+            '[REQUEST Agent %s]: built FeatVec at %s', self, self.env.t_as_dt()
+        )
+        loggers.agents.debug('[Agent %s]: Feature Vector: %s', self, self.feat_vec)
+        loggers.agents.debug('[Agent %s]: Action Mask: %s', self, self.action_mask)
+
+    @override
+    def build_feat_vec(
+        self,
+        req_object: InfrastructureObject,
+    ) -> npt.NDArray[np.float32]:
+        action_mask: list[bool] = []
+        # station properties
+        station_group = cast('StationGroup', req_object.supersystems_as_list()[0])
+        res_SGI = station_group.system_id
+        avail = int(req_object.stat_monitor.is_available)
+        res_info = (res_SGI, avail)
+        res_info_arr = np.array(res_info, dtype=np.float32)
+
+        # job properties
+        # needed props:
+        # - target station group ID
+        # - order time
+        # - lower bound of slack (set when job was released)
+        # - upper bound of slack (set when job was released)
+        # - slack (if slack-based rewards used)
+        # build feature vector with fixed size, depending on logical queue size
+        # --> total vector size: queue size * number of features
+        # iterate over all associated jobs and build new vector for each job
+        # for each empty place, pad with zeros
+        jobs = self._relevant_jobs
+        assert jobs is not None, 'relevant jobs not available, >>None<< instead'
+        num_q_slots = req_object.logical_queue.size
+        num_jobs = len(jobs)
+        job_data: list[float] = []
+        job_info: tuple[float, ...] = (0, 0, 0, 0, 0)
+        action_waiting_feasible: bool = True
+
+        for job in jobs:
+            if job.current_order_time is None:
+                raise ValueError(f'Current order time of job {job} >>None<<')
+            current_op = job.current_op
+            if current_op is None:
+                raise ValueError(
+                    'Tried to build feature vector for job without current operation.'
+                )
+            order_time = job.current_order_time / self.NORM_TD
+            slack_lower_bound = job.stat_monitor.slack_lower_bound_hours
+            slack_upper_bound = job.stat_monitor.slack_upper_bound_hours
+            slack = job.stat_monitor.slack_hours
+            job_SGI = current_op.target_station_group_identifier
+
+            job_info = (
+                job_SGI,
+                order_time,
+                slack_lower_bound,
+                slack_upper_bound,
+                slack,
+            )
+            job_data.extend(job_info)
+
+            job_feasible: bool = False
+            if res_SGI == job_SGI:
+                job_feasible = True
+                # waiting action not feasible if any job's slack is
+                # below the threshold
+                if slack < slack_lower_bound:
+                    action_waiting_feasible = False
+
+            action_mask.append(job_feasible)
+
+        feat_vec_len = num_q_slots * len(job_info)
+        pad_len = feat_vec_len - len(job_data)
+        job_info_arr = np.array(job_data, dtype=np.float32)
+        job_info_arr = np.pad(job_info_arr, (0, pad_len), constant_values=0)
+        pad_len_actions = num_q_slots - num_jobs
+        action_mask_arr = np.array(action_mask, dtype=np.bool_)
+        self.action_mask = np.pad(
+            action_mask_arr,
+            (1, pad_len_actions),
+            constant_values=(action_waiting_feasible, False),
+        )
+
+        # concat information
+        info_arr = np.concatenate((res_info_arr, job_info_arr), dtype=np.float32)
+
+        return info_arr
+
+    @override
+    def set_decision(
+        self,
+        action: int,
+    ) -> None:
+        self._action = action
+        # first action is 'waiting'
+        self._chosen_job = None
+        if self._relevant_jobs is None:
+            raise ValueError('[AGENT][SEQ] Relevant jobs may not be >>None<<')
+        loggers.agents.debug(
+            '[Agent %s]: Possible jobs are >>%s<<', self, self._relevant_jobs
+        )
+        loggers.agents.debug(
+            '[Agent %s]: Associated queue jobs are >>%s<<', self, self.assoc_contents
+        )
+        if action != 0:
+            if action > len(self._relevant_jobs) and self.env.check_agent_feasibility:
+                raise IndexError('Chosen action out of bounds of relevant jobs.')
+            elif action > len(self._relevant_jobs):
+                # cases in which environment is verified, e.g. by SB3
+                action = len(self._relevant_jobs)
+            job_idx = action - 1
+            self._chosen_job = self._relevant_jobs[job_idx]
+        self.num_decisions += 1
+        # indicator that request was processed, reset dispatching signal
+        self.set_dispatching_signal(reset=True)
+
+        loggers.agents.debug(
+            '[DECISION SET Agent %s]: Set to >>%d<<. Chosen job: >>%s<<',
+            self,
+            self._action,
+            self._chosen_job,
+        )
+
+    @staticmethod
+    def _reward_slack_polynomial(
+        x: float,
+        a: float = -0.2,
+        n: float = 2,
+    ) -> float:
+        return a * np.power(x, n)
+
+    @staticmethod
+    def _reward_curved_norm_scale(
+        x: float,
+        a: float,
+    ) -> float:
+        if a <= 0.0:
+            raise ValueError('Parameter >>a<< must be greater than 0.')
+        a += EPSILON  # eliminate cases where a value of a=1 causes division by zero error
+        return (np.power(a, x) - 1) / (a - 1)
+
+    def _reward_slack_category(
+        self,
+        slack: float,
+        slack_upper_bound: float,
+        slack_lower_bound: float = 0.0,
+    ) -> float:
+        # !! What happens if initial slack is smaller than lower bound?
+        # !! What happens if current slack is greater than slack_init under the condition
+        # !! that slack_init was already tardy?
+        # target value needed
+        # if a job starts with an initial slack lower than the defined threshold
+        # for the upper bound, a target value has to be set
+        # every initial slack lower than a given threshold value results in this threshold
+        # value as target
+        self.jobs_total += 1
+        delta: float
+        is_target_state: bool = False
+        slack_range = abs(slack_upper_bound - slack_lower_bound)
+        if slack < slack_lower_bound:
+            # tardy
+            delta = slack - slack_lower_bound  # negative value
+            self.jobs_tardy += 1
+        elif slack > slack_upper_bound:
+            # premature
+            delta = slack - slack_upper_bound
+            self.jobs_early += 1
+        else:
+            # target state: slack_lower_bound <= slack <= slack_upper_bound
+            is_target_state = True
+            delta = slack - slack_lower_bound  # positive value
+            self.jobs_punctual += 1
+
+        proportion = delta / slack_range
+        reward: float
+        if is_target_state:
+            # positive reward: curve between 0 and 1
+            reward = self._reward_curved_norm_scale(x=proportion, a=4)
+        else:
+            # other reward
+            reward = self._reward_slack_polynomial(x=proportion)
+
+        return round(reward, ROUNDING_PRECISION)
+
+    @override
+    def calc_reward(self) -> float:
+        req_obj = self._req_obj
+        if req_obj is None:
+            raise ValueError('Requesting object is >>None<<.')
+
+        job_reward = self.chosen_job
+        loggers.agents.debug('[Agent Reward] Chosen job: %s', job_reward)
+        if job_reward is None:
+            # reward for waiting
+            reward = 0.0
+            self.action_feasible = self.action_mask[0]
+        else:
+            slack_lower_bound = job_reward.stat_monitor.slack_lower_bound_hours
+            slack_upper_bound = job_reward.stat_monitor.slack_upper_bound_hours
+            slack = job_reward.stat_monitor.slack_hours
+            reward = self._reward_slack_category(
+                slack=slack,
+                slack_lower_bound=slack_lower_bound,
+                slack_upper_bound=slack_upper_bound,
+            )
+
+            current_op = job_reward.current_op
+            if current_op is None:
+                raise ValueError(f'Current OP of job {job_reward} >>None<<')
+            elif (
+                job_reward.time_planned_ending is None
+                and current_op.time_planned_ending is None
+            ):
+                raise ValueError(
+                    (
+                        'No planned ending dates for neither job nor operation available. '
+                        'These are necessary for slack-based rewards.'
+                    )
+                )
+            # obtain target SG from respective operation
+            target_station_group = current_op.target_station_group
+            # perform feasibility check + set flag
+            self.action_feasible = self.env.check_feasible_agent_choice(
+                target_station=req_obj, op=current_op
+            )
+            loggers.agents.debug(
+                '[Agent Reward] Target station group: %s', target_station_group
+            )
+
+        if not self.action_feasible and self.env.check_agent_feasibility:
+            # should never happen with action masking
+            raise RuntimeError('Non-feasible action chosen.')
+
+        loggers.agents.debug('[SEQ-Agent] reward: %.4f', reward)
+        self.cum_reward += reward
+        loggers.agents.debug('[Agent Reward] Num Decisions: %d', self.num_decisions)
+        loggers.agents.debug('[Agent Reward] Cum Reward: %.6f', self.cum_reward)
+
+        return reward
+
+
+class ValidateSequencingAgent(SequencingAgent):
+    def __init__(
+        self,
+        assoc_system: LogicalQueue[Job],
+        seed: int | None = None,
+    ) -> None:
+        super().__init__(assoc_system=assoc_system, seed=seed)
+
+    def simulate_decision_making(self) -> int:
+        # sets decision based on allocation policy returns action index
+        # use current op
+        relevant_jobs = self._relevant_jobs
+        req_obj = self._req_obj
+        if relevant_jobs is None:
+            raise ValueError('[SEQ Validation Agent] No relevant jobs available.')
+        if req_obj is None:
+            raise ValueError('[SEQ Validation Agent] No requesting object available.')
+
+        job_selected = self.env.dispatcher.choose_job_from_queue(
+            req_obj=req_obj,
+            queue=self.assoc_system,
+            is_agent=False,
+            remove_job=False,
+        )
+        action_idx: int
+        if job_selected is None:
+            action_idx = 0
+        else:
+            # offset index by 1 because of waiting action
+            action_idx = relevant_jobs.index(job_selected) + 1
+
+        return action_idx

@@ -32,11 +32,20 @@ station_groups = Table(
     Column('contains_proc_stations', sql.Boolean, default=False),
 )
 
+logical_queues = Table(
+    'logical_queues',
+    metadata_obj,
+    Column('sys_id', sql.Integer, primary_key=True),
+    Column('custom_id', sql.String, nullable=False, unique=True),
+    Column('name', sql.String),
+)
+
 resources = Table(
     'resources',
     metadata_obj,
     Column('sys_id', sql.Integer, primary_key=True),
     Column('stat_group_id', ForeignKey('station_groups.sys_id'), nullable=False),
+    Column('logical_queue_id', ForeignKey('logical_queues.sys_id'), nullable=False),
     Column('custom_id', sql.String, nullable=False, unique=True),
     Column('name', sql.String),
     Column('type', sql.String, nullable=False),
@@ -93,8 +102,12 @@ operations = Table(
 )
 
 
-def get_engine() -> sql.Engine:
-    engine = sql.create_engine(DB_HANDLE, echo=DB_ECHO)
+def get_engine(
+    db_handle: str | None,
+) -> sql.Engine:
+    if db_handle is None:
+        db_handle = DB_HANDLE
+    engine = sql.create_engine(db_handle, echo=DB_ECHO)
     return engine
 
 

@@ -12,16 +12,13 @@ import numpy.typing as npt
 from numpy.random._generator import Generator as NPRandomGenerator
 
 from pyforcesim import datetime as pyf_dt
-from pyforcesim import loggers
 from pyforcesim.constants import SimStatesCommon, SimSystemTypes, TimeUnitsTimedelta
-from pyforcesim.simulation.environment import SimulationEnvironment, SystemID
+from pyforcesim.loggers import loads as logger
 from pyforcesim.types import (
-    DueDate,
     JobGenerationInfo,
     OrderDates,
-    OrderPriority,
     OrderTimes,
-    TimeTillDue,
+    StatDistributionInfo,
 )
 
 if TYPE_CHECKING:
@@ -30,6 +27,11 @@ if TYPE_CHECKING:
         SimulationEnvironment,
         Source,
         SystemID,
+    )
+    from pyforcesim.types import (
+        DueDate,
+        OrderPriority,
+        SourceSequence,
     )
 
 
@@ -44,6 +46,86 @@ def calc_due_date(
     due_date = starting_date + time_till_due
 
     return due_date
+
+
+def calc_WIP_relative(
+    t: float,
+    alpha: float,
+) -> float:
+    return (1 - (1 - t ** (1 / 4)) ** 4) + alpha * t
+
+
+def calc_capacity_relative(
+    t: float,
+) -> float:
+    return 1 - (1 - t ** (1 / 4)) ** 4
+
+
+def calc_t_on_WIP_relative(
+    WIP_target: float,
+    alpha: float = 10,
+    epsilon: float = 1e-3,
+) -> float:
+    # t between [0;1]
+    t: float = 0.5
+    WIP_calc = calc_WIP_relative(t, alpha)
+    delta = WIP_calc - WIP_target
+
+    t_step: float = 0.1
+    step: int = 1
+    while abs(delta) > epsilon:
+        logger.debug('Delta is: %.4f at step %d', delta, step)
+        if delta > 0:
+            # decrease t
+            t -= t_step / step
+            if t < 0:
+                t = 0
+        else:
+            # increase t
+            t += t_step / step
+            if t > 1:
+                t = 1
+
+        WIP_calc = calc_WIP_relative(t, alpha)
+        delta = WIP_calc - WIP_target
+        step += 1
+
+    logger.debug('Delta before return is: %.4f after step %d', delta, step)
+
+    return t
+
+
+def calc_t_on_capacity_relative(
+    capacity_target: float,
+    epsilon: float = 1e-3,
+) -> float:
+    # t between [0;1]
+    t: float = 0.5
+    capacity_calc = calc_capacity_relative(t)
+    delta = capacity_calc - capacity_target
+
+    t_step: float = 0.1
+    step: int = 1
+    while abs(delta) > epsilon:
+        logger.debug('Delta is: %.4f at step %d', delta, step)
+        if delta > 0:
+            # decrease t
+            t -= t_step / step
+            if t < 0:
+                t = 0
+        else:
+            # increase t
+            t += t_step / step
+            if t > 1:
+                t = 1
+
+        capacity_calc = calc_capacity_relative(t)
+        delta = capacity_calc - capacity_target
+        step += 1
+
+    logger.debug('Delta before return is: %.4f after step %d', delta, step)
+
+    return t
 
 
 # order time management
@@ -73,6 +155,8 @@ class BaseJobGenerator(ABC):
             seed = self.env.seed
         self._rnd_gen = np.random.default_rng(seed=seed)
         self._seed = seed
+        self._norm_td = pyf_dt.timedelta_from_val(1.0, TimeUnitsTimedelta.HOURS)
+        self._stat_info: StatDistributionInfo | None = None
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__} | Env: {self.env.name()} | Seed: {self.seed}'
@@ -89,8 +173,28 @@ class BaseJobGenerator(ABC):
     def rnd_gen(self) -> NPRandomGenerator:
         return self._rnd_gen
 
+    @property
+    def stat_info(self) -> StatDistributionInfo:
+        if self._stat_info is None:
+            raise ValueError(f'Statistical distribution info not available for >>{self}<<')
+        return self._stat_info
+
+    @stat_info.setter
+    def stat_info(
+        self,
+        value: StatDistributionInfo,
+    ) -> None:
+        if not isinstance(value, StatDistributionInfo):
+            raise TypeError(
+                (
+                    f'Type >StatDistributionInfo< must be assigned, '
+                    f'but value >>{value}<< was of type {type(value)}'
+                )
+            )
+        self._stat_info = value
+
     @abstractmethod
-    def retrieve(self) -> Iterator[JobGenerationInfo]: ...
+    def retrieve(self) -> Iterator[SourceSequence]: ...
 
 
 # TODO: cleanup and remove outdated methods
@@ -140,7 +244,7 @@ class RandomJobGenerator(BaseJobGenerator):
     def retrieve(
         self,
         exec_system_ids: Sequence[SystemID],
-        target_station_group_ids: dict[SystemID, Sequence[SystemID]] | None = None,
+        target_station_group_ids: dict[SystemID, Sequence[SystemID]],
         gen_setup_times: bool = False,
         time_unit: TimeUnitsTimedelta = TimeUnitsTimedelta.HOURS,
         gen_prio: bool = False,
@@ -157,18 +261,17 @@ class RandomJobGenerator(BaseJobGenerator):
             )
 
             station_groups: list[SystemID] | None = None
-            if target_station_group_ids is not None:
-                station_groups = []
-                for exec_system_id in execution_systems:
-                    # multiple candidates: random choice
-                    candidates = target_station_group_ids[exec_system_id]
+            station_groups = []
+            for exec_system_id in execution_systems:
+                # multiple candidates: random choice
+                candidates = target_station_group_ids[exec_system_id]
 
-                    if len(candidates) > 1:
-                        candidate = cast(SystemID, self.rnd_gen.choice(candidates))
-                    else:
-                        candidate = candidates[0]
+                if len(candidates) > 1:
+                    candidate = cast(SystemID, self.rnd_gen.choice(candidates))
+                else:
+                    candidate = candidates[0]
 
-                    station_groups.append(candidate)
+                station_groups.append(candidate)
 
             # ** order times
             # processing times
@@ -248,6 +351,24 @@ class ProductionSequence(BaseJobGenerator):
         # init base class
         super().__init__(env=env, seed=seed)
 
+    def _get_order_times(
+        self,
+        time_operational: Timedelta,
+        due_date_factor: float = 1.0,
+    ) -> OrderDates:
+        # planned starting time = current time
+        # planned ending = calculated due date
+        curr_time = self.env.t_as_dt()
+        due_date = calc_due_date(
+            starting_date=curr_time,
+            total_operational_time=time_operational,
+            factor=due_date_factor,
+        )
+        return OrderDates(
+            starting_planned=[curr_time],
+            ending_planned=[due_date],
+        )
+
 
 class SequenceSinglePA(ProductionSequence):
     def __init__(
@@ -290,7 +411,8 @@ class ConstantSequenceSinglePA(SequenceSinglePA):
     def retrieve(
         self,
         target_obj: Source,
-    ) -> Iterator[JobGenerationInfo]:
+        due_date_factor: float = 1.0,
+    ) -> Iterator[SourceSequence]:
         """Generates a constant sequence of job generation infos
 
         Parameters
@@ -300,18 +422,18 @@ class ConstantSequenceSinglePA(SequenceSinglePA):
 
         Yields
         ------
-        Iterator[JobGenerationInfo]
-            job generation infos
+        Iterator[SourceSequence]
+            job generation infos, processing time
         """
         # request StationGroupIDs by ProdAreaID in StationGroup database
         stat_groups = self.prod_area.subsystems_as_tuple()
 
-        loggers.loads.debug('stat_groups: %s', stat_groups)
+        logger.debug('stat_groups: %s', stat_groups)
 
         # number of all processing stations in associated production area
         total_num_proc_stations = self._prod_area.num_assoc_proc_station
 
-        loggers.loads.debug('total_num_proc_stations: %s', total_num_proc_stations)
+        logger.debug('total_num_proc_stations: %s', total_num_proc_stations)
 
         # order time equally distributed between all station within given ProductionArea
         # source distributes loads in round robin principle
@@ -320,7 +442,7 @@ class ConstantSequenceSinglePA(SequenceSinglePA):
         order_time_source = target_obj.order_time
         overall_time = order_time_source * total_num_proc_stations
 
-        loggers.loads.debug('station_order_time: %s', overall_time)
+        logger.debug('station_order_time: %s', overall_time)
 
         # generate endless sequence
         while True:
@@ -336,18 +458,23 @@ class ConstantSequenceSinglePA(SequenceSinglePA):
                         td=setup_time, round_to_next_seconds=60
                     )
                     proc_time = overall_time - setup_time
-                    # StationGroupID
+                    order_dates = self._get_order_times(
+                        time_operational=overall_time,
+                        due_date_factor=due_date_factor,
+                    )
                     stat_group_id = stat_group.system_id
                     job_gen_info = JobGenerationInfo(
                         custom_id=None,
                         execution_systems=[self._prod_area_id],
                         station_groups=[stat_group_id],
                         order_time=OrderTimes(proc=[proc_time], setup=[setup_time]),
-                        dates=OrderDates(),
+                        dates=order_dates,
                         prio=None,
                         current_state=SimStatesCommon.INIT,
                     )
-                    yield job_gen_info
+                    source_proc_time = target_obj.obtain_order_time()
+
+                    yield job_gen_info, source_proc_time
 
 
 class VariableSequenceSinglePA(SequenceSinglePA):
@@ -367,7 +494,7 @@ class VariableSequenceSinglePA(SequenceSinglePA):
         delta_lower_bound: float = 0.1,
         delta_upper_bound: float = 0.5,
         due_date_factor: float = 1.0,
-    ) -> Iterator[JobGenerationInfo]:
+    ) -> Iterator[SourceSequence]:
         """Generates a variable sequence of job generation infos,
         evenly distributed within a given percentage range where the middle
         of the range is the order time of a ideal sequence for the production
@@ -387,8 +514,8 @@ class VariableSequenceSinglePA(SequenceSinglePA):
 
         Yields
         ------
-        Iterator[JobGenerationInfo]
-            job generation infos
+        Iterator[SourceSequence]
+            job generation infos, processing time
 
         Raises
         ------
@@ -408,12 +535,12 @@ class VariableSequenceSinglePA(SequenceSinglePA):
         upper_percentage = 1.0 + delta_percentage
         # request StationGroupIDs by ProdAreaID in StationGroup database
         stat_groups = self.prod_area.subsystems_as_tuple()
-        loggers.loads.debug('stat_groups: %s', stat_groups)
+        logger.debug('stat_groups: %s', stat_groups)
 
         # number of all processing stations in associated production area
         total_num_proc_stations = self._prod_area.num_assoc_proc_station
 
-        loggers.loads.debug('total_num_proc_stations: %s', total_num_proc_stations)
+        logger.debug('total_num_proc_stations: %s', total_num_proc_stations)
 
         # order time equally distributed between all station within given ProductionArea
         # source distributes loads in round robin principle
@@ -422,7 +549,7 @@ class VariableSequenceSinglePA(SequenceSinglePA):
         order_time_source = target_obj.order_time
         overall_time_ideal = order_time_source * total_num_proc_stations
 
-        loggers.loads.debug('station_order_time: %s', overall_time_ideal)
+        logger.debug('station_order_time: %s', overall_time_ideal)
 
         # generate endless sequence
         while True:
@@ -447,20 +574,10 @@ class VariableSequenceSinglePA(SequenceSinglePA):
                         td=setup_time, round_to_next_seconds=60
                     )
                     proc_time = overall_time - setup_time
-                    # TODO add OrderDates
-                    # planned starting time = current time
-                    # planned ending = calculated due date
-                    curr_time = self.env.t_as_dt()
-                    due_date = calc_due_date(
-                        starting_date=curr_time,
-                        total_operational_time=overall_time,
-                        factor=due_date_factor,
+                    order_dates = self._get_order_times(
+                        time_operational=overall_time,
+                        due_date_factor=due_date_factor,
                     )
-                    order_dates = OrderDates(
-                        starting_planned=[curr_time],
-                        ending_planned=[due_date],
-                    )
-                    # StationGroupID
                     stat_group_id = stat_group.system_id
                     job_gen_info = JobGenerationInfo(
                         custom_id=None,
@@ -471,4 +588,188 @@ class VariableSequenceSinglePA(SequenceSinglePA):
                         prio=None,
                         current_state=SimStatesCommon.INIT,
                     )
-                    yield job_gen_info
+                    source_proc_time = target_obj.obtain_order_time()
+
+                    yield job_gen_info, source_proc_time
+
+
+class WIPSequenceSinglePA(SequenceSinglePA):
+    def __init__(
+        self,
+        env: SimulationEnvironment,
+        prod_area_id: SystemID,
+        seed: int | None = None,
+        *,
+        uniform_lb: float,
+        uniform_ub: float,
+        WIP_relative_planned: float,
+        WIP_alpha: float = 10,
+    ) -> None:
+        super().__init__(env=env, prod_area_id=prod_area_id, seed=seed)
+        self.uniform_lb = uniform_lb
+        self.uniform_ub = uniform_ub
+        self.stat_info = self.stat_info_uniform(uniform_lb, uniform_ub)
+        self.WIP_relative_planned = WIP_relative_planned
+        self.WIP_alpha = WIP_alpha
+
+    @staticmethod
+    def stat_info_uniform(
+        uniform_lb: float,
+        uniform_ub: float,
+    ) -> StatDistributionInfo:
+        if uniform_lb > uniform_ub:
+            raise ValueError('Lower bound of distribution greater than upper bound.')
+
+        expectation = (uniform_ub + uniform_lb) / 2
+        std = (uniform_ub - uniform_lb) / (2 * np.sqrt(3))
+
+        return StatDistributionInfo(mean=expectation, std=std)
+
+    @override
+    def retrieve(
+        self,
+        target_obj: Source,
+        factor_WIP: float = 0,
+    ) -> Iterator[SourceSequence]:
+        """(-1) < factor_WIP < 0: underload condition, factor_WIP <= (-1) only
+        allowed, if WIP would initially be higher than ideal
+        factor_WIP = 0: ideal condition
+        factor_WIP > 0: overload condition
+
+        Parameters
+        ----------
+        target_obj : Source
+            _description_
+        uniform_lb : float
+            _description_
+        uniform_ub : float
+            _description_
+        factor_WIP : float, optional
+            _description_, by default 0
+
+        Yields
+        ------
+        Iterator[SourceSequence]
+            _description_
+        """
+        # number of all processing stations in associated production area
+        total_num_proc_stations = self.prod_area.num_assoc_proc_station
+        # statistical information
+        mean = self.stat_info.mean
+        std = self.stat_info.std
+        # calc expected value of interval
+        # C_S / (C_M/µ + a*(1+(std^2/mean^2))
+        prod_area_capa = self.prod_area.processing_capacities(total=True) / self._norm_td
+        source_capa = target_obj.processing_capacity / self._norm_td
+        exp_val_interval_ideal = (source_capa / prod_area_capa) * mean
+        n_M = total_num_proc_stations
+        exp_val_interval = source_capa / (
+            (prod_area_capa / mean) + n_M * factor_WIP * (1 + std**2 / mean**2)
+        )
+        # determine condition
+        # underload condition: sustain longer time spans to hold it
+        # otherwise ideal condition is met again
+        overload_condition: bool = False
+        if factor_WIP > 0:
+            # later used to switch back to ideal sequence
+            overload_condition = True
+
+        # request StationGroupIDs by ProdAreaID in StationGroup database
+        stat_groups = self.prod_area.subsystems_as_tuple()
+        logger.debug('stat_groups: %s', stat_groups)
+        logger.debug('total_num_proc_stations: %s', total_num_proc_stations)
+
+        # duration for WIP build-up/tear-down phase
+        # implicit in equation: 1 day
+        # TODO changed for test of WIP regulation
+        duration_non_ideal_sequence = pyf_dt.timedelta_from_val(104, TimeUnitsTimedelta.WEEKS)
+        td_zero = Timedelta()
+
+        # ** planned lead time: identical for each job
+        lead_time_planned = self.prod_area.lead_time_planned(
+            WIP_relative=self.WIP_relative_planned,
+            order_time_stats_info=self.stat_info,
+            alpha=self.WIP_alpha,
+        )
+        logger.info('Calculated planned lead time: %s', lead_time_planned)
+
+        # generate endless sequence
+        while True:
+            # iterate over all StationGroups
+            for stat_group in stat_groups:
+                # generate job for each ProcessingStation in StationGroup
+                for _ in range(stat_group.num_assoc_proc_station):
+                    # generate random order time from uniform distribution
+                    overall_time_float = self.rnd_gen.uniform(
+                        low=self.uniform_lb,
+                        high=self.uniform_ub,
+                    )
+                    overall_time = pyf_dt.timedelta_from_val(
+                        overall_time_float, TimeUnitsTimedelta.HOURS
+                    )
+                    overall_time = pyf_dt.round_td_by_seconds(
+                        td=overall_time, round_to_next_seconds=60
+                    )
+                    # generate constant/random distribution of setup and processing time
+                    # setup_time_percentage = self.rnd_gen.uniform(low=0.1, high=0.8)
+                    # constant setup time percentage
+                    setup_time_percentage = 0.2
+                    setup_time = setup_time_percentage * overall_time
+                    setup_time = pyf_dt.round_td_by_seconds(
+                        td=setup_time, round_to_next_seconds=60
+                    )
+                    proc_time = overall_time - setup_time
+
+                    # TODO: calculate order dates based on target WIP
+                    # ideal situation is assumed: therefore ideal WIP is ensured which
+                    # leads to utilisation of nearly 100 percent (input equals output)
+                    # applies in this case: mean lead time = mean order time
+                    # three scenarios:
+                    # (1) WIP = WIP_ideal: actual lead time should equal
+                    # theoretical planned value
+                    # (2) WIP < WIP_ideal: actual lead time should also be equal to ideal
+                    # (3) WIP > WIP_ideal: actual lead time should be greater than
+                    # theoretical planned value
+                    # due_date_factor: float = 1.0
+                    # order_dates = self._get_order_times(
+                    #     time_operational=overall_time,
+                    #     due_date_factor=due_date_factor,
+                    # )
+                    # calc based on planned values: set relative WIP target to 1.5
+                    curr_time = self.env.t_as_dt()
+                    due_date_planned = curr_time + lead_time_planned
+                    order_dates = OrderDates(
+                        starting_planned=[curr_time],
+                        ending_planned=[due_date_planned],
+                    )
+
+                    stat_group_id = stat_group.system_id
+                    job_gen_info = JobGenerationInfo(
+                        custom_id=None,
+                        execution_systems=[self._prod_area_id],
+                        station_groups=[stat_group_id],
+                        order_time=OrderTimes(proc=[proc_time], setup=[setup_time]),
+                        dates=order_dates,
+                        prio=None,
+                        current_state=SimStatesCommon.INIT,
+                    )
+                    # source processing time
+                    interval_hours = self.rnd_gen.exponential(
+                        scale=exp_val_interval
+                    )  # in hours
+                    # transform to TD
+                    interval_td = pyf_dt.timedelta_from_val(
+                        interval_hours, TimeUnitsTimedelta.HOURS
+                    )
+                    interval_td = pyf_dt.round_td_by_seconds(
+                        interval_td,
+                        round_to_next_seconds=60,
+                    )
+                    if overload_condition and duration_non_ideal_sequence > td_zero:
+                        duration_non_ideal_sequence -= interval_td
+                    elif overload_condition and duration_non_ideal_sequence <= td_zero:
+                        exp_val_interval = exp_val_interval_ideal
+
+                    logger.debug('Generated new job at %s', curr_time)
+
+                    yield job_gen_info, interval_td

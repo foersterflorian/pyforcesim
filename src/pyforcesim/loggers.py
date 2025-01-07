@@ -1,13 +1,17 @@
 """provides logger objects for the pyforcesim package"""
 
 import logging
-import os
+import logging.handlers
 import sys
 import time
 from pathlib import Path
-from typing import Final
 
+from pyforcesim import common
 from pyforcesim.constants import (
+    LOG_DATE_FMT,
+    LOG_FMT,
+    LOGGING_ENABLED,
+    LOGGING_FILE_SIZE,
     LOGGING_LEVEL_AGENTS,
     LOGGING_LEVEL_BASE,
     LOGGING_LEVEL_BUFFERS,
@@ -16,6 +20,7 @@ from pyforcesim.constants import (
     LOGGING_LEVEL_DISPATCHER,
     LOGGING_LEVEL_ENV,
     LOGGING_LEVEL_ENV_BUILDER,
+    LOGGING_LEVEL_FILE,
     LOGGING_LEVEL_GYM_ENV,
     LOGGING_LEVEL_INFSTRCT,
     LOGGING_LEVEL_JOBS,
@@ -24,37 +29,42 @@ from pyforcesim.constants import (
     LOGGING_LEVEL_OPERATIONS,
     LOGGING_LEVEL_POLICIES,
     LOGGING_LEVEL_PRODSTATIONS,
+    LOGGING_LEVEL_QUEUES,
     LOGGING_LEVEL_SINKS,
     LOGGING_LEVEL_SOURCES,
+    LOGGING_LEVEL_STD_OUT,
     LOGGING_TO_FILE,
 )
 
-# IPython compatibility with stdout
-logging.Formatter.converter = time.gmtime
-LOG_FMT: Final[str] = ' %(asctime)s | pyfsim:%(module)s:%(levelname)s | %(message)s'
-LOG_DATE_FMT: Final[str] = '%Y-%m-%d %H:%M:%S +0000'
-if LOGGING_TO_FILE:
-    logging_pth = Path.cwd() / 'logs.txt'
-    if logging_pth.exists():
-        try:
-            os.remove(logging_pth)
-        except PermissionError:
-            pass
-    logging.basicConfig(
-        filename=logging_pth,
-        filemode='a',
-        format=LOG_FMT,
-        datefmt=LOG_DATE_FMT,
-    )
-else:
-    logging.basicConfig(
-        stream=sys.stdout,
-        format=LOG_FMT,
-        datefmt=LOG_DATE_FMT,
-    )
-
-base = logging.getLogger('pyforcesim.base')
+base = logging.getLogger('pyforcesim')
 base.setLevel(LOGGING_LEVEL_BASE)
+# formatters
+formatter = logging.Formatter(LOG_FMT, LOG_DATE_FMT)
+formatter.converter = time.gmtime
+# handlers STDERR
+handler_null = logging.NullHandler()
+base.addHandler(handler_null)
+handler_stdout = logging.StreamHandler(stream=sys.stdout)  # IPython compatibility
+handler_stdout.setLevel(LOGGING_LEVEL_STD_OUT)
+handler_stdout.setFormatter(formatter)
+
+if LOGGING_ENABLED:
+    base.removeHandler(handler_null)
+    base.addHandler(handler_stdout)
+
+if LOGGING_ENABLED and LOGGING_TO_FILE:
+    timestamp = common.get_timestamp(with_time=False)
+    logging_pth = Path.cwd() / f'logs_{timestamp}.txt'
+    handler_file = logging.handlers.RotatingFileHandler(
+        logging_pth,
+        maxBytes=LOGGING_FILE_SIZE,
+        backupCount=2,
+    )
+    handler_file.setLevel(LOGGING_LEVEL_FILE)
+    handler_file.setFormatter(formatter)
+    base.addHandler(handler_file)
+
+
 pyf_env = logging.getLogger('pyforcesim.sim_env')
 pyf_env.setLevel(LOGGING_LEVEL_ENV)
 dispatcher = logging.getLogger('pyforcesim.dispatcher')
@@ -69,6 +79,8 @@ prod_stations = logging.getLogger('pyforcesim.prodStations')
 prod_stations.setLevel(LOGGING_LEVEL_PRODSTATIONS)
 buffers = logging.getLogger('pyforcesim.buffers')
 buffers.setLevel(LOGGING_LEVEL_BUFFERS)
+queues = logging.getLogger('pyforcesim.queues')
+queues.setLevel(LOGGING_LEVEL_QUEUES)
 loads = logging.getLogger('pyforcesim.loads')
 loads.setLevel(LOGGING_LEVEL_LOADS)
 monitors = logging.getLogger('pyforcesim.monitors')
