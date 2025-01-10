@@ -26,6 +26,10 @@ class Policy(ABC):
     def __repr__(self) -> str:
         return self.__str__()
 
+    @property
+    def name(self) -> str:
+        return self.__class__.__name__
+
     @abstractmethod
     def apply(
         self,

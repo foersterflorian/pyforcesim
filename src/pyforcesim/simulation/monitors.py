@@ -19,8 +19,11 @@ from pyforcesim.constants import (
     HELPER_STATES,
     INF,
     PROCESSING_PROPERTIES,
+    SLACK_INIT_AS_UPPER_BOUND,
+    SLACK_OVERWRITE_UPPER_BOUND,
     SLACK_THRESHOLD_LOWER,
     SLACK_THRESHOLD_UPPER,
+    SLACK_USE_THRESHOLD_UPPER,
     UTIL_PROPERTIES,
     SimStatesAvailability,
     SimStatesCommon,
@@ -361,15 +364,23 @@ class LoadMonitor(Monitor[L]):
 
     def release(self) -> None:
         """certain actions performed on release"""
+        # TODO set fixed upper bound without adaption to threshold value
+        # TODO (provoke early completion)
         self.calc_KPI()
         self.slack_init = self.slack
         self.slack_init_hours = self.slack_hours
-        self.slack_upper_bound = self.slack_init
-        self.slack_upper_bound_hours = self.slack_init_hours
 
-        if self.slack_upper_bound < SLACK_THRESHOLD_UPPER:
-            self.slack_upper_bound = SLACK_THRESHOLD_UPPER
-            self.slack_upper_bound_hours = SLACK_THRESHOLD_UPPER / self.NORM_TD
+        if SLACK_INIT_AS_UPPER_BOUND:
+            self.slack_upper_bound = self.slack_init
+            self.slack_upper_bound_hours = self.slack_init_hours
+
+            if SLACK_USE_THRESHOLD_UPPER and self.slack_upper_bound < SLACK_THRESHOLD_UPPER:
+                self.slack_upper_bound = SLACK_THRESHOLD_UPPER
+                self.slack_upper_bound_hours = SLACK_THRESHOLD_UPPER / self.NORM_TD
+
+        else:
+            self.slack_upper_bound = SLACK_OVERWRITE_UPPER_BOUND
+            self.slack_upper_bound_hours = self.slack_upper_bound / self.NORM_TD
 
     def slack_time_units(
         self,

@@ -32,7 +32,7 @@ DEC_TYPE: Final[AgentDecisionTypes] = AgentDecisionTypes.SEQ
 USE_TRAIN_CONFIG: Final[bool] = False
 NORMALISE_OBS: Final[bool] = True
 NUM_EPISODES: Final[int] = 1
-FILENAME_TARGET_MODEL: Final[str] = '2025-01-07--10-32-05_pyf_sim_PPO_mask_TS-40961'
+FILENAME_TARGET_MODEL: Final[str] = '2025-01-10--10-50-06_pyf_sim_PPO_mask_TS-40961'
 
 model_properties_pattern = re.compile(r'(?:pyf_sim_)([\w]+)_(TS-[\d]+)$')
 matches = model_properties_pattern.search(FILENAME_TARGET_MODEL)
@@ -44,7 +44,7 @@ ALGO_TYPE: Final[str] = matches.group(1)
 TIMESTEPS: Final[str] = matches.group(2)
 
 # USER_TARGET_FOLDER: Final[str] = '2024-06-24-01__1-3-7__ConstIdeal__Util'
-USER_TARGET_FOLDER: Final[str] = '2025-01-07-01__1-2-3__VarIdeal__Slack'
+USER_TARGET_FOLDER: Final[str] = '2025-01-10-01__1-2-3__VarIdeal__Slack'
 USER_FOLDER: Final[str] = f'results/{USER_TARGET_FOLDER}'
 user_exp_type_pattern = re.compile(
     r'^([\d\-]*)(?:[_]*)([\d\-]*)(?:[_]*)([a-zA-Z]*)(?:[_]*)([a-zA-Z]*)$'
@@ -130,14 +130,18 @@ def export_gantt_chart(
 
     jobs_total = env.jobs_total
     jobs_tardy = env.jobs_tardy
+    jobs_tardy_perc = jobs_tardy / jobs_total
     jobs_early = env.jobs_early
+    jobs_early_perc = jobs_early / jobs_total
     jobs_punctual = env.jobs_punctual
+    jobs_punctual_perc = jobs_punctual / jobs_total
 
     title_KPIs = (
         f'mean util: {mean_utilisation:.6%}<br>ending date deviation: '
         f'mean: {end_dev_mean_hours:.6f}, std: {end_dev_std_hours:.6f}<br>'
-        f'jobs: total={jobs_total}, punctual={jobs_punctual}, '
-        f'early={jobs_early}, tardy={jobs_tardy}, '
+        f'jobs: total={jobs_total}, punctual={jobs_punctual} ({jobs_punctual_perc:.2%}), '
+        f'early={jobs_early} ({jobs_early_perc:.2%}), '
+        f'tardy={jobs_tardy} ({jobs_tardy_perc:.2%})'
     )
     title_reward = f'<br>Episode: {episode_num}, Cum Reward: {cum_reward:.4f}'
 

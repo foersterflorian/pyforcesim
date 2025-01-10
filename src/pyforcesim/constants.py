@@ -88,6 +88,11 @@ class TimeUnitsTimedelta(enum.StrEnum):
 TIMEZONE_CEST: Final[ZoneInfo] = ZoneInfo('Europe/Berlin')
 TIMEZONE_UTC: Final[Timezone] = Timezone.utc
 DEFAULT_DATETIME: Final[Datetime] = Datetime(1970, 1, 1, tzinfo=TIMEZONE_UTC)
+SLACK_INIT_AS_UPPER_BOUND: Final[bool] = False
+# value to use as slack if initial value is not set as upper bound
+SLACK_OVERWRITE_UPPER_BOUND: Final[Timedelta] = Timedelta(hours=1)
+# only takes effect if initial slack used as upper bound
+SLACK_USE_THRESHOLD_UPPER: Final[bool] = True
 SLACK_THRESHOLD_UPPER: Final[Timedelta] = Timedelta(hours=2)
 SLACK_THRESHOLD_LOWER: Final[Timedelta] = Timedelta()
 
