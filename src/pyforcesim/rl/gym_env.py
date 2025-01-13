@@ -253,6 +253,7 @@ class JSSEnv(gym.Env):
         self.sim_utilisation: float | None = None
         self.end_date_dev_mean: Timedelta | None = None
         self.end_date_dev_std: Timedelta | None = None
+        self.policy_name: str | None = None
         # only SEQ agents
         self.jobs_total: int = 0
         self.jobs_tardy: int = 0
@@ -421,6 +422,10 @@ class JSSEnv(gym.Env):
         end_date_dev_std = cast('PDTimedelta', op_db['ending_date_deviation'].std())
         self.end_date_dev_mean = end_date_dev_mean.to_pytimedelta()
         self.end_date_dev_std = end_date_dev_std.to_pytimedelta()
+
+        seq_policy = self.sim_env.dispatcher.seq_policy
+        if seq_policy is not None:
+            self.policy_name = seq_policy.name
 
         seq_agent: agents.SequencingAgent | None = None
         if self.sim_env.seq_agents:

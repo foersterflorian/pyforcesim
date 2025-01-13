@@ -105,6 +105,7 @@ def export_gantt_chart(
     cum_reward: float,
     auto_open_html: bool = False,
 ) -> None:
+    seed = env.seed if env.seed is not None else 'n.a.'
     gantt_chart = env.last_gantt_chart
     # ** KPIs
     if gantt_chart is None:
@@ -137,7 +138,9 @@ def export_gantt_chart(
     jobs_punctual_perc = jobs_punctual / jobs_total
 
     title_KPIs = (
-        f'mean util: {mean_utilisation:.6%}<br>ending date deviation: '
+        f'seed: {seed}<br>'
+        f'cycle time: {cycle_time}, mean util: {mean_utilisation:.6%}'
+        f'<br>ending date deviation: '
         f'mean: {end_dev_mean_hours:.6f}, std: {end_dev_std_hours:.6f}<br>'
         f'jobs: total={jobs_total}, punctual={jobs_punctual} ({jobs_punctual_perc:.2%}), '
         f'early={jobs_early} ({jobs_early_perc:.2%}), '
@@ -146,21 +149,22 @@ def export_gantt_chart(
     title_reward = f'<br>Episode: {episode_num}, Cum Reward: {cum_reward:.4f}'
 
     if is_benchmark:
+        policy_name = env.policy_name if env.policy_name is not None else 'n.a.'
         title = (
-            f'Gantt Chart<br>Benchmark '
-            f'<br>ExpType: {VAL_EXP_TYPE}, cycle time: {cycle_time}, '
+            f'Gantt Chart<br>Benchmark (Policy: {policy_name})'
+            f'<br>ExpType: {VAL_EXP_TYPE}, '
         )
         title_chart = title + title_KPIs + title_reward
-        filename = f'Benchmark_Episode_{episode_num}'
+        filename = f'Benchmark_Episode_{episode_num}_Seed_{seed}'
     else:
         title = (
-            f'Gantt Chart<br>Model(Algo: {ALGO_TYPE}, Timesteps: '
-            f'{TIMESTEPS})<br>ExpType: {ROOT_EXP_TYPE}, cycle time: {cycle_time}, '
+            f'Gantt Chart<br>Model (Algo: {ALGO_TYPE}, Timesteps: '
+            f'{TIMESTEPS})<br>ExpType: {ROOT_EXP_TYPE}, '
         )
         title_chart = title + title_KPIs + title_reward
-        filename = f'{ALGO_TYPE}_{TIMESTEPS}_Episode_{episode_num}'
+        filename = f'{ALGO_TYPE}_{TIMESTEPS}_Episode_{episode_num}_Seed_{seed}'
 
-    gantt_chart.update_layout(title=title_chart, margin=dict(t=230))
+    gantt_chart.update_layout(title=title_chart, margin=dict(t=275))
     save_pth = common.prepare_save_paths(
         base_folder=ROOT_FOLDER,
         target_folder=None,
@@ -175,7 +179,8 @@ def export_dbs(
     is_benchmark: bool,
     episode_num: int,
 ) -> None:
-    filename_base = f'{ALGO_TYPE}_{TIMESTEPS}_Episode_{episode_num}'
+    seed = env.seed if env.seed is not None else 'n.a.'
+    filename_base = f'{ALGO_TYPE}_{TIMESTEPS}_Episode_{episode_num}_Seed_{seed}'
     filename_job_db = f'{filename_base}-job-db'
     filename_op_db = f'{filename_base}-op-db'
     if is_benchmark:
@@ -241,6 +246,8 @@ def callback(locals, *_):
 
 def eval_agent_policy(
     num_episodes: int = NUM_EPISODES,
+    seed: int | None = ROOT_RNG_SEED,
+    sim_randomise_reset: bool = False,
 ) -> None:
     pth_vec_norm, model = load_model()
     env = make_env(
@@ -248,9 +255,9 @@ def eval_agent_policy(
         tensorboard_path=None,
         normalise_obs=False,
         gantt_chart=True,
-        seed=ROOT_RNG_SEED,
+        seed=seed,
         verify_env=False,
-        sim_randomise_reset=False,
+        sim_randomise_reset=sim_randomise_reset,
     )
 
     if NORMALISE_OBS:
@@ -282,12 +289,14 @@ def eval_agent_policy(
 
 def eval_agent_benchmark(
     num_episodes: int = VAL_EXP_EPISODES,
+    seed: int | None = ROOT_RNG_SEED,
+    sim_randomise_reset: bool = False,
 ) -> None:
     env = JSSEnv(
         VAL_EXP_TYPE,
         agent_type=DEC_TYPE,
-        seed=ROOT_RNG_SEED,
-        sim_randomise_reset=False,
+        seed=seed,
+        sim_randomise_reset=sim_randomise_reset,
         gantt_chart_on_termination=True,
         sim_check_agent_feasibility=True,
         builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
@@ -368,10 +377,11 @@ def main() -> None:
         category=UserWarning,
         message=r'^[\s]*.*to get variables from other wrappers is deprecated.*$',
     )
-    eval_agent_policy(num_episodes=1)
+    eval_agent_policy(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
+    eval_agent_policy(num_episodes=1, seed=100, sim_randomise_reset=False)
     print('--------------------------------------------------------------------')
-    eval_agent_benchmark(num_episodes=1)
-    # benchmark()
+    eval_agent_benchmark(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
+    eval_agent_benchmark(num_episodes=1, seed=100, sim_randomise_reset=False)
 
 
 if __name__ == '__main__':
