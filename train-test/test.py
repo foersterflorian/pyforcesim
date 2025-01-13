@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, cast
@@ -9,6 +10,7 @@ import numpy as np
 import numpy.typing as npt
 from sb3_contrib.common.maskable.evaluation import evaluate_policy
 from sb3_contrib.ppo_mask import MaskablePPO
+from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from train import (
     BASE_FOLDER,
@@ -151,8 +153,7 @@ def export_gantt_chart(
     if is_benchmark:
         policy_name = env.policy_name if env.policy_name is not None else 'n.a.'
         title = (
-            f'Gantt Chart<br>Benchmark (Policy: {policy_name})'
-            f'<br>ExpType: {VAL_EXP_TYPE}, '
+            f'Gantt Chart<br>Benchmark (Policy: {policy_name})<br>ExpType: {VAL_EXP_TYPE}, '
         )
         title_chart = title + title_KPIs + title_reward
         filename = f'Benchmark_Episode_{episode_num}_Seed_{seed}'
@@ -215,17 +216,19 @@ def callback(locals, *_):
         return
 
     vec_env = cast(DummyVecEnv, locals['env'])
-    env = cast(JSSEnv, vec_env.envs[0])
+    env = cast('Monitor | JSSEnv', vec_env.envs[0])
+    if isinstance(env, Monitor):
+        env = cast(JSSEnv, env.env)
     # env.test_on_callback()
 
     cum_rewards = cast(npt.NDArray[np.float32], locals['current_rewards'])
     cum_reward = cum_rewards[0]
     episode_counters = cast(npt.NDArray[np.int32], locals['episode_counts'])
     episode_num = episode_counters[0]
-    print(f'[AGENT EVAL] Episode {episode_num+1}: Reward = {cum_reward:.4f}')
+    print(f'[AGENT EVAL] Episode {episode_num + 1}: Reward = {cum_reward:.4f}')
     print(
         (
-            f'[AGENT EVAL] Episode {episode_num+1}: Cycle Time = {env.cycle_time}, '
+            f'[AGENT EVAL] Episode {episode_num + 1}: Cycle Time = {env.cycle_time}, '
             f'Utilisation = {env.sim_utilisation:.4%}'
         )
     )
@@ -322,7 +325,7 @@ def eval_agent_benchmark(
 
         cum_reward = sum(episode_rewards)
         episodes_cum_rewards.append(cum_reward)
-        print(f'[BENCHMARK] Episode {episode_num+1}: Reward = {cum_reward:.4f}')
+        print(f'[BENCHMARK] Episode {episode_num + 1}: Reward = {cum_reward:.4f}')
 
         export_gantt_chart(
             env=env,
@@ -377,11 +380,15 @@ def main() -> None:
         category=UserWarning,
         message=r'^[\s]*.*to get variables from other wrappers is deprecated.*$',
     )
+    t1 = time.perf_counter()
     eval_agent_policy(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
-    eval_agent_policy(num_episodes=1, seed=100, sim_randomise_reset=False)
+    # eval_agent_policy(num_episodes=1, seed=100, sim_randomise_reset=False)
     print('--------------------------------------------------------------------')
     eval_agent_benchmark(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
-    eval_agent_benchmark(num_episodes=1, seed=100, sim_randomise_reset=False)
+    # eval_agent_benchmark(num_episodes=1, seed=100, sim_randomise_reset=False)
+    t2 = time.perf_counter()
+    dur = t2 - t1
+    print(f'Duration for agent eval and benchmark: {dur:.4f} sec')
 
 
 if __name__ == '__main__':
