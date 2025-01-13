@@ -370,17 +370,20 @@ class LoadMonitor(Monitor[L]):
         self.slack_init = self.slack
         self.slack_init_hours = self.slack_hours
 
-        if SLACK_INIT_AS_UPPER_BOUND:
-            self.slack_upper_bound = self.slack_init
-            self.slack_upper_bound_hours = self.slack_init_hours
+        self.slack_upper_bound = self.slack_init
 
-            if SLACK_USE_THRESHOLD_UPPER and self.slack_upper_bound < SLACK_THRESHOLD_UPPER:
-                self.slack_upper_bound = SLACK_THRESHOLD_UPPER
-                self.slack_upper_bound_hours = SLACK_THRESHOLD_UPPER / self.NORM_TD
+        if (
+            SLACK_INIT_AS_UPPER_BOUND
+            and SLACK_USE_THRESHOLD_UPPER
+            and self.slack_upper_bound < SLACK_THRESHOLD_UPPER
+        ):
+            self.slack_upper_bound = SLACK_THRESHOLD_UPPER
 
         else:
-            self.slack_upper_bound = SLACK_OVERWRITE_UPPER_BOUND
-            self.slack_upper_bound_hours = self.slack_upper_bound / self.NORM_TD
+            if self.slack_upper_bound > SLACK_OVERWRITE_UPPER_BOUND:
+                self.slack_upper_bound = SLACK_OVERWRITE_UPPER_BOUND
+
+        self.slack_upper_bound_hours = self.slack_upper_bound / self.NORM_TD
 
     def slack_time_units(
         self,
