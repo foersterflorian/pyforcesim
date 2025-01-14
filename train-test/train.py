@@ -38,10 +38,11 @@ FOLDER_MODEL_SAVEPOINTS: Final[str] = 'models'
 
 MODEL: Final[str] = 'PPO_mask'
 MODEL_BASE_NAME: Final[str] = f'pyf_sim_{MODEL}'
-NUM_EVAL_EPISODES: Final[int] = 2
-EVAL_FREQ: Final[int] = 2048 * 4
+STEPS_TILL_UPDATE: Final[int] = 2048 * 2
+NUM_EVAL_EPISODES: Final[int] = 1
+EVAL_FREQ: Final[int] = STEPS_TILL_UPDATE * 4
 REWARD_THRESHOLD: Final[float | None] = None  # -0.01
-TIMESTEPS_PER_ITER: Final[int] = int(2048 * 1)
+TIMESTEPS_PER_ITER: Final[int] = STEPS_TILL_UPDATE * 2
 ITERATIONS: Final[int] = 20
 ITERATIONS_TILL_SAVE: Final[int] = 2
 
@@ -165,6 +166,7 @@ def make_env(
 
 def train(
     continue_learning: bool,
+    sim_randomise_reset: bool = False,
 ) -> None:
     prepare_base_folder(BASE_FOLDER)
     tensorboard_path = prepare_tb_path(BASE_FOLDER, FOLDER_TB)
@@ -177,6 +179,7 @@ def train(
         tensorboard_path,
         normalise_obs=NORMALISE_OBS,
         seed=RNG_SEED,
+        sim_randomise_reset=sim_randomise_reset,
     )
     eval_env = make_env(
         EXP_TYPE,
@@ -227,6 +230,7 @@ def train(
             verbose=1,
             tensorboard_log=str(tensorboard_path),
             seed=RNG_SEED,
+            n_steps=STEPS_TILL_UPDATE,
         )
         calc_iterations = 0
 
