@@ -23,7 +23,7 @@ RNG_SEED: Final[int] = 42
 
 DATE = common.get_timestamp(with_time=False)
 DEC_TYPE: Final[AgentDecisionTypes] = AgentDecisionTypes.SEQ
-EXP_NUM: Final[str] = '1'
+EXP_NUM: Final[str] = '3'
 ENV_STRUCTURE: Final[str] = '1-2-3'
 JOB_GEN_METHOD: Final[str] = 'VarIdeal'
 EXP_TYPE: Final[str] = f'{ENV_STRUCTURE}_{JOB_GEN_METHOD}'
@@ -43,7 +43,7 @@ NUM_EVAL_EPISODES: Final[int] = 1
 EVAL_FREQ: Final[int] = STEPS_TILL_UPDATE * 4
 REWARD_THRESHOLD: Final[float | None] = None  # -0.01
 TIMESTEPS_PER_ITER: Final[int] = STEPS_TILL_UPDATE * 2
-ITERATIONS: Final[int] = 20
+ITERATIONS: Final[int] = 80
 ITERATIONS_TILL_SAVE: Final[int] = 2
 
 FILENAME_PRETRAINED_MODEL: Final[str] = '2024-07-23--16-20-52_pyf_sim_PPO_mask_TS-69632'
@@ -112,7 +112,7 @@ def load_model() -> tuple[Path, MaskablePPO]:
         filename=vec_norm_filename,
         suffix='pkl',
     )
-    model = MaskablePPO.load(pth_model)
+    model = MaskablePPO.load(pth_model, device='cpu')
 
     return pth_vec_norm, model
 
@@ -231,6 +231,7 @@ def train(
             tensorboard_log=str(tensorboard_path),
             seed=RNG_SEED,
             n_steps=STEPS_TILL_UPDATE,
+            device='cpu',
         )
         calc_iterations = 0
 

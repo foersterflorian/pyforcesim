@@ -32,7 +32,7 @@ def start_tensorboard() -> None:
     ]
     command = ' '.join(command_parts)
     print(f'Starting with command: >> {command}')
-    subprocess.run(command)
+    subprocess.run(command, shell=True)
 
 
 def open_browser() -> None:
