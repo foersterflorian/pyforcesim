@@ -23,7 +23,7 @@ RNG_SEED: Final[int] = 42
 
 DATE = common.get_timestamp(with_time=False)
 DEC_TYPE: Final[AgentDecisionTypes] = AgentDecisionTypes.SEQ
-EXP_NUM: Final[str] = '3'
+EXP_NUM: Final[str] = '1'
 ENV_STRUCTURE: Final[str] = '1-2-3'
 JOB_GEN_METHOD: Final[str] = 'VarIdeal'
 EXP_TYPE: Final[str] = f'{ENV_STRUCTURE}_{JOB_GEN_METHOD}'

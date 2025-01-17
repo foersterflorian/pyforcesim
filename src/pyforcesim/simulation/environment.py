@@ -327,6 +327,9 @@ class SimulationEnvironment(salabim.Environment):
             'Integrity check for Environment >>%s<< successful.', self.name()
         )
 
+    def check_sim_ended(self) -> bool:
+        return self.infstruct_mgr.all_sources_stopped and not self._event_list
+
     def initialise(self) -> None:
         if not self.initialised:
             # infrastructure manager instance
@@ -400,6 +403,10 @@ class InfrastructureManager:
         self._logical_queue_counter: int = 0
         # self._logical_queue_counter = SystemID(0)
         self._logical_queue_custom_identifiers: set[CustomID] = set()
+        # [RESOURCES] sources: job producing state - tracking whether sources
+        # are still producing jobs or not
+        self.all_sources_stopped: bool = False
+        self._sources_stopped: dict[SystemID, bool] = {}
         # [RESOURCES] sink: pool of sinks possible to allow multiple sinks in one environment
         # [PERHAPS CHANGED LATER]
         # currently only one sink out of the pool is chosen because jobs do not contain
@@ -596,6 +603,8 @@ class InfrastructureManager:
             if not self._sink_registered:
                 self._sink_registered = True
             self._sinks.append(obj)
+        elif isinstance(obj, Source) and system_id not in self._sources_stopped:
+            self._sources_stopped[system_id] = False
         # count number of machines
         if isinstance(obj, ProcessingStation):
             self.num_proc_stations += 1
@@ -915,6 +924,20 @@ class InfrastructureManager:
             # calculate KPIs if 'TEMP' state is set
             if not reset_temp:
                 obj.stat_monitor.calc_KPI()
+
+    def set_source_end_generation(
+        self,
+        system_id: SystemID,
+    ) -> None:
+        if system_id not in self._sources_stopped:
+            raise KeyError(
+                (
+                    f'System ID {system_id} not found for corresponding sources. '
+                    f'Is the calling object really a source?'
+                )
+            )
+        self._sources_stopped[system_id] = True
+        self.all_sources_stopped = all(self._sources_stopped.values())
 
     def initialise(self) -> None:
         for prod_area in self.prod_areas.values():
@@ -3775,7 +3798,7 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         infstruct_mgr = self.env.infstruct_mgr
         # TODO check for better method
         # generate small random simulation time to avoid requests at the same time
-        random_sim_time = self.env.rng.random() / 1000
+        random_sim_time = self.env.rng.random() / 1e6
         yield self.sim_control.hold(random_sim_time, priority=self.sim_put_prio)
         # call dispatcher to check for allocation rule
         # resets current feasibility status
@@ -3788,7 +3811,11 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         elif is_agent and seq_agent is not None:
             # if agent is set, set flags and calculate feature vector
             # as long as there is no feasible action
+            # TODO eliminate cases of ongoing loops because simulation runs
+            # TODO have already ended
             while (not seq_agent.action_feasible) or (job is None):
+                if self.env.check_sim_ended():
+                    yield self.sim_control.passivate()
                 loggers.agents.debug('----------------- Entry loop of %s...', self)
                 loggers.agents.debug('--- event list: %s', self.env._event_list)
                 # ** SET external Gym flag, build feature vector
@@ -3815,6 +3842,8 @@ class InfrastructureObject(System, metaclass=ABCMeta):
             # obtain target job if no agent decision is needed
             # wait if no proper selection is possible
             while job is None:
+                if self.env.check_sim_ended():
+                    yield self.sim_control.passivate()
                 job = dispatcher.request_job_sequencing(req_obj=self, is_agent=is_agent)
                 if job is None:
                     # implement waiting
@@ -4588,7 +4617,7 @@ class Source(InfrastructureObject):
 
     @override
     def post_process(self) -> None:
-        pass
+        self.env.infstruct_mgr.set_source_end_generation(self.system_id)
 
 
 class Sink(InfrastructureObject):
