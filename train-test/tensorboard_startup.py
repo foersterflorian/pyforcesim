@@ -4,7 +4,11 @@ import webbrowser
 from threading import Thread
 from typing import Final
 
+import pyforcesim.loggers
 from pyforcesim import common
+
+pyforcesim.loggers.disable_logging()
+
 
 USE_TRAIN_CONFIG: Final[bool] = True
 if USE_TRAIN_CONFIG:
