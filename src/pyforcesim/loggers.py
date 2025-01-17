@@ -59,6 +59,7 @@ if LOGGING_ENABLED and LOGGING_TO_FILE:
         logging_pth,
         maxBytes=LOGGING_FILE_SIZE,
         backupCount=2,
+        delay=True,
     )
     handler_file.setLevel(LOGGING_LEVEL_FILE)
     handler_file.setFormatter(formatter)
@@ -103,3 +104,11 @@ gym_env = logging.getLogger('pyforcesime.gym_env')
 gym_env.setLevel(LOGGING_LEVEL_GYM_ENV)
 env_builder = logging.getLogger('pyforcesime.env_builder')
 env_builder.setLevel(LOGGING_LEVEL_ENV_BUILDER)
+
+
+def disable_logging() -> None:
+    handlers = tuple(base.handlers)
+    for handler in handlers:
+        base.removeHandler(handler)
+
+    base.addHandler(handler_null)
