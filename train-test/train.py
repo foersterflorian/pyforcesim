@@ -15,10 +15,9 @@ from pyforcesim.rl.sb3.custom_callbacks import MaskableEvalCallback as EvalCallb
 from pyforcesim.types import AgentDecisionTypes, BuilderFuncFamilies
 
 # ** input
-OVERWRITE_FOLDERS: Final[bool] = True
-CONTINUE_LEARNING: Final[bool] = False
+OVERWRITE_FOLDERS: Final[bool] = False
+CONTINUE_LEARNING: Final[bool] = True
 NORMALISE_OBS: Final[bool] = True
-CALC_ITERATIONS: Final[int] = 69632 // 2048
 RNG_SEED: Final[int] = 42
 
 DATE = common.get_timestamp(with_time=False)
@@ -43,10 +42,11 @@ NUM_EVAL_EPISODES: Final[int] = 1
 EVAL_FREQ: Final[int] = STEPS_TILL_UPDATE * 4
 REWARD_THRESHOLD: Final[float | None] = None  # -0.01
 TIMESTEPS_PER_ITER: Final[int] = STEPS_TILL_UPDATE * 2
-ITERATIONS: Final[int] = 80
+ITERATIONS: Final[int] = 500
 ITERATIONS_TILL_SAVE: Final[int] = 2
+CALC_ITERATIONS: Final[int] = 1310721 // TIMESTEPS_PER_ITER
 
-FILENAME_PRETRAINED_MODEL: Final[str] = '2024-07-23--16-20-52_pyf_sim_PPO_mask_TS-69632'
+FILENAME_PRETRAINED_MODEL: Final[str] = '2025-01-17--15-36-17_pyf_sim_PPO_mask_TS-1310720'
 
 
 def prepare_base_folder(
