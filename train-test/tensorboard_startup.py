@@ -1,3 +1,4 @@
+import shlex
 import subprocess
 import time
 import webbrowser
@@ -36,7 +37,8 @@ def start_tensorboard() -> None:
     ]
     command = ' '.join(command_parts)
     print(f'Starting with command: >> {command}')
-    subprocess.run(command, shell=True)
+    run_cmd = shlex.split(command)
+    subprocess.run(run_cmd)
 
 
 def open_browser() -> None:
