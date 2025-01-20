@@ -4574,13 +4574,9 @@ class Source(InfrastructureObject):
             # [Call:DISPATCHER]
             dispatcher.release_job(job=job)
             # [STATS:Source] inputs
-            # TODO check removal
-            # self.stat_monitor.change_WIP_num(remove=False)
-
             loggers.sources.debug(
                 '[SOURCE: %s] Generated %s at %s', self, job, self.env.t_as_dt()
             )
-
             loggers.sources.debug('[SOURCE: %s] Request allocation...', self)
             # put job via 'put_job' function,
             # implemented in parent class 'InfrastructureObject'
@@ -4588,12 +4584,9 @@ class Source(InfrastructureObject):
             target_proc_station = yield from self.put_job(job=job)
             loggers.sources.debug('[SOURCE] PUT JOB with ret = %s', target_proc_station)
             # [STATS:Source] outputs
-            # TODO check removal
-            # self.stat_monitor.change_WIP_num(remove=True)
             # [STATE:Source] put in 'WAITING' by 'put_job' method but still processing
             # only 'WAITING' if all jobs are generated
             infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
-
             # hold for defined generation time (constant or statistically distributed)
             # if hold time elapsed start new generation
             proc_time_sim = self.env.td_to_simtime(src_time)

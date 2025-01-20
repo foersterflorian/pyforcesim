@@ -630,6 +630,7 @@ class WIPSequenceSinglePA(SequenceSinglePA):
         self,
         target_obj: Source,
         factor_WIP: float = 0,
+        random_due_date_diff: bool = False,
     ) -> Iterator[SourceSequence]:
         """(-1) < factor_WIP < 0: underload condition, factor_WIP <= (-1) only
         allowed, if WIP would initially be higher than ideal
@@ -691,7 +692,14 @@ class WIPSequenceSinglePA(SequenceSinglePA):
             order_time_stats_info=self.stat_info,
             alpha=self.WIP_alpha,
         )
-        logger.info('Calculated planned lead time: %s', lead_time_planned)
+        logger.info(
+            '[LOADS] ProdArea: %s, Calculated planned lead time: %s',
+            self.prod_area,
+            lead_time_planned,
+        )
+        # TODO random change in planned due date
+        upper_bound_dev = np.sqrt(3)
+        lower_bound_dev = (-1) * upper_bound_dev
 
         # generate endless sequence
         while True:
@@ -720,7 +728,6 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                     )
                     proc_time = overall_time - setup_time
 
-                    # TODO: calculate order dates based on target WIP
                     # ideal situation is assumed: therefore ideal WIP is ensured which
                     # leads to utilisation of nearly 100 percent (input equals output)
                     # applies in this case: mean lead time = mean order time
@@ -731,13 +738,20 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                     # (3) WIP > WIP_ideal: actual lead time should be greater than
                     # theoretical planned value
                     # due_date_factor: float = 1.0
-                    # order_dates = self._get_order_times(
-                    #     time_operational=overall_time,
-                    #     due_date_factor=due_date_factor,
-                    # )
+
                     # calc based on planned values: set relative WIP target to 1.5
                     curr_time = self.env.t_as_dt()
                     due_date_planned = curr_time + lead_time_planned
+                    # TODO random change in planned due date
+                    if random_due_date_diff:
+                        hours_deviation = self.rnd_gen.uniform(
+                            lower_bound_dev, upper_bound_dev
+                        )
+                        planned_ending_dev = pyf_dt.timedelta_from_val(
+                            hours_deviation, time_unit=TimeUnitsTimedelta.HOURS
+                        )
+                        due_date_planned += planned_ending_dev
+
                     order_dates = OrderDates(
                         starting_planned=[curr_time],
                         ending_planned=[due_date_planned],
@@ -765,6 +779,7 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                         interval_td,
                         round_to_next_seconds=60,
                     )
+
                     if overload_condition and duration_non_ideal_sequence > td_zero:
                         duration_non_ideal_sequence -= interval_td
                     elif overload_condition and duration_non_ideal_sequence <= td_zero:

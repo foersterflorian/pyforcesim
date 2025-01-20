@@ -45,7 +45,7 @@ if matches is None:
 ALGO_TYPE: Final[str] = matches.group(1)
 TIMESTEPS: Final[str] = matches.group(2)
 
-USER_TARGET_FOLDER: Final[str] = '2025-01-17-01__1-2-3__VarIdeal__Slack'
+USER_TARGET_FOLDER: Final[str] = '2025-01-17-02__1-2-3__VarIdeal__Slack'
 USER_FOLDER: Final[str] = f'results/{USER_TARGET_FOLDER}'
 user_exp_type_pattern = re.compile(
     r'^([\d\-]*)(?:[_]*)([\d\-]*)(?:[_]*)([a-zA-Z]*)(?:[_]*)([a-zA-Z]*)$'
@@ -383,7 +383,7 @@ def main() -> None:
     eval_agent_policy(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
     # eval_agent_policy(num_episodes=1, seed=100, sim_randomise_reset=False)
     print('--------------------------------------------------------------------')
-    eval_agent_benchmark(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
+    # eval_agent_benchmark(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
     # eval_agent_benchmark(num_episodes=1, seed=100, sim_randomise_reset=False)
     t2 = time.perf_counter()
     dur = t2 - t1
