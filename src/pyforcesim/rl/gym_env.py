@@ -48,7 +48,8 @@ BUILDER_FUNCS: Final[dict[BuilderFuncFamilies, EnvBuilderFunc]] = {
 BUILDER_FUNC_WIP_CFG: Final[EnvBuilderWIPConfig] = {
     'factor_WIP': 8,
     #'WIP_relative_target': (0.5, 3, 6),
-    'WIP_relative_target': (0.5,),
+    # 'WIP_relative_target': (0.5,),
+    'WIP_relative_target': (1.5,),
     'WIP_relative_planned': 1.5,
     'alpha': 7,
     'buffer_size': 30,

@@ -31,6 +31,7 @@ class BaseCondition(metaclass=ABCMeta):
     ) -> None:
         self._env = env
         self._name = name
+        self.system_id = self.env.get_system_id()
 
         # [SALABIM COMPONENT]
         self._sim_control = SimulationComponent(
@@ -45,7 +46,13 @@ class BaseCondition(metaclass=ABCMeta):
         return self.__str__()
 
     def __str__(self) -> str:
-        return f'{self.__class__.__name__}'
+        return f'{self.__class__.__name__}(ID: {self.system_id})'
+
+    def __key(self) -> str:
+        return f'{self.__str__()}_{self.system_id}'
+
+    def __hash__(self) -> int:
+        return hash(self.__key())
 
     @property
     def env(self) -> SimulationEnvironment:
@@ -227,6 +234,235 @@ class TriggerAgentCondition(BaseCondition):
         pass
 
 
+class Supervisor(BaseCondition):
+    def __init__(
+        self,
+        env: SimulationEnvironment,
+        name: str,
+    ) -> None:
+        super().__init__(env, name)
+        self._stop_execution_event: threading.Event = threading.Event()
+        self.supervisors: set[Supervisor] = set()
+
+    @property
+    def stop_execution_event(self) -> threading.Event:
+        return self._stop_execution_event
+
+    def cancel_external(self) -> None:
+        self.sim_control.cancel()
+
+    def register_supervisor(
+        self,
+        supervisor: Supervisor,
+    ) -> None:
+        if supervisor not in self.supervisors:
+            self.supervisors.add(supervisor)
+        else:
+            loggers.conditions.warning(
+                (
+                    'Tried to add supervisor %s to '
+                    'supervisor %s, but it was already registered. '
+                    ' Nothing done.'
+                ),
+                supervisor,
+                self,
+            )
+
+    def stop_execution(self) -> None:
+        loggers.conditions.info('[CONDITION] Stopping supervisor >>%s<<', self)
+        self.stop_execution_event.set()
+
+        for associated_sv in self.supervisors:
+            loggers.conditions.info(
+                '[CONDITION] --- Stopping associated supervisor >>%s<<', associated_sv
+            )
+            associated_sv.stop_execution()
+            associated_sv.cancel_external()
+
+
+class WIPSourceSupervisor(Supervisor):
+    def __init__(
+        self,
+        env: SimulationEnvironment,
+        name: str,
+        *,
+        prod_area: ProductionArea,
+        target_sources: Iterable[Source],
+        WIP_limit: Timedelta,
+    ) -> None:
+        super().__init__(
+            env=env,
+            name=name,
+        )
+        self.prod_area = prod_area
+        self.target_sources = target_sources
+        self.WIP_limit = WIP_limit
+        self.sim_priority: float = -98
+        self._register_sources()
+
+    def _register_sources(self) -> None:
+        for source in self.target_sources:
+            source.register_source_generation_supervisor(self)
+
+    def change_WIP_limit(
+        self,
+        new_limit: Timedelta,
+    ) -> None:
+        if not new_limit > Timedelta():
+            raise ValueError(
+                '[CONDITION] WIPSourceController: WIP limit must be greater than 0.'
+            )
+        self.WIP_limit = new_limit
+
+    def allow_production(self) -> bool:
+        _, WIP_current, _ = self.prod_area.get_content_WIP()
+        loggers.conditions.debug(
+            '[CONDITION] WIPSourceSupervisor: WIP = %s at %s',
+            WIP_current,
+            self.env.t_as_dt(),
+        )
+        production_allowed: bool
+        if WIP_current >= self.WIP_limit:
+            loggers.conditions.debug(
+                '[CONDITION] WIPSourceSupervisor: Stop production at %s',
+                self.env.t_as_dt(),
+            )
+            production_allowed = False
+        else:
+            loggers.conditions.debug(
+                '[CONDITION] WIPSourceSupervisor: Start production at %s',
+                self.env.t_as_dt(),
+            )
+            production_allowed = True
+
+        return production_allowed
+
+    @override
+    def pre_process(self) -> None:
+        if not self.WIP_limit > Timedelta():
+            raise ValueError(
+                '[CONDITION] WIPSourceSupervisor: WIP limit must be greater than 0.'
+            )
+
+    @override
+    def sim_logic(self) -> Generator[None, None, None]:
+        yield self.sim_control.hold(0)
+
+    @override
+    def post_process(self) -> None:
+        pass
+
+
+class WIPSourceSupervisorLimitSetter(Supervisor):
+    def __init__(
+        self,
+        env: SimulationEnvironment,
+        name: str,
+        sim_interval: Timedelta,
+        *,
+        WIP_source_supervisor: WIPSourceSupervisor,
+        WIP_limits: Sequence[Timedelta],
+    ) -> None:
+        super().__init__(env=env, name=name)
+        self.sim_interval = sim_interval
+
+        self.target_WIP_supervisor = WIP_source_supervisor
+        self.target_WIP_supervisor.register_supervisor(self)
+
+        self.WIP_limits = tuple(WIP_limits)
+        self.WIP_limits_max_idx = len(self.WIP_limits) - 1
+        self.WIP_limits_curr_idx: int | None = None
+        self.sim_interval_time_units: float | None = None
+        # higher priority than associated WIP controller
+        self.sim_priority = self.target_WIP_supervisor.sim_priority - 1
+
+    def _check_WIP_limits(self) -> None:
+        WIP_lower_bound = Timedelta()
+
+        for idx, limit in enumerate(self.WIP_limits):
+            if not limit > WIP_lower_bound:
+                raise ValueError(
+                    (
+                        f'[CONDITION] WIPLimitSetter: WIP limit {limit} with '
+                        f'index {idx} must be greater than 0.'
+                    )
+                )
+
+    def _get_WIP_limit_idx(self) -> int:
+        """cycle through WIP limits. If end is reached, start in front again
+
+        Returns
+        -------
+        int
+            current relevant WIP limit index
+        """
+        if self.WIP_limits_curr_idx is None:
+            self.WIP_limits_curr_idx = 0
+            return self.WIP_limits_curr_idx
+
+        new_idx = self.WIP_limits_curr_idx + 1
+        if new_idx > self.WIP_limits_max_idx:
+            new_idx = 0
+        self.WIP_limits_curr_idx = new_idx
+
+        return self.WIP_limits_curr_idx
+
+    def _set_WIP_limit(self) -> None:
+        """set the current relevant WIP limit for the associated target
+        WIP controller
+        """
+        limit_idx = self._get_WIP_limit_idx()
+        loggers.conditions.debug(
+            '[CONDITION] %s: Current WIP limit index is %d at %s',
+            self.__class__.__name__,
+            limit_idx,
+            self.env.t_as_dt(),
+        )
+
+        limit_to_set = self.WIP_limits[limit_idx]
+        self.target_WIP_supervisor.change_WIP_limit(limit_to_set)
+        loggers.conditions.info(
+            '[CONDITION] %s: Set WIP limit to %s at %s',
+            self.__class__.__name__,
+            limit_to_set,
+            self.env.t_as_dt(),
+        )
+
+    @override
+    def pre_process(self) -> None:
+        self._check_WIP_limits()
+        if not self.sim_interval > Timedelta():
+            raise ValueError(
+                (
+                    f'[CONDITION] {self.__class__.__name__}: Simulation interval '
+                    f'must be greater than 0.'
+                )
+            )
+        self.sim_interval_time_units = self.env.td_to_simtime(self.sim_interval)
+        # set initial WIP limit
+        self._set_WIP_limit()
+
+    @override
+    def sim_logic(self) -> Generator[None, None, None]:
+        assert (
+            self.sim_interval_time_units is not None
+        ), 'Interval in simulation time units must not be >>None<<'
+
+        loggers.conditions.info(
+            '[CONDITION] %s: WIP_limits = %s', self.__class__.__name__, self.WIP_limits
+        )
+        # initial WIP limit set in pre-process method
+        while not self.target_WIP_supervisor.stop_execution_event.is_set():
+            yield self.sim_control.hold(
+                self.sim_interval_time_units, priority=self.sim_priority
+            )
+            self._set_WIP_limit()  # set new WIP limit
+
+    @override
+    def post_process(self) -> None:
+        pass
+
+
 class Observer(BaseCondition):
     def __init__(
         self,
@@ -239,21 +475,8 @@ class Observer(BaseCondition):
         self.setting_event = setting_event
         self._stop_execution_event = threading.Event()
         self.sim_interval = sim_interval
-        self.system_id = self.env.get_system_id()
 
         self.observers: set[Observer] = set()
-
-    def __repr__(self) -> str:
-        return self.__str__()
-
-    def __str__(self) -> str:
-        return f'{self.__class__.__name__}(ID: {self.system_id})'
-
-    def __key(self) -> str:
-        return f'{self.__str__()}_{self.system_id}'
-
-    def __hash__(self) -> int:
-        return hash(self.__key())
 
     def register_observer(self, observer: Observer) -> None:
         if observer not in self.observers:
@@ -416,7 +639,7 @@ class WIPLimitSetter(Observer):
                 raise ValueError(
                     (
                         f'[CONDITION] WIPLimitSetter: WIP limit {limit} with '
-                        f'index {idx} be greater than 0.'
+                        f'index {idx} must be greater than 0.'
                     )
                 )
 

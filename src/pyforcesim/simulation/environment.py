@@ -4447,6 +4447,7 @@ class Source(InfrastructureObject):
         # job generator
         self._job_sequence: Iterator[SourceSequence] | None = None
         # external source generation control
+        self._generation_supervisor: conditions.WIPSourceSupervisor | None = None
         self._generation_controller: conditions.WIPSourceController | None = None
         self._stop_production: threading.Event | None = None
 
@@ -4462,6 +4463,10 @@ class Source(InfrastructureObject):
     def generation_controller(self) -> conditions.WIPSourceController | None:
         return self._generation_controller
 
+    @property
+    def generation_supervisor(self) -> conditions.WIPSourceSupervisor | None:
+        return self._generation_supervisor
+
     def obtain_order_time(self) -> Timedelta:
         # order_time = self.env.td_to_simtime(timedelta=self.order_time)
         return self.order_time
@@ -4472,6 +4477,12 @@ class Source(InfrastructureObject):
     ) -> None:
         self._generation_controller = source_gen_controller
         self._stop_production = source_gen_controller.stop_production
+
+    def register_source_generation_supervisor(
+        self,
+        source_gen_supervisor: conditions.WIPSourceSupervisor,
+    ) -> None:
+        self._generation_supervisor = source_gen_supervisor
 
     def register_job_sequence(
         self,
@@ -4593,18 +4604,25 @@ class Source(InfrastructureObject):
             loggers.sources.debug(
                 '[SOURCE: %s] Hold for >>%s<< at %s', self, proc_time_sim, self.env.t_as_dt()
             )
-            if self.stop_production is not None:
+            if self.generation_supervisor is not None:
                 infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
-
-                while self.stop_production.is_set():
+                while not self.generation_supervisor.allow_production():
                     yield self.sim_control.hold(GENERATION_WAITING_TIME)
-
                 infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
 
+            elif self.stop_production is not None:
+                infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
+                while self.stop_production.is_set():
+                    yield self.sim_control.hold(GENERATION_WAITING_TIME)
+                infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
+
+            # TODO do not wait if signal from supervisor or observer was used
             yield self.sim_control.hold(proc_time_sim, priority=self.sim_put_prio)
 
         infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
 
+        if self.generation_supervisor is not None:
+            self.generation_supervisor.stop_execution()
         if self.generation_controller is not None:
             self.generation_controller.stop_execution()
 

@@ -697,7 +697,7 @@ class WIPSequenceSinglePA(SequenceSinglePA):
             self.prod_area,
             lead_time_planned,
         )
-        # TODO random change in planned due date
+        # random change in planned due date
         upper_bound_dev = np.sqrt(3)
         lower_bound_dev = (-1) * upper_bound_dev
 
@@ -742,7 +742,7 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                     # calc based on planned values: set relative WIP target to 1.5
                     curr_time = self.env.t_as_dt()
                     due_date_planned = curr_time + lead_time_planned
-                    # TODO random change in planned due date
+                    # random change in planned due date
                     if random_due_date_diff:
                         hours_deviation = self.rnd_gen.uniform(
                             lower_bound_dev, upper_bound_dev

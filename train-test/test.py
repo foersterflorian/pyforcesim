@@ -383,7 +383,7 @@ def main() -> None:
     eval_agent_policy(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
     # eval_agent_policy(num_episodes=1, seed=100, sim_randomise_reset=False)
     print('--------------------------------------------------------------------')
-    # eval_agent_benchmark(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
+    eval_agent_benchmark(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
     # eval_agent_benchmark(num_episodes=1, seed=100, sim_randomise_reset=False)
     t2 = time.perf_counter()
     dur = t2 - t1

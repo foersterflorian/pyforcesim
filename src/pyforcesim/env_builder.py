@@ -115,7 +115,7 @@ def standard_env_single_area(
     order_time_source = pyf_dt.timedelta_from_val(val=2.0, time_unit=TimeUnitsTimedelta.HOURS)
     job_gen_limit: int | None = None
     if debug:
-        job_gen_limit = 12
+        job_gen_limit = 24
 
     source = sim.Source(
         env=env,
@@ -220,6 +220,7 @@ def standard_env_single_area(
         prod_sequence_PA = sequence_generator.retrieve(
             target_obj=source,
             factor_WIP=factor_WIP,
+            random_due_date_diff=False,
         )
     else:
         sequence_generator = loads.ConstantSequenceSinglePA(
@@ -268,8 +269,8 @@ def standard_env_single_area(
         conditions.TriggerAgentCondition(env=env, agent=agent)
 
     # ** WIP control
-    stop_prod_event = threading.Event()
-    controller_interval = pyf_dt.timedelta_from_val(20, TimeUnitsTimedelta.MINUTES)
+    # stop_prod_event = threading.Event()
+    # controller_interval = pyf_dt.timedelta_from_val(5, TimeUnitsTimedelta.MINUTES)
     stats_info: StatDistributionInfo | None = None
     if isinstance(sequence_generator, loads.WIPSequenceSinglePA):
         stats_info = sequence_generator.stat_info
@@ -290,27 +291,43 @@ def standard_env_single_area(
                 WIP_limit = pyf_dt.round_td_by_seconds(WIP_limit, 60)
                 WIP_limits.append(WIP_limit)
 
-    WIP_observer = conditions.WIPSourceController(
+    WIP_supervisor = conditions.WIPSourceSupervisor(
         env,
-        'WIP-Observer',
-        stop_prod_event,
-        sim_interval=controller_interval,
+        'WIP-Supervisor',
         prod_area=area_prod,
         target_sources=(source,),
         WIP_limit=WIP_limit,
     )
-    env.register_observer(WIP_observer)  # TODO: currently pointless
+
+    # WIP_observer = conditions.WIPSourceController(
+    #     env,
+    #     'WIP-Observer',
+    #     stop_prod_event,
+    #     sim_interval=controller_interval,
+    #     prod_area=area_prod,
+    #     target_sources=(source,),
+    #     WIP_limit=WIP_limit,
+    # )
+
+    # env.register_observer(WIP_observer)  # TODO: currently pointless
 
     if WIP_limits:
         WIP_setter_interval = pyf_dt.timedelta_from_val(2, TimeUnitsTimedelta.WEEKS)
-        WIP_limit_setter = conditions.WIPLimitSetter(
+        # _ = conditions.WIPLimitSetter(
+        #     env,
+        #     'WIP-Limit-Setter',
+        #     WIP_setter_interval,
+        #     WIP_source_controller=WIP_observer,
+        #     WIP_limits=WIP_limits,
+        # )
+        _ = conditions.WIPSourceSupervisorLimitSetter(
             env,
             'WIP-Limit-Setter',
             WIP_setter_interval,
-            WIP_source_controller=WIP_observer,
+            WIP_source_supervisor=WIP_supervisor,
             WIP_limits=WIP_limits,
         )
-        env.register_observer(WIP_limit_setter)  # TODO: currently pointless
+    # env.register_observer(WIP_limit_setter)  # TODO: currently pointless
 
     logger.info('[ENV-BUILDER] Successfully created new simulation environment.')
 

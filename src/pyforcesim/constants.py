@@ -88,7 +88,7 @@ class TimeUnitsTimedelta(enum.StrEnum):
 TIMEZONE_CEST: Final[ZoneInfo] = ZoneInfo('Europe/Berlin')
 TIMEZONE_UTC: Final[Timezone] = Timezone.utc
 DEFAULT_DATETIME: Final[Datetime] = Datetime(1970, 1, 1, tzinfo=TIMEZONE_UTC)
-SLACK_INIT_AS_UPPER_BOUND: Final[bool] = False
+SLACK_INIT_AS_UPPER_BOUND: Final[bool] = True
 # value to use as slack if initial value is not set as upper bound
 SLACK_OVERWRITE_UPPER_BOUND: Final[Timedelta] = Timedelta(hours=1)
 # only takes effect if initial slack used as upper bound
@@ -110,7 +110,7 @@ DB_ROOT: Final[str] = 'databases'
 MAX_PROCESSING_CAPACITY: Final[Timedelta] = Timedelta(hours=24)
 MAX_LOGICAL_QUEUE_SIZE: Final[int] = 60
 SEQUENCING_WAITING_TIME: Final[Timedelta] = Timedelta(minutes=15)
-SOURCE_GENERATION_WAITING_TIME: Final[Timedelta] = Timedelta(minutes=15)
+SOURCE_GENERATION_WAITING_TIME: Final[Timedelta] = Timedelta(minutes=5)
 
 
 class SimResourceTypes(enum.StrEnum):
