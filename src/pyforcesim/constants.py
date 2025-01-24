@@ -57,6 +57,7 @@ LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_POLICIES: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_DB: Final[loglevel] = loglevel.INFO
+LOGGING_LEVEL_DIST: Final[loglevel] = loglevel.DEBUG
 
 
 # ** common

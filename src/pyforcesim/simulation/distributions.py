@@ -12,6 +12,7 @@ from pyforcesim.constants import (
     StatisticalDistributionsSupported,
     TimeUnitsTimedelta,
 )
+from pyforcesim.loggers import distributions as logger
 from pyforcesim.types import (
     StatDistributionInfo,
 )
@@ -75,6 +76,12 @@ class StatisticalDistribution(Generic[T], metaclass=ABCMeta):
         self._dist_type = dist_type
         self._stat_info: StatDistributionInfo | None = None
 
+    def __repr__(self) -> str:
+        return f'StatisticalDistribution(type: {self.dist_type}, seed: {self.seed})'
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
     @property
     def env(self) -> SimulationEnvironment:
         return self._env
@@ -104,6 +111,12 @@ class StatisticalDistribution(Generic[T], metaclass=ABCMeta):
     def set_params(self, params: T) -> None:
         self._params = params
         self._stat_info = self._calc_stat_info()
+        logger.debug(
+            '[DIST] %s: Set params to: %s, StatInfo: %s',
+            self,
+            self.params,
+            self.stat_info,
+        )
 
     def sample_timedelta(
         self,

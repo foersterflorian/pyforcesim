@@ -18,6 +18,7 @@ from pyforcesim.constants import (
     LOGGING_LEVEL_CONDITIONS,
     LOGGING_LEVEL_DB,
     LOGGING_LEVEL_DISPATCHER,
+    LOGGING_LEVEL_DIST,
     LOGGING_LEVEL_ENV,
     LOGGING_LEVEL_ENV_BUILDER,
     LOGGING_LEVEL_FILE,
@@ -94,6 +95,8 @@ policies = logging.getLogger('pyforcesim.policies')
 policies.setLevel(LOGGING_LEVEL_POLICIES)
 databases = logging.getLogger('pyforcesim.databases')
 databases.setLevel(LOGGING_LEVEL_DB)
+distributions = logging.getLogger('pyforcesim.distributions')
+distributions.setLevel(LOGGING_LEVEL_DIST)
 
 jobs = logging.getLogger('pyforcesim.jobs')
 jobs.setLevel(LOGGING_LEVEL_JOBS)
