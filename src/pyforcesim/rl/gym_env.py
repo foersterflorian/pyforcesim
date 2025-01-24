@@ -46,7 +46,7 @@ BUILDER_FUNCS: Final[dict[BuilderFuncFamilies, EnvBuilderFunc]] = {
     BuilderFuncFamilies.SINGLE_PRODUCTION_AREA: standard_env_single_area,
 }
 BUILDER_FUNC_WIP_CFG: Final[EnvBuilderWIPConfig] = {
-    'factor_WIP': 8,
+    'factor_WIP': None,
     #'WIP_relative_target': (0.5, 3, 6),
     # 'WIP_relative_target': (0.5,),
     'WIP_relative_target': (1.5,),

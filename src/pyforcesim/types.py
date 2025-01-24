@@ -185,7 +185,7 @@ class EnvBuilderFunc(Protocol):
 
 
 class EnvBuilderWIPConfig(TypedDict):
-    factor_WIP: float
+    factor_WIP: float | None
     WIP_relative_target: Sequence[float]
     WIP_relative_planned: float
     alpha: float
