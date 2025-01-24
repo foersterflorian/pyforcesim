@@ -404,25 +404,35 @@ class WIPSourceSupervisor(Supervisor):
 
         self._WIP_limit = WIP_limit
 
-    def allow_production(self) -> bool:
-        _, WIP_current, _ = self.prod_area.get_content_WIP()
         loggers.conditions.debug(
-            '[CONDITION] WIPSourceSupervisor: WIP = %s at %s',
-            WIP_current,
+            '[CONDITION] %s: Set WIP Limit to >>%s<< at %s',
+            self,
+            self._WIP_limit,
             self.env.t_as_dt(),
         )
+
+    def allow_production(self) -> bool:
+        _, WIP_current, _ = self.prod_area.get_content_WIP()
+        # loggers.conditions.debug(
+        #     '[CONDITION] %s: WIP = %s at %s',
+        #     self,
+        #     WIP_current,
+        #     self.env.t_as_dt(),
+        # )
         production_allowed: bool
         if WIP_current >= self.WIP_limit:
-            loggers.conditions.debug(
-                '[CONDITION] WIPSourceSupervisor: Stop production at %s',
-                self.env.t_as_dt(),
-            )
+            # loggers.conditions.debug(
+            #     '[CONDITION] %s: Stop production at %s',
+            #     self,
+            #     self.env.t_as_dt(),
+            # )
             production_allowed = False
         else:
-            loggers.conditions.debug(
-                '[CONDITION] WIPSourceSupervisor: Start production at %s',
-                self.env.t_as_dt(),
-            )
+            # loggers.conditions.debug(
+            #     '[CONDITION] %s: Start production at %s',
+            #     self,
+            #     self.env.t_as_dt(),
+            # )
             production_allowed = True
 
         return production_allowed
