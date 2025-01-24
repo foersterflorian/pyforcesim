@@ -24,7 +24,10 @@ from pyforcesim.simulation.policies import (
     SSTPolicy,
     UtilisationPolicy,
 )
-from pyforcesim.types import Infinite
+from pyforcesim.types import (
+    DistributionParameters,
+    Infinite,
+)
 from pyforcesim.types import LoggingLevels as loglevel
 
 # ** logging
@@ -182,6 +185,15 @@ class SimSystemTypes(enum.StrEnum):
 class JobGeneration(enum.StrEnum):
     RANDOM = enum.auto()
     SEQUENTIAL = enum.auto()
+
+
+# ** distribution types
+class StatisticalDistributionsSupported(enum.StrEnum):
+    EXPONENTIAL = enum.auto()
+    UNIFORM = enum.auto()
+
+
+DISTRIBUTION_PARAMETERS: Final[DistributionParameters] = DistributionParameters()
 
 
 # ** policies

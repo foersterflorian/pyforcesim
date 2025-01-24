@@ -75,6 +75,36 @@ class StatDistributionInfo:
     std: float
 
 
+class DistributionParametersSet(TypedDict): ...
+
+
+class DistUniformParameters(DistributionParametersSet):
+    lower_bound: float
+    upper_bound: float
+
+
+class DistExpParameters(DistributionParametersSet):
+    scale: float
+
+
+@dataclass(match_args=False, eq=False, kw_only=True, slots=True)
+class DistributionParameters:
+    EXPONENTIAL: type[DistExpParameters] = DistExpParameters
+    UNIFORM: type[DistUniformParameters] = DistUniformParameters
+
+
+# class DistributionParameters(TypedDict): ...
+
+
+# class DistUniformParameters(DistributionParameters):
+#     lower_bound: float
+#     upper_bound: float
+
+
+# class DistExpParameters(DistributionParameters):
+#     scale: float
+
+
 class QueueLike(Protocol[T]):
     def env(self) -> sim.SimulationEnvironment: ...
     def custom_identifier(self) -> CustomID: ...
@@ -98,6 +128,18 @@ class OrderTimes:
 class OrderDates:
     starting_planned: Datetime | Sequence[Datetime | None] | None = field(default=None)
     ending_planned: Datetime | Sequence[Datetime | None] | None = field(default=None)
+
+
+@dataclass(kw_only=True, slots=True)
+class ExpectedArrivalTimes:
+    ideal: float
+    current: float
+
+
+@dataclass(kw_only=True, slots=True)
+class WIPInputTypes:
+    factors: tuple[float, ...]
+    times: tuple[Timedelta, ...]
 
 
 @dataclass(kw_only=True, slots=True, eq=False, match_args=False)

@@ -4445,11 +4445,16 @@ class Source(InfrastructureObject):
         self.stop_job_gen_cond_reg: bool = False
         self.stop_job_gen_state = salabim.State('stop_job_gen', env=self.env, monitor=False)
         # job generator
+        self._job_generators: set[loads.SequenceSinglePA] = set()
         self._job_sequence: Iterator[SourceSequence] | None = None
         # external source generation control
         self._generation_supervisor: conditions.WIPSourceSupervisor | None = None
         self._generation_controller: conditions.WIPSourceController | None = None
         self._stop_production: threading.Event | None = None
+
+    @property
+    def job_generators(self) -> set[loads.SequenceSinglePA]:
+        return self._job_generators
 
     @property
     def job_sequence(self) -> Iterator[SourceSequence] | None:
@@ -4483,6 +4488,14 @@ class Source(InfrastructureObject):
         source_gen_supervisor: conditions.WIPSourceSupervisor,
     ) -> None:
         self._generation_supervisor = source_gen_supervisor
+
+    def register_job_generator(
+        self,
+        job_generator: loads.SequenceSinglePA,
+    ) -> None:
+        if job_generator not in self.job_generators:
+            self.job_generators.add(job_generator)
+        loggers.sources.info('[SOURCES][%s] Registered job generator %s', self, job_generator)
 
     def register_job_sequence(
         self,
@@ -4616,7 +4629,6 @@ class Source(InfrastructureObject):
                     yield self.sim_control.hold(GENERATION_WAITING_TIME)
                 infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.PROCESSING)
 
-            # TODO do not wait if signal from supervisor or observer was used
             yield self.sim_control.hold(proc_time_sim, priority=self.sim_put_prio)
 
         infstruct_mgr.update_res_state(obj=self, state=SimStatesCommon.IDLE)
