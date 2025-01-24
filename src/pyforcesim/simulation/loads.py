@@ -139,14 +139,14 @@ def calc_expected_arrival_time(
     source: InfrastructureObject,
     prod_area: ProductionArea,
     *,
-    stat_info: StatDistributionInfo,
+    stat_info_orders: StatDistributionInfo,
     WIP_factor: float,
 ) -> ExpectedArrivalTimes:
     NORM_TD = pyf_dt.timedelta_from_val(1, TimeUnitsTimedelta.HOURS)
     total_num_proc_stations = prod_area.num_assoc_proc_station
-    # statistical information
-    mean = stat_info.mean
-    std = stat_info.std
+    # statistical information for order times
+    mean = stat_info_orders.mean
+    std = stat_info_orders.std
     # calc expected value of interval
     # C_S / (C_M/µ + a*(1+(std^2/mean^2))
     prod_area_capa = prod_area.processing_capacities(total=True) / NORM_TD
@@ -491,7 +491,7 @@ class SequenceSinglePA(ProductionSequence):
         arrival_times = calc_expected_arrival_time(
             source=self.source,
             prod_area=self.prod_area,
-            stat_info=self.dist_arrival.stat_info,
+            stat_info_orders=self.dist_order.stat_info,
             WIP_factor=WIP_factor,
         )
         arrival_time_expected = arrival_times.current
