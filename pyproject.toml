@@ -55,17 +55,6 @@ notebooks = [
 general = [
     "ruff>=0.4.5",
 ]
-tests = [
-    "pytest>=8.2.1",
-    "coverage>=7.5.3",
-]
-rl = [
-    "stable-baselines3>=2.3.2",
-    "tensorboard>=2.16.2",
-    "tqdm>=4.66.4",
-    "rich>=13.7.1",
-    "sb3-contrib>=2.3.0",
-]
 
 [tool.ruff]
 line-length = 94
@@ -108,3 +97,19 @@ exclude_also = [
 
 [tool.coverage.html]
 directory = "reports/coverage"
+[dependency-groups]
+rl = [
+    "stable-baselines3>=2.3.2",
+    "tensorboard>=2.16.2",
+    "tqdm>=4.66.4",
+    "rich>=13.7.1",
+    "sb3-contrib>=2.3.0",
+    "psutil",
+]
+notebooks = ["jupyterlab>=4.2.0", "ipywidgets>=8.1.2"]
+general = ["ruff>=0.4.5"]
+tests = [
+    "pytest>=8.2.1",
+    "coverage>=7.5.3",
+    "psutil>=6.1.1",
+]
