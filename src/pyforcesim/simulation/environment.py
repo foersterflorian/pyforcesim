@@ -2357,7 +2357,7 @@ class System(metaclass=ABCMeta):
             self._seq_agent = agent
             self._seq_agent_registered = True
             loggers.pyf_env.info(
-                'Successfully registered Allocation Agent in %s',
+                'Successfully registered Sequencing Agent in %s',
                 self,
             )
         elif not isinstance(agent, SequencingAgent):
