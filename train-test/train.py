@@ -1,22 +1,31 @@
 import os
 import warnings
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
 
+import psutil
+import sb3_monkeypatch
+import stable_baselines3.common.vec_env.subproc_vec_env as sb3_to_patch
 from sb3_contrib.ppo_mask import MaskablePPO
 from stable_baselines3.common.callbacks import StopTrainingOnRewardThreshold
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 
 from pyforcesim import common
 from pyforcesim.rl.gym_env import JSSEnv
 from pyforcesim.rl.sb3.custom_callbacks import MaskableEvalCallback as EvalCallback
 from pyforcesim.types import AgentDecisionTypes, BuilderFuncFamilies
 
+# ** monkeypatch SB3 to work with SubprocVecEnv and MaskablePPO from sb3_contrib
+sb3_to_patch._worker = sb3_monkeypatch.worker
+
 # ** input
-OVERWRITE_FOLDERS: Final[bool] = False
-CONTINUE_LEARNING: Final[bool] = True
+USE_MULTIPROCESSING: Final[bool] = True
+NUM_PROCS: Final[int | None] = None
+OVERWRITE_FOLDERS: Final[bool] = True
+CONTINUE_LEARNING: Final[bool] = False
 NORMALISE_OBS: Final[bool] = True
 RNG_SEED: Final[int] = 42
 
@@ -42,7 +51,7 @@ NUM_EVAL_EPISODES: Final[int] = 1
 EVAL_FREQ: Final[int] = STEPS_TILL_UPDATE * 4
 REWARD_THRESHOLD: Final[float | None] = None  # -0.01
 TIMESTEPS_PER_ITER: Final[int] = STEPS_TILL_UPDATE * 2
-ITERATIONS: Final[int] = 500
+ITERATIONS: Final[int] = 20
 ITERATIONS_TILL_SAVE: Final[int] = 2
 CALC_ITERATIONS: Final[int] = 1310721 // TIMESTEPS_PER_ITER
 
@@ -117,6 +126,85 @@ def load_model() -> tuple[Path, MaskablePPO]:
     return pth_vec_norm, model
 
 
+def _get_num_cpu_cores(
+    num_procs: int | None,
+) -> int:
+    sys_cores = psutil.cpu_count(logical=False)
+    assert sys_cores is not None, 'system CPU count not available'
+    max_cores = sys_cores - 1
+
+    if num_procs is None or num_procs > max_cores:
+        return max_cores
+    else:
+        return num_procs
+
+
+def make_subproc_env(
+    experiment_type: str,
+    tensorboard_path: Path | None,
+    num_procs: int,
+    gantt_chart: bool = False,
+    normalise_obs: bool = True,
+    seed: int | None = None,
+    verify_env: bool = True,
+    sim_randomise_reset: bool = False,
+) -> Any:
+    sim_check_agent_feasibility: bool = True
+    if verify_env:
+        sim_check_agent_feasibility = False
+
+    env = JSSEnv(
+        experiment_type=experiment_type,
+        agent_type=DEC_TYPE,
+        gantt_chart_on_termination=gantt_chart,
+        seed=seed,
+        sim_randomise_reset=sim_randomise_reset,
+        sim_check_agent_feasibility=sim_check_agent_feasibility,
+        builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
+    )
+
+    if verify_env:
+        check_env(env, warn=True)
+        # recreate to ensure that nothing was altered
+        env = JSSEnv(
+            experiment_type=experiment_type,
+            agent_type=DEC_TYPE,
+            gantt_chart_on_termination=gantt_chart,
+            seed=seed,
+            sim_randomise_reset=sim_randomise_reset,
+            sim_check_agent_feasibility=sim_check_agent_feasibility,
+            builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
+        )
+
+    def make_multi_env(ident: int) -> Callable[[], Monitor]:
+        def _initialise_env() -> Monitor:
+            env = JSSEnv(
+                experiment_type=experiment_type,
+                agent_type=DEC_TYPE,
+                gantt_chart_on_termination=gantt_chart,
+                seed=seed,
+                sim_randomise_reset=sim_randomise_reset,
+                sim_check_agent_feasibility=sim_check_agent_feasibility,
+                builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
+            )
+            # each process a monitor file
+            if tensorboard_path is not None:
+                tb_path_proc = tensorboard_path / str(ident)
+            env = Monitor(env, filename=str(tb_path_proc), allow_early_resets=True)
+            return env
+
+        return _initialise_env
+
+    env = SubprocVecEnv(
+        [make_multi_env(ident) for ident in range(num_procs)], start_method='spawn'
+    )  # type: ignore
+    env.seed(seed=seed)
+    if normalise_obs:
+        env = VecNormalize(env, norm_obs=True, norm_reward=False, clip_obs=10.0)
+
+    return env
+
+
 def make_env(
     experiment_type: str,
     tensorboard_path: Path | None,
@@ -167,6 +255,8 @@ def make_env(
 def train(
     continue_learning: bool,
     sim_randomise_reset: bool = False,
+    use_mp: bool = False,
+    num_procs: int | None = None,
 ) -> None:
     prepare_base_folder(BASE_FOLDER)
     tensorboard_path = prepare_tb_path(BASE_FOLDER, FOLDER_TB)
@@ -174,13 +264,24 @@ def train(
     tensorboard_command = f'pdm run tensorboard --logdir="{tensorboard_path}"'
     print('tensorboard command: ', tensorboard_command)
 
-    env = make_env(
-        EXP_TYPE,
-        tensorboard_path,
-        normalise_obs=NORMALISE_OBS,
-        seed=RNG_SEED,
-        sim_randomise_reset=sim_randomise_reset,
-    )
+    if use_mp:
+        num_procs = _get_num_cpu_cores(num_procs)
+        env = make_subproc_env(
+            EXP_TYPE,
+            tensorboard_path,
+            num_procs=num_procs,
+            normalise_obs=NORMALISE_OBS,
+            seed=RNG_SEED,
+            sim_randomise_reset=sim_randomise_reset,
+        )
+    else:
+        env = make_env(
+            EXP_TYPE,
+            tensorboard_path,
+            normalise_obs=NORMALISE_OBS,
+            seed=RNG_SEED,
+            sim_randomise_reset=sim_randomise_reset,
+        )
     eval_env = make_env(
         EXP_TYPE,
         tensorboard_path,
@@ -289,7 +390,9 @@ def main() -> None:
         category=UserWarning,
         message=r'^[\s]*.*to get variables from other wrappers is deprecated.*$',
     )
-    train(continue_learning=CONTINUE_LEARNING)
+    train(
+        continue_learning=CONTINUE_LEARNING, use_mp=USE_MULTIPROCESSING, num_procs=NUM_PROCS
+    )
 
 
 if __name__ == '__main__':
