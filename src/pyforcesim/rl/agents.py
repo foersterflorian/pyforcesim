@@ -1038,9 +1038,16 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
             reward = 0.0
             self.action_feasible = self.action_mask[0]
         else:
+            assert (
+                job_reward.current_order_time is not None
+            ), f'current order time of Job {job_reward} must not be None'
+            # action chosen when not processed: order time before processing
             slack_lower_bound = job_reward.stat_monitor.slack_lower_bound_hours
             slack_upper_bound = job_reward.stat_monitor.slack_upper_bound_hours
             slack = job_reward.stat_monitor.slack_hours
+            loggers.operations.debug(
+                '[REWARD][Load-ID: %d] current slack: %.6f', job_reward.job_id, slack
+            )
             reward = self._reward_slack_category(
                 slack=slack,
                 slack_lower_bound=slack_lower_bound,

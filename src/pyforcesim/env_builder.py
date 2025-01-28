@@ -239,7 +239,7 @@ def standard_env_single_area(
     duration_transient = pyf_dt.timedelta_from_val(val=8, time_unit=TimeUnitsTimedelta.HOURS)
     conditions.TransientCondition(env=env, duration_transient=duration_transient)
     if not debug:
-        # was 26 weeks
+        # default was 26 weeks
         sim_dur = pyf_dt.timedelta_from_val(val=26, time_unit=TimeUnitsTimedelta.WEEKS)
         conditions.JobGenDurationCondition(
             env=env, target_obj=source, sim_run_duration=sim_dur

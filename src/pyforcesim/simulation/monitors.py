@@ -77,7 +77,7 @@ class Monitor(Generic[T]):
         # time counter for each state
         self.state_times: dict[str, Timedelta] = {}
         # starting time variable indicating when the last state assignment took place
-        self.state_starting_time = self._env.t_as_dt()
+        self.state_starting_time = self.env.t_as_dt()
 
         for state in self.states_possible:
             self.state_times[state] = Timedelta()
@@ -364,8 +364,6 @@ class LoadMonitor(Monitor[L]):
 
     def release(self) -> None:
         """certain actions performed on release"""
-        # TODO set fixed upper bound without adaption to threshold value
-        # TODO (provoke early completion)
         self.calc_KPI()
         self.slack_init = self.slack
         self.slack_init_hours = self.slack_hours
@@ -379,7 +377,7 @@ class LoadMonitor(Monitor[L]):
         ):
             self.slack_upper_bound = SLACK_THRESHOLD_UPPER
 
-        else:
+        elif not SLACK_INIT_AS_UPPER_BOUND:
             if self.slack_upper_bound > SLACK_OVERWRITE_UPPER_BOUND:
                 self.slack_upper_bound = SLACK_OVERWRITE_UPPER_BOUND
 
@@ -471,8 +469,9 @@ class OperationMonitor(LoadMonitor['Operation']):
             self.remaining_order_time = total_order_time - self.time_processing
 
         loggers.operations.debug(
-            '[%s] Calculated remaining order time as %s, total: %s at %s',
+            '[%s] [Load-ID: %d] Calculated remaining order time as %s, total: %s at %s',
             self,
+            self.target_object.op_id,
             self.remaining_order_time,
             self.target_object.order_time,
             self.env.t_as_dt(),

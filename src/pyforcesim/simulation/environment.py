@@ -45,6 +45,7 @@ from pyforcesim.constants import (
     MAX_PROCESSING_CAPACITY,
     POLICIES_ALLOC,
     POLICIES_SEQ,
+    ROUNDING_PRECISION,
     SEQUENCING_WAITING_TIME,
     SOURCE_GENERATION_WAITING_TIME,
     TIMEZONE_CEST,
@@ -1268,8 +1269,10 @@ class Dispatcher:
             self.enter_operation(op=current_op)
         else:
             # after processing
+            self.jobs_temp_state(jobs=(job,), reset_temp=False)
             self.finish_operation(op=current_op)
             job.num_finished_ops += 1
+            self.jobs_temp_state(jobs=(job,), reset_temp=True)
 
     def update_job_state(
         self,
@@ -1415,6 +1418,10 @@ class Dispatcher:
             'actual_ending_date': op.time_actual_ending,
             'ending_date_deviation': op.ending_date_deviation,
             'lead_time': op.lead_time,
+            'slack_init': op.stat_monitor.slack_init_hours,
+            'slack_end': None,
+            'slack_lower_bound': None,
+            'slack_upper_bound': None,
         }
         # execute insertion
         with self.env.db_engine.connect() as conn:
@@ -1488,6 +1495,13 @@ class Dispatcher:
         # update operation database
         # release date
         self.update_operation_db(op=op, property='release_date', val=op.time_release)
+        # slack init
+        slack_init = round(op.stat_monitor.slack_init_hours, ROUNDING_PRECISION)
+        self.update_operation_db(op=op, property='slack_init', val=slack_init)
+        slack_lower_bound = round(op.stat_monitor.slack_lower_bound_hours, ROUNDING_PRECISION)
+        self.update_operation_db(op=op, property='slack_lower_bound', val=slack_lower_bound)
+        slack_upper_bound = round(op.stat_monitor.slack_upper_bound_hours, ROUNDING_PRECISION)
+        self.update_operation_db(op=op, property='slack_upper_bound', val=slack_upper_bound)
         # target station: custom identifier + name
         # self.update_operation_db(
         #     op=op, property='target_station_sys_id', val=target_station.system_id
@@ -1538,6 +1552,7 @@ class Dispatcher:
         used to signal the finalisation of the given operation
         necessary for time statistics
         """
+        op.stat_monitor.calc_KPI()
         current_time = self.env.t_as_dt()
         op.is_finished = True
         op.time_actual_ending = current_time
@@ -1559,6 +1574,12 @@ class Dispatcher:
                 op.op_id,
                 op.ending_date_deviation,
             )
+        # slack
+        slack_end = round(op.stat_monitor.slack_hours, ROUNDING_PRECISION)
+        self.update_operation_db(op=op, property='slack_end', val=slack_end)
+        loggers.operations.debug(
+            '[Operation][Load-ID: %d]: Set slack end to: %.6f', op.op_id, slack_end
+        )
 
         # update databases
         loggers.dispatcher.debug(
@@ -2073,6 +2094,10 @@ class Dispatcher:
             'proc_time',
             'setup_time',
             'lead_time',
+            'slack_init',
+            'slack_end',
+            'slack_lower_bound',
+            'slack_upper_bound',
         ]
 
         hover_data: dict[str, str | bool] = {
@@ -2094,6 +2119,10 @@ class Dispatcher:
             'proc_time': True,
             'setup_time': True,
             'lead_time': True,
+            'slack_init': True,
+            'slack_end': True,
+            'slack_lower_bound': True,
+            'slack_upper_bound': True,
         }
         # TODO: disable hover infos if some entries are None
 
@@ -4769,6 +4798,13 @@ class Operation:
         # from dispatcher: op_id, name, target_machine
         # register operation instance
 
+        # [STATS] Monitoring
+        self._stat_monitor = monitors.OperationMonitor(
+            env=self._dispatcher.env,
+            obj=self,
+            current_state=current_state,
+        )
+
         # registration: only return OpID, other properties directly
         # written by dispatcher method
         # add target station group by station group identifier
@@ -4782,13 +4818,6 @@ class Operation:
             target_station_group_identifier=target_station_group_identifier,
             custom_identifier=custom_identifier,
             state=current_state,
-        )
-
-        # [STATS] Monitoring
-        self._stat_monitor = monitors.OperationMonitor(
-            env=self._dispatcher.env,
-            obj=self,
-            current_state=current_state,
         )
 
     def __repr__(self) -> str:

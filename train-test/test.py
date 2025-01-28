@@ -78,7 +78,7 @@ VAL_EXP_EPISODES: Final[int] = 1
 #     return models
 
 
-def load_model() -> tuple[Path, MaskablePPO]:
+def load_model(env: VecNormalize | JSSEnv | None = None) -> MaskablePPO:
     # ** load model
     pth_model = common.prepare_save_paths(
         base_folder=ROOT_FOLDER,
@@ -86,6 +86,13 @@ def load_model() -> tuple[Path, MaskablePPO]:
         filename=FILENAME_TARGET_MODEL,
         suffix='zip',
     )
+
+    model = MaskablePPO.load(pth_model, env)
+
+    return model
+
+
+def get_path_vec_norm() -> Path:
     vec_norm_filename = f'{FILENAME_TARGET_MODEL}_vec_norm'
     pth_vec_norm = common.prepare_save_paths(
         base_folder=ROOT_FOLDER,
@@ -93,10 +100,7 @@ def load_model() -> tuple[Path, MaskablePPO]:
         filename=vec_norm_filename,
         suffix='pkl',
     )
-
-    model = MaskablePPO.load(pth_model)
-
-    return pth_vec_norm, model
+    return pth_vec_norm
 
 
 def export_gantt_chart(
@@ -251,7 +255,6 @@ def eval_agent_policy(
     seed: int | None = ROOT_RNG_SEED,
     sim_randomise_reset: bool = False,
 ) -> None:
-    pth_vec_norm, model = load_model()
     env = make_env(
         ROOT_EXP_TYPE,
         tensorboard_path=None,
@@ -263,13 +266,15 @@ def eval_agent_policy(
     )
 
     if NORMALISE_OBS:
+        pth_vec_norm = get_path_vec_norm()
         if not pth_vec_norm.exists():
             raise FileNotFoundError(f'VecNormalize info not found under: {pth_vec_norm}')
         env = VecNormalize.load(str(pth_vec_norm), env)
         env.training = False
         print('Normalization info loaded successfully.')
 
-    model.set_env(env)
+    # model.set_env(env)
+    model = load_model(env=env)
 
     loggers.base.info('[MODEL EVAL] Start evaluation...')
     episodes_cum_rewards, _episode_lengths = evaluate_policy(

@@ -34,7 +34,7 @@ from pyforcesim.types import LoggingLevels as loglevel
 LOG_FMT: Final[str] = ' %(asctime)s | pyfsim:%(module)s:%(levelname)s | %(message)s'
 LOG_DATE_FMT: Final[str] = '%Y-%m-%d %H:%M:%S +0000'
 LOGGING_ENABLED: Final[bool] = True
-LOGGING_TO_FILE: Final[bool] = False
+LOGGING_TO_FILE: Final[bool] = True
 LOGGING_FILE_SIZE: Final[int] = 10485760  # in bytes
 LOGGING_LEVEL_STD_OUT: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_FILE: Final[loglevel] = loglevel.DEBUG
@@ -48,16 +48,16 @@ LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_SINKS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_PRODSTATIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_JOBS: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_BUFFERS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_QUEUES: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.DEBUG
+LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_POLICIES: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_DB: Final[loglevel] = loglevel.INFO
-LOGGING_LEVEL_DIST: Final[loglevel] = loglevel.DEBUG
+LOGGING_LEVEL_DIST: Final[loglevel] = loglevel.WARNING
 
 
 # ** common
@@ -92,13 +92,13 @@ class TimeUnitsTimedelta(enum.StrEnum):
 TIMEZONE_CEST: Final[ZoneInfo] = ZoneInfo('Europe/Berlin')
 TIMEZONE_UTC: Final[Timezone] = Timezone.utc
 DEFAULT_DATETIME: Final[Datetime] = Datetime(1970, 1, 1, tzinfo=TIMEZONE_UTC)
-SLACK_INIT_AS_UPPER_BOUND: Final[bool] = True
-# value to use as slack if initial value is not set as upper bound
-SLACK_OVERWRITE_UPPER_BOUND: Final[Timedelta] = Timedelta(hours=1)
+SLACK_INIT_AS_UPPER_BOUND: Final[bool] = False
 # only takes effect if initial slack used as upper bound
 SLACK_USE_THRESHOLD_UPPER: Final[bool] = True
+# value to use as slack if initial value is not set as upper bound
+SLACK_OVERWRITE_UPPER_BOUND: Final[Timedelta] = Timedelta(hours=1)
 SLACK_THRESHOLD_UPPER: Final[Timedelta] = Timedelta(hours=2)
-SLACK_THRESHOLD_LOWER: Final[Timedelta] = Timedelta()
+SLACK_THRESHOLD_LOWER: Final[Timedelta] = Timedelta(hours=0)
 
 
 # ** database

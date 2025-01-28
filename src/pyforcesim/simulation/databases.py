@@ -99,6 +99,10 @@ operations = Table(
     Column('actual_ending_date', sql.DateTime, default=None),
     Column('ending_date_deviation', sql.Interval, default=None),
     Column('lead_time', sql.Interval, default=None),
+    Column('slack_init', sql.Float, default=None),
+    Column('slack_end', sql.Float, default=None),
+    Column('slack_lower_bound', sql.Float, default=None),
+    Column('slack_upper_bound', sql.Float, default=None),
 )
 
 
