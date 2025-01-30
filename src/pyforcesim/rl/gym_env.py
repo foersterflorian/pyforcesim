@@ -50,7 +50,7 @@ BUILDER_FUNC_WIP_CFG: Final[EnvBuilderAdditionalConfig] = {
     'factor_WIP': None,
     #'WIP_relative_target': (0.5, 3, 6),
     # 'WIP_relative_target': (0.5,),
-    'WIP_relative_target': (1.5,),
+    'WIP_relative_target': (1.5, 0.5, 2.5, 5, 3.5),
     'WIP_level_cycles': 5,
     'WIP_relative_planned': 1.5,
     'alpha': 10,

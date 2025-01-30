@@ -48,15 +48,15 @@ LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_SINKS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_PRODSTATIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_JOBS: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.DEBUG
+LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_BUFFERS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_QUEUES: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.INFO
+LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_POLICIES: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_DB: Final[loglevel] = loglevel.INFO
+LOGGING_LEVEL_DB: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_DIST: Final[loglevel] = loglevel.WARNING
 
 
@@ -92,7 +92,7 @@ class TimeUnitsTimedelta(enum.StrEnum):
 TIMEZONE_CEST: Final[ZoneInfo] = ZoneInfo('Europe/Berlin')
 TIMEZONE_UTC: Final[Timezone] = Timezone.utc
 DEFAULT_DATETIME: Final[Datetime] = Datetime(1970, 1, 1, tzinfo=TIMEZONE_UTC)
-SLACK_INIT_AS_UPPER_BOUND: Final[bool] = False
+SLACK_INIT_AS_UPPER_BOUND: Final[bool] = True
 # only takes effect if initial slack used as upper bound
 SLACK_USE_THRESHOLD_UPPER: Final[bool] = True
 # value to use as slack if initial value is not set as upper bound
