@@ -41,7 +41,7 @@ LOGGING_LEVEL_FILE: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_BASE: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_ENV: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_GYM_ENV: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_ENV_BUILDER: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_ENV_BUILDER: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_DISPATCHER: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_INFSTRCT: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.WARNING
@@ -108,6 +108,8 @@ DB_ROOT: Final[str] = 'databases'
 
 
 # ** simulation
+# WIP setter interval: how many full cycles (each level used once) should occur
+WIP_LEVELS_FULL_CYCLES: Final[int] = 7
 # indicator how much workload can be processed per day
 # since a day has 24 hours each infrastructure object can process
 # 24 hours of workload per day at the maximum

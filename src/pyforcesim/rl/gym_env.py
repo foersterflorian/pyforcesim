@@ -33,8 +33,8 @@ if TYPE_CHECKING:
     from pandas import Timedelta as PDTimedelta
 
     from pyforcesim.types import (
+        EnvBuilderAdditionalConfig,
         EnvBuilderFunc,
-        EnvBuilderWIPConfig,
         PlotlyFigure,
     )
 
@@ -45,14 +45,16 @@ NORM_TD: Final[Timedelta] = pyf_dt.timedelta_from_val(1, time_unit=TimeUnitsTime
 BUILDER_FUNCS: Final[dict[BuilderFuncFamilies, EnvBuilderFunc]] = {
     BuilderFuncFamilies.SINGLE_PRODUCTION_AREA: standard_env_single_area,
 }
-BUILDER_FUNC_WIP_CFG: Final[EnvBuilderWIPConfig] = {
+BUILDER_FUNC_WIP_CFG: Final[EnvBuilderAdditionalConfig] = {
+    'sim_dur_weeks': 39,
     'factor_WIP': None,
     #'WIP_relative_target': (0.5, 3, 6),
     # 'WIP_relative_target': (0.5,),
     'WIP_relative_target': (1.5,),
+    'WIP_level_cycles': 5,
     'WIP_relative_planned': 1.5,
     'alpha': 10,
-    'buffer_size': 30,
+    'buffer_size': 20,
 }
 
 
@@ -178,7 +180,6 @@ class JSSEnv(gym.Env):
             assert isinstance(
                 self.agent, agents.SequencingAgent
             ), 'tried SEQ setup for non-sequencing agent'
-            # TODO change construction for agent types (ALLOC --> SEQ)
             # num_actions: depending on number of queue slots
             # feature vector:
             #   - res_SGI, availability

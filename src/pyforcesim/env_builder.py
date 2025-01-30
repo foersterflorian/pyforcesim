@@ -6,7 +6,11 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 
 import pyforcesim.datetime as pyf_dt
-from pyforcesim.constants import MAX_LOGICAL_QUEUE_SIZE, TimeUnitsTimedelta
+from pyforcesim.constants import (
+    MAX_LOGICAL_QUEUE_SIZE,
+    WIP_LEVELS_FULL_CYCLES,
+    TimeUnitsTimedelta,
+)
 from pyforcesim.loggers import env_builder as logger
 from pyforcesim.rl import agents
 from pyforcesim.simulation import conditions, distributions, loads
@@ -15,10 +19,16 @@ from pyforcesim.types import CustomID
 
 if TYPE_CHECKING:
     from pyforcesim.simulation.environment import Job
-    from pyforcesim.types import (
-        AgentType,
-        EnvAgentConstructorReturn,
-    )
+    from pyforcesim.types import AgentType, EnvAgentConstructorReturn, Timedelta
+
+
+def calc_setter_interval_by_num_iterations(
+    num_cycles: int,
+    sim_duration: Timedelta,
+    num_levels: int,
+) -> Timedelta:
+    duration_per_level = sim_duration / (num_cycles * num_levels)
+    return pyf_dt.round_td_by_seconds(duration_per_level, round_to_next_seconds=60)
 
 
 def standard_env_single_area(
@@ -26,6 +36,7 @@ def standard_env_single_area(
     with_agent: bool = False,
     validate: bool = False,
     seed: int | None = None,
+    sim_dur_weeks: float = 26,
     num_station_groups: int = 2,
     num_machines: int = 3,
     variable_source_sequence: bool = False,
@@ -33,6 +44,7 @@ def standard_env_single_area(
     seed_layout: int | None = None,
     factor_WIP: float | None = None,  # default: overload condition
     WIP_relative_target: Sequence[float] = (1.5,),
+    WIP_level_cycles: int = WIP_LEVELS_FULL_CYCLES,
     WIP_relative_planned: float = 1.5,  # util about 95 % with alpha = 7
     alpha: float = 7,
     buffer_size: int = MAX_LOGICAL_QUEUE_SIZE,
@@ -96,7 +108,6 @@ def standard_env_single_area(
         seed=seed,
     )
     env.dispatcher.seq_rule = 'FIFO'
-    # env.dispatcher.alloc_rule = 'LOAD_TIME'
     env.dispatcher.alloc_rule = 'LOAD_TIME_REMAINING'
     # source
     area_source = sim.ProductionArea(
@@ -238,9 +249,11 @@ def standard_env_single_area(
     # ** simulation duration and transient condition
     duration_transient = pyf_dt.timedelta_from_val(val=8, time_unit=TimeUnitsTimedelta.HOURS)
     conditions.TransientCondition(env=env, duration_transient=duration_transient)
+    sim_dur: Timedelta | None = None
     if not debug:
-        # default was 26 weeks
-        sim_dur = pyf_dt.timedelta_from_val(val=26, time_unit=TimeUnitsTimedelta.WEEKS)
+        sim_dur = pyf_dt.timedelta_from_val(
+            val=sim_dur_weeks, time_unit=TimeUnitsTimedelta.WEEKS
+        )
         conditions.JobGenDurationCondition(
             env=env, target_obj=source, sim_run_duration=sim_dur
         )
@@ -271,26 +284,6 @@ def standard_env_single_area(
         conditions.TriggerAgentCondition(env=env, agent=agent)
 
     # ** WIP control
-    # stop_prod_event = threading.Event()
-    # controller_interval = pyf_dt.timedelta_from_val(5, TimeUnitsTimedelta.MINUTES)
-    # stats_info = sequence_generator.stat_info
-
-    # WIP_limit: Timedelta
-    # WIP_limits: list[Timedelta] = []
-    # if stats_info is None:
-    #     WIP_limit = pyf_dt.timedelta_from_val(40, TimeUnitsTimedelta.HOURS)
-    # else:
-    #     area_prod.initialise()
-    #     WIP_ideal = area_prod.WIP_ideal(stats_info)
-    #     if len(WIP_relative_target) == 1:
-    #         WIP_limit = WIP_relative_target[0] * WIP_ideal
-    #         WIP_limit = pyf_dt.round_td_by_seconds(WIP_limit, 60)
-    #     else:
-    #         for WIP_relative in WIP_relative_target:
-    #             WIP_limit = WIP_relative * WIP_ideal
-    #             WIP_limit = pyf_dt.round_td_by_seconds(WIP_limit, 60)
-    #             WIP_limits.append(WIP_limit)
-
     WIP_supervisor = conditions.WIPSourceSupervisor(
         env,
         'WIP-Supervisor',
@@ -301,25 +294,14 @@ def standard_env_single_area(
         WIP_time=None,
     )
 
-    # WIP_observer = conditions.WIPSourceController(
-    #     env,
-    #     'WIP-Observer',
-    #     stop_prod_event,
-    #     sim_interval=controller_interval,
-    #     prod_area=area_prod,
-    #     target_sources=(source,),
-    #     WIP_limit=WIP_limit,
-    # )
-
-    if len(WIP_relative_target) > 1:
-        WIP_setter_interval = pyf_dt.timedelta_from_val(2, TimeUnitsTimedelta.WEEKS)
-        # _ = conditions.WIPLimitSetter(
-        #     env,
-        #     'WIP-Limit-Setter',
-        #     WIP_setter_interval,
-        #     WIP_source_controller=WIP_observer,
-        #     WIP_limits=WIP_limits,
-        # )
+    num_relative_targets = len(WIP_relative_target)
+    if num_relative_targets > 1 and sim_dur is not None:
+        # WIP_setter_interval = pyf_dt.timedelta_from_val(2, TimeUnitsTimedelta.WEEKS)
+        WIP_setter_interval = calc_setter_interval_by_num_iterations(
+            num_cycles=WIP_level_cycles,
+            sim_duration=sim_dur,
+            num_levels=num_relative_targets,
+        )
         _ = conditions.WIPSourceSupervisorLimitSetter(
             env,
             'WIP-Limit-Setter',
@@ -327,6 +309,14 @@ def standard_env_single_area(
             WIP_source_supervisor=WIP_supervisor,
             WIP_factors=WIP_relative_target,
             WIP_times=None,
+        )
+        logger.info(
+            (
+                '[ENV-BUILDER] Successfully added WIPLimitSetter with %d interval(s) '
+                'and setter interval >>%s<<.'
+            ),
+            num_relative_targets,
+            WIP_setter_interval,
         )
 
     logger.info('[ENV-BUILDER] Successfully created new simulation environment.')

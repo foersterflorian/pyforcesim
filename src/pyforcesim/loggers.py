@@ -103,9 +103,9 @@ jobs.setLevel(LOGGING_LEVEL_JOBS)
 operations = logging.getLogger('pyforcesim.operations')
 operations.setLevel(LOGGING_LEVEL_OPERATIONS)
 
-gym_env = logging.getLogger('pyforcesime.gym_env')
+gym_env = logging.getLogger('pyforcesim.gym_env')
 gym_env.setLevel(LOGGING_LEVEL_GYM_ENV)
-env_builder = logging.getLogger('pyforcesime.env_builder')
+env_builder = logging.getLogger('pyforcesim.env_builder')
 env_builder.setLevel(LOGGING_LEVEL_ENV_BUILDER)
 
 

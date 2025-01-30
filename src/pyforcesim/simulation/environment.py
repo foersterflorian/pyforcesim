@@ -329,7 +329,18 @@ class SimulationEnvironment(salabim.Environment):
         )
 
     def check_sim_ended(self) -> bool:
-        return self.infstruct_mgr.all_sources_stopped and not self._event_list
+        if self._event_list:
+            return False
+        elif not self.infstruct_mgr.all_sources_stopped:
+            return False
+        elif not self.infstruct_mgr.all_log_queues_empty:
+            return False
+
+        return True
+        # sources_stopped = self.infstruct_mgr.all_sources_stopped
+        # queues_empty = self.infstruct_mgr.all_log_queues_empty
+        # no_events_left = not self._event_list
+        # return sources_stopped and queues_empty and no_events_left
 
     def initialise(self) -> None:
         if not self.initialised:
@@ -408,6 +419,8 @@ class InfrastructureManager:
         # are still producing jobs or not
         self.all_sources_stopped: bool = False
         self._sources_stopped: dict[SystemID, bool] = {}
+        # simulation not ended until all logical queues are empty
+        self._all_log_queues_empty: bool = False
         # [RESOURCES] sink: pool of sinks possible to allow multiple sinks in one environment
         # [PERHAPS CHANGED LATER]
         # currently only one sink out of the pool is chosen because jobs do not contain
@@ -487,6 +500,12 @@ class InfrastructureManager:
             db_engine=self.env.db_engine,
         )
         return log_q_db
+
+    @property
+    def all_log_queues_empty(self) -> bool:
+        queue_fill = (len(q) for q in self.logical_queues.values())
+        self._all_log_queues_empty = not any(queue_fill)
+        return self._all_log_queues_empty
 
     def get_total_per_system_type(
         self,

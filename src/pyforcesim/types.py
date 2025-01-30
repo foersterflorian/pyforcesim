@@ -171,6 +171,7 @@ class EnvBuilderFunc(Protocol):
         with_agent: bool = ...,
         validate: bool = ...,
         seed: int | None = ...,
+        sim_dur_weeks: float = ...,
         num_station_groups: int = ...,
         num_machines: int = ...,
         variable_source_sequence: bool = ...,
@@ -178,15 +179,18 @@ class EnvBuilderFunc(Protocol):
         seed_layout: int | None = ...,
         factor_WIP: float = ...,
         WIP_relative_target: Sequence[float] = ...,
+        WIP_level_cycles: int = ...,
         WIP_relative_planned: float = ...,
         alpha: float = ...,
         buffer_size: int = ...,
     ) -> EnvAgentConstructorReturn: ...
 
 
-class EnvBuilderWIPConfig(TypedDict):
+class EnvBuilderAdditionalConfig(TypedDict):
+    sim_dur_weeks: float
     factor_WIP: float | None
     WIP_relative_target: Sequence[float]
+    WIP_level_cycles: int
     WIP_relative_planned: float
     alpha: float
     buffer_size: int

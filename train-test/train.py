@@ -27,13 +27,15 @@ NUM_PROCS: Final[int | None] = None
 OVERWRITE_FOLDERS: Final[bool] = True
 CONTINUE_LEARNING: Final[bool] = False
 NORMALISE_OBS: Final[bool] = True
-RNG_SEED: Final[int] = 42
+# ** seeding
+RNG_SEED: Final[int | None] = 42
+EVAL_SEED: Final[int] = 42
 # ** SB3 config
 SHOW_PROGRESSBAR: Final[bool] = False
 
 DATE = common.get_timestamp(with_time=False)
 DEC_TYPE: Final[AgentDecisionTypes] = AgentDecisionTypes.SEQ
-EXP_NUM: Final[str] = '3'
+EXP_NUM: Final[str] = '1'
 ENV_STRUCTURE: Final[str] = '1-2-3'
 JOB_GEN_METHOD: Final[str] = 'VarIdeal'
 EXP_TYPE: Final[str] = f'{ENV_STRUCTURE}_{JOB_GEN_METHOD}'
@@ -56,7 +58,9 @@ TIMESTEPS_PER_ITER: Final[int] = STEPS_TILL_UPDATE * 4
 ITERATIONS: Final[int] = 500
 ITERATIONS_TILL_SAVE: Final[int] = 16
 CALC_ITERATIONS: Final[int] = 1310721 // TIMESTEPS_PER_ITER
-
+# ** simulation
+RANDOMISE_RESET: Final[bool] = False
+# ** pretrained model to continue learning
 FILENAME_PRETRAINED_MODEL: Final[str] = '2025-01-17--15-36-17_pyf_sim_PPO_mask_TS-1310720'
 
 
@@ -256,6 +260,8 @@ def make_env(
 
 def train(
     continue_learning: bool,
+    seed: int | None,
+    eval_seed: int,
     sim_randomise_reset: bool = False,
     use_mp: bool = False,
     num_procs: int | None = None,
@@ -273,7 +279,7 @@ def train(
             tensorboard_path,
             num_procs=num_procs,
             normalise_obs=NORMALISE_OBS,
-            seed=RNG_SEED,
+            seed=seed,
             sim_randomise_reset=sim_randomise_reset,
         )
     else:
@@ -281,14 +287,15 @@ def train(
             EXP_TYPE,
             tensorboard_path,
             normalise_obs=NORMALISE_OBS,
-            seed=RNG_SEED,
+            seed=seed,
             sim_randomise_reset=sim_randomise_reset,
         )
+    # ** evaluation
     eval_env = make_env(
         EXP_TYPE,
         tensorboard_path,
         normalise_obs=NORMALISE_OBS,
-        seed=RNG_SEED,
+        seed=eval_seed,
     )
     # ** reward threshold callback
     reward_thresh_callback: StopTrainingOnRewardThreshold | None = None
@@ -393,7 +400,12 @@ def main() -> None:
         message=r'^[\s]*.*to get variables from other wrappers is deprecated.*$',
     )
     train(
-        continue_learning=CONTINUE_LEARNING, use_mp=USE_MULTIPROCESSING, num_procs=NUM_PROCS
+        continue_learning=CONTINUE_LEARNING,
+        seed=RNG_SEED,
+        eval_seed=EVAL_SEED,
+        sim_randomise_reset=RANDOMISE_RESET,
+        use_mp=USE_MULTIPROCESSING,
+        num_procs=NUM_PROCS,
     )
 
 
