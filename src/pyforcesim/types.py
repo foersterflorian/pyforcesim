@@ -93,18 +93,6 @@ class DistributionParameters:
     UNIFORM: type[DistUniformParameters] = DistUniformParameters
 
 
-# class DistributionParameters(TypedDict): ...
-
-
-# class DistUniformParameters(DistributionParameters):
-#     lower_bound: float
-#     upper_bound: float
-
-
-# class DistExpParameters(DistributionParameters):
-#     scale: float
-
-
 class QueueLike(Protocol[T]):
     def env(self) -> sim.SimulationEnvironment: ...
     def custom_identifier(self) -> CustomID: ...
@@ -243,3 +231,13 @@ class ForeignKeyInfo(TypedDict):
 
 SysIDResource: TypeAlias = SystemID
 LoadDistribution: TypeAlias = dict[SysIDResource, float]
+
+
+# ** StableBaselines3
+class SB3PolicyArgs(TypedDict):
+    net_arch: SB3ActorCriticNetworkArch
+
+
+class SB3ActorCriticNetworkArch(TypedDict):
+    pi: list[int]
+    vf: list[int]

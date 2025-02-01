@@ -16,7 +16,12 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNorm
 from pyforcesim import common
 from pyforcesim.rl.gym_env import JSSEnv
 from pyforcesim.rl.sb3.custom_callbacks import MaskableEvalCallback as EvalCallback
-from pyforcesim.types import AgentDecisionTypes, BuilderFuncFamilies
+from pyforcesim.types import (
+    AgentDecisionTypes,
+    BuilderFuncFamilies,
+    SB3ActorCriticNetworkArch,
+    SB3PolicyArgs,
+)
 
 # ** monkeypatch SB3 to work with SubprocVecEnv and MaskablePPO from sb3_contrib
 sb3_to_patch._worker = sb3_monkeypatch.worker
@@ -32,10 +37,13 @@ RNG_SEED: Final[int | None] = None
 EVAL_SEED: Final[int] = 42
 # ** SB3 config
 SHOW_PROGRESSBAR: Final[bool] = False
+# network
+net_arch: SB3ActorCriticNetworkArch = {'pi': [128, 64], 'vf': [128, 64]}
+POLICY_KWARGS: Final[SB3PolicyArgs] = {'net_arch': net_arch}
 
 DATE = common.get_timestamp(with_time=False)
 DEC_TYPE: Final[AgentDecisionTypes] = AgentDecisionTypes.SEQ
-EXP_NUM: Final[str] = '2'
+EXP_NUM: Final[str] = '10'
 ENV_STRUCTURE: Final[str] = '1-2-3'
 JOB_GEN_METHOD: Final[str] = 'VarIdeal'
 EXP_TYPE: Final[str] = f'{ENV_STRUCTURE}_{JOB_GEN_METHOD}'
@@ -54,7 +62,7 @@ STEPS_TILL_UPDATE: Final[int] = 4096  # 2 * 2048
 NUM_EVAL_EPISODES: Final[int] = 1
 EVAL_FREQ: Final[int] = STEPS_TILL_UPDATE * 4
 REWARD_THRESHOLD: Final[float | None] = None  # -0.01
-TIMESTEPS_PER_ITER: Final[int] = STEPS_TILL_UPDATE * 4
+TIMESTEPS_PER_ITER: Final[int] = STEPS_TILL_UPDATE * 1
 ITERATIONS: Final[int] = 500
 ITERATIONS_TILL_SAVE: Final[int] = 16
 CALC_ITERATIONS: Final[int] = 1310721 // TIMESTEPS_PER_ITER
@@ -346,9 +354,14 @@ def train(
             tensorboard_log=str(tensorboard_path),
             seed=RNG_SEED,
             n_steps=STEPS_TILL_UPDATE,
+            policy_kwargs=POLICY_KWARGS,  # type: ignore
             device='cpu',
         )
         calc_iterations = 0
+
+    print('=============================================================')
+    print(f'Network architecture is: {model.policy}')
+    print('=============================================================')
 
     for it in range(1, (ITERATIONS + 1)):
         model.learn(

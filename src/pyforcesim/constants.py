@@ -34,7 +34,7 @@ from pyforcesim.types import LoggingLevels as loglevel
 LOG_FMT: Final[str] = ' %(asctime)s | pyfsim:%(module)s:%(levelname)s | %(message)s'
 LOG_DATE_FMT: Final[str] = '%Y-%m-%d %H:%M:%S +0000'
 LOGGING_ENABLED: Final[bool] = True
-LOGGING_TO_FILE: Final[bool] = True
+LOGGING_TO_FILE: Final[bool] = False
 LOGGING_FILE_SIZE: Final[int] = 10485760  # in bytes
 LOGGING_LEVEL_STD_OUT: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_FILE: Final[loglevel] = loglevel.DEBUG
