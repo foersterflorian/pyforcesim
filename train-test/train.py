@@ -43,7 +43,7 @@ POLICY_KWARGS: Final[SB3PolicyArgs] = {'net_arch': net_arch}
 
 DATE = common.get_timestamp(with_time=False)
 DEC_TYPE: Final[AgentDecisionTypes] = AgentDecisionTypes.SEQ
-EXP_NUM: Final[str] = '10'
+EXP_NUM: Final[str] = '20'
 ENV_STRUCTURE: Final[str] = '1-2-3'
 JOB_GEN_METHOD: Final[str] = 'VarIdeal'
 EXP_TYPE: Final[str] = f'{ENV_STRUCTURE}_{JOB_GEN_METHOD}'
@@ -62,7 +62,7 @@ STEPS_TILL_UPDATE: Final[int] = 4096  # 2 * 2048
 NUM_EVAL_EPISODES: Final[int] = 1
 EVAL_FREQ: Final[int] = STEPS_TILL_UPDATE * 4
 REWARD_THRESHOLD: Final[float | None] = None  # -0.01
-TIMESTEPS_PER_ITER: Final[int] = STEPS_TILL_UPDATE * 1
+TIMESTEPS_PER_ITER: Final[int] = STEPS_TILL_UPDATE * 1000
 ITERATIONS: Final[int] = 500
 ITERATIONS_TILL_SAVE: Final[int] = 16
 CALC_ITERATIONS: Final[int] = 1310721 // TIMESTEPS_PER_ITER
@@ -219,7 +219,7 @@ def make_subproc_env(
     )  # type: ignore
     env.seed(seed=seed)
     if normalise_obs:
-        env = VecNormalize(env, norm_obs=True, norm_reward=False, clip_obs=10.0)
+        env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0)
 
     return env
 
