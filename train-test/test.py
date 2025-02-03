@@ -34,7 +34,7 @@ DEC_TYPE: Final[AgentDecisionTypes] = AgentDecisionTypes.SEQ
 USE_TRAIN_CONFIG: Final[bool] = False
 NORMALISE_OBS: Final[bool] = True
 NUM_EPISODES: Final[int] = 1
-FILENAME_TARGET_MODEL: Final[str] = '2025-01-27--18-47-00_pyf_sim_PPO_mask_TS-327681'
+FILENAME_TARGET_MODEL: Final[str] = '2025-02-02--19-00-00_pyf_sim_PPO_mask_TS-1000000'
 
 model_properties_pattern = re.compile(r'(?:pyf_sim_)([\w]+)_(TS-[\d]+)$')
 matches = model_properties_pattern.search(FILENAME_TARGET_MODEL)
@@ -45,7 +45,7 @@ if matches is None:
 ALGO_TYPE: Final[str] = matches.group(1)
 TIMESTEPS: Final[str] = matches.group(2)
 
-USER_TARGET_FOLDER: Final[str] = '2025-01-27-03__1-2-3__VarIdeal__Slack'
+USER_TARGET_FOLDER: Final[str] = '2025-02-02-20__1-2-3__VarIdeal__Slack'
 USER_FOLDER: Final[str] = f'results/{USER_TARGET_FOLDER}'
 user_exp_type_pattern = re.compile(
     r'^([\d\-]*)(?:[_]*)([\d\-]*)(?:[_]*)([a-zA-Z]*)(?:[_]*)([a-zA-Z]*)$'
@@ -55,7 +55,7 @@ if matches is None:
     raise ValueError(f'Experiment type could not be extracted out of: {USER_TARGET_FOLDER}')
 
 USER_EXP_TYPE: Final[str] = f'{matches.group(2)}_{matches.group(3)}'
-USER_RNG_SEED: Final[int] = 41
+USER_RNG_SEED: Final[int] = 42
 
 ROOT_FOLDER = USER_FOLDER
 ROOT_EXP_TYPE = USER_EXP_TYPE
@@ -259,6 +259,7 @@ def eval_agent_policy(
         ROOT_EXP_TYPE,
         tensorboard_path=None,
         normalise_obs=False,
+        normalise_rewards=False,
         gantt_chart=True,
         seed=seed,
         verify_env=False,
@@ -270,6 +271,7 @@ def eval_agent_policy(
         if not pth_vec_norm.exists():
             raise FileNotFoundError(f'VecNormalize info not found under: {pth_vec_norm}')
         env = VecNormalize.load(str(pth_vec_norm), env)
+        env.norm_reward = False
         env.training = False
         print('Normalization info loaded successfully.')
 

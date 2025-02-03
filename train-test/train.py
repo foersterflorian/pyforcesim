@@ -32,6 +32,7 @@ NUM_PROCS: Final[int | None] = None
 OVERWRITE_FOLDERS: Final[bool] = True
 CONTINUE_LEARNING: Final[bool] = False
 NORMALISE_OBS: Final[bool] = True
+NORMALISE_REWARDS: Final[bool] = True
 # ** seeding
 RNG_SEED: Final[int | None] = None
 EVAL_SEED: Final[int] = 42
@@ -159,6 +160,7 @@ def make_subproc_env(
     num_procs: int,
     gantt_chart: bool = False,
     normalise_obs: bool = True,
+    normalise_rewards: bool = False,
     seed: int | None = None,
     verify_env: bool = True,
     sim_randomise_reset: bool = False,
@@ -219,7 +221,7 @@ def make_subproc_env(
     )  # type: ignore
     env.seed(seed=seed)
     if normalise_obs:
-        env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0)
+        env = VecNormalize(env, norm_obs=True, norm_reward=normalise_rewards, clip_obs=10.0)
 
     return env
 
@@ -229,6 +231,7 @@ def make_env(
     tensorboard_path: Path | None,
     gantt_chart: bool = False,
     normalise_obs: bool = True,
+    normalise_rewards: bool = False,
     seed: int | None = None,
     verify_env: bool = True,
     sim_randomise_reset: bool = False,
@@ -266,7 +269,7 @@ def make_env(
     env = DummyVecEnv([lambda: env])  # type: ignore
     env.seed(seed=seed)
     if normalise_obs:
-        env = VecNormalize(env, norm_obs=True, norm_reward=False, clip_obs=10.0)
+        env = VecNormalize(env, norm_obs=True, norm_reward=normalise_rewards, clip_obs=10.0)
 
     return env
 
@@ -275,6 +278,7 @@ def train(
     continue_learning: bool,
     seed: int | None,
     eval_seed: int,
+    normalise_rewards: bool,
     sim_randomise_reset: bool = False,
     use_mp: bool = False,
     num_procs: int | None = None,
@@ -292,6 +296,7 @@ def train(
             tensorboard_path,
             num_procs=num_procs,
             normalise_obs=NORMALISE_OBS,
+            normalise_rewards=normalise_rewards,
             seed=seed,
             sim_randomise_reset=sim_randomise_reset,
         )
@@ -300,6 +305,7 @@ def train(
             EXP_TYPE,
             tensorboard_path,
             normalise_obs=NORMALISE_OBS,
+            normalise_rewards=normalise_rewards,
             seed=seed,
             sim_randomise_reset=sim_randomise_reset,
         )
@@ -308,6 +314,7 @@ def train(
         EXP_TYPE,
         tensorboard_path,
         normalise_obs=NORMALISE_OBS,
+        normalise_rewards=False,
         seed=eval_seed,
     )
     # ** reward threshold callback
@@ -421,6 +428,7 @@ def main() -> None:
         continue_learning=CONTINUE_LEARNING,
         seed=RNG_SEED,
         eval_seed=EVAL_SEED,
+        normalise_rewards=NORMALISE_REWARDS,
         sim_randomise_reset=RANDOMISE_RESET,
         use_mp=USE_MULTIPROCESSING,
         num_procs=NUM_PROCS,
