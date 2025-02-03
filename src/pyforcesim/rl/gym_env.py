@@ -45,15 +45,27 @@ NORM_TD: Final[Timedelta] = pyf_dt.timedelta_from_val(1, time_unit=TimeUnitsTime
 BUILDER_FUNCS: Final[dict[BuilderFuncFamilies, EnvBuilderFunc]] = {
     BuilderFuncFamilies.SINGLE_PRODUCTION_AREA: standard_env_single_area,
 }
+
+WIP_TARGET_MIN: Final[float] = 0.5
+WIP_TARGET_MAX: Final[float] = 5
+NUM_DIFF_WIP_LEVELS: Final[int] = 5  # must be odd
+assert NUM_DIFF_WIP_LEVELS % 2 != 0, 'number of WIP levels must be odd'
+WIP_relative_targets: tuple[float, ...] = tuple(
+    np.linspace(
+        WIP_TARGET_MIN, WIP_TARGET_MAX, num=NUM_DIFF_WIP_LEVELS, dtype=np.float64
+    ).tolist()
+)
+
 BUILDER_FUNC_WIP_CFG: Final[EnvBuilderAdditionalConfig] = {
     'sim_dur_weeks': 39,
     'factor_WIP': None,
     #'WIP_relative_target': (0.5, 3, 6),
     # 'WIP_relative_target': (0.5,),
-    'WIP_relative_target': (1.5, 0.5, 2.5, 5, 3.5),
+    # 'WIP_relative_target': (1.5, 0.5, 2.5, 5, 3.5),
     # 'WIP_relative_target': (5,),
+    'WIP_relative_target': WIP_relative_targets,
     'WIP_level_cycles': 5,
-    'WIP_relative_planned': 1.5,
+    'WIP_relative_planned': 2.75,
     'alpha': 10,
     'buffer_size': 20,
 }
