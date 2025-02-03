@@ -44,7 +44,7 @@ POLICY_KWARGS: Final[SB3PolicyArgs] = {'net_arch': net_arch}
 
 DATE = common.get_timestamp(with_time=False)
 DEC_TYPE: Final[AgentDecisionTypes] = AgentDecisionTypes.SEQ
-EXP_NUM: Final[str] = '20'
+EXP_NUM: Final[str] = '1'
 ENV_STRUCTURE: Final[str] = '1-2-3'
 JOB_GEN_METHOD: Final[str] = 'VarIdeal'
 EXP_TYPE: Final[str] = f'{ENV_STRUCTURE}_{JOB_GEN_METHOD}'
@@ -59,11 +59,11 @@ FOLDER_MODEL_SAVEPOINTS: Final[str] = 'models'
 
 MODEL: Final[str] = 'PPO_mask'
 MODEL_BASE_NAME: Final[str] = f'pyf_sim_{MODEL}'
-STEPS_TILL_UPDATE: Final[int] = 4096  # 2 * 2048
+STEPS_TILL_UPDATE: Final[int] = 2048  # 2 * 2048
 NUM_EVAL_EPISODES: Final[int] = 1
 EVAL_FREQ: Final[int] = STEPS_TILL_UPDATE * 4
 REWARD_THRESHOLD: Final[float | None] = None  # -0.01
-TIMESTEPS_PER_ITER: Final[int] = STEPS_TILL_UPDATE * 1000
+TIMESTEPS_PER_ITER: Final[int] = STEPS_TILL_UPDATE * 100000
 ITERATIONS: Final[int] = 500
 ITERATIONS_TILL_SAVE: Final[int] = 16
 CALC_ITERATIONS: Final[int] = 1310721 // TIMESTEPS_PER_ITER
