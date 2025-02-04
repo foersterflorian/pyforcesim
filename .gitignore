@@ -19,6 +19,9 @@ results/
 tensorboard/
 models/
 
+# specific scripts
+scripts/connect_WS.sh
+
 # temp files and logs
 file_system_backend/
 logs*
