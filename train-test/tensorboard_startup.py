@@ -1,3 +1,4 @@
+import argparse
 import shlex
 import subprocess
 import time
@@ -11,7 +12,7 @@ from pyforcesim import common
 pyforcesim.loggers.disable_logging()
 
 
-USE_TRAIN_CONFIG: Final[bool] = False
+USE_TRAIN_CONFIG: Final[bool] = True
 if USE_TRAIN_CONFIG:
     from train import BASE_FOLDER, FOLDER_TB  # type: ignore
 else:
@@ -45,9 +46,23 @@ def open_browser() -> None:
 
 
 def main() -> None:
-    webbrowser_thread = Thread(target=open_browser, daemon=True)
-    webbrowser_thread.start()
-    start_tensorboard()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '-w',
+        '--webbrowser',
+        help='open Tensorboard page automatically',
+        action='store_true',
+    )
+    args = parser.parse_args()
+
+    if args.webbrowser:
+        webbrowser_thread = Thread(target=open_browser, daemon=True)
+        webbrowser_thread.start()
+
+    try:
+        start_tensorboard()
+    except KeyboardInterrupt:
+        print('KeyboardInterrupt: Tensorboard host stopped.')
 
 
 if __name__ == '__main__':
