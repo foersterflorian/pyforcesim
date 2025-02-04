@@ -1,4 +1,5 @@
 import os
+import time
 import warnings
 from collections.abc import Callable
 from pathlib import Path
@@ -8,7 +9,10 @@ import psutil
 import sb3_monkeypatch
 import stable_baselines3.common.vec_env.subproc_vec_env as sb3_to_patch
 from sb3_contrib.ppo_mask import MaskablePPO
-from stable_baselines3.common.callbacks import StopTrainingOnRewardThreshold
+from stable_baselines3.common.callbacks import (
+    CheckpointCallback,
+    StopTrainingOnRewardThreshold,
+)
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
@@ -61,12 +65,13 @@ MODEL: Final[str] = 'PPO_mask'
 MODEL_BASE_NAME: Final[str] = f'pyf_sim_{MODEL}'
 STEPS_TILL_UPDATE: Final[int] = 2048  # 2 * 2048
 NUM_EVAL_EPISODES: Final[int] = 1
-EVAL_FREQ: Final[int] = STEPS_TILL_UPDATE * 4
+EVAL_FREQ: Final[int] = STEPS_TILL_UPDATE * 2
 REWARD_THRESHOLD: Final[float | None] = None  # -0.01
-TIMESTEPS_PER_ITER: Final[int] = STEPS_TILL_UPDATE * 100000
-ITERATIONS: Final[int] = 500
-ITERATIONS_TILL_SAVE: Final[int] = 16
-CALC_ITERATIONS: Final[int] = 1310721 // TIMESTEPS_PER_ITER
+TIMESTEPS_TOTAL: Final[int] = STEPS_TILL_UPDATE * 100_000
+STEPS_TILL_SAVE: Final[int] = 2048 * 16
+# ITERATIONS: Final[int] = 500
+# ITERATIONS_TILL_SAVE: Final[int] = 16
+# CALC_ITERATIONS: Final[int] = 1310721 // TIMESTEPS_PER_ITER
 # ** simulation
 RANDOMISE_RESET: Final[bool] = True
 # ** pretrained model to continue learning
@@ -75,27 +80,33 @@ FILENAME_PRETRAINED_MODEL: Final[str] = '2025-01-17--15-36-17_pyf_sim_PPO_mask_T
 
 def prepare_base_folder(
     base_folder: str,
-) -> None:
-    base_path = common.prepare_save_paths(BASE_FOLDER, None, None, None)
-    common.create_folder(base_path, delete_existing=OVERWRITE_FOLDERS)
+    overwrite_existing: bool,
+) -> Path:
+    base_path = common.prepare_save_paths(base_folder, None, None, None)
+    common.create_folder(base_path, delete_existing=overwrite_existing)
+
+    return base_path
 
 
 def prepare_tb_path(
     base_folder: str,
     folder_tensorboard: str,
+    overwrite_existing: bool,
 ) -> Path:
     tensorboard_path = common.prepare_save_paths(base_folder, folder_tensorboard, None, None)
-    common.create_folder(tensorboard_path, delete_existing=OVERWRITE_FOLDERS)
+    common.create_folder(tensorboard_path, delete_existing=overwrite_existing)
     return tensorboard_path
 
 
 def prepare_model_path(
     base_folder: str,
-) -> None:
-    model_save_pth = common.prepare_save_paths(
-        base_folder, FOLDER_MODEL_SAVEPOINTS, None, None
-    )
-    common.create_folder(model_save_pth, delete_existing=OVERWRITE_FOLDERS)
+    model_folder_name: str,
+    overwrite_existing: bool,
+) -> Path:
+    model_save_pth = common.prepare_save_paths(base_folder, model_folder_name, None, None)
+    common.create_folder(model_save_pth, delete_existing=overwrite_existing)
+
+    return model_save_pth
 
 
 def get_save_path_model(
@@ -283,9 +294,9 @@ def train(
     use_mp: bool = False,
     num_procs: int | None = None,
 ) -> None:
-    prepare_base_folder(BASE_FOLDER)
-    tensorboard_path = prepare_tb_path(BASE_FOLDER, FOLDER_TB)
-    prepare_model_path(BASE_FOLDER)
+    _ = prepare_base_folder(BASE_FOLDER, OVERWRITE_FOLDERS)
+    tensorboard_path = prepare_tb_path(BASE_FOLDER, FOLDER_TB, OVERWRITE_FOLDERS)
+    model_folder = prepare_model_path(BASE_FOLDER, FOLDER_MODEL_SAVEPOINTS, OVERWRITE_FOLDERS)
     tensorboard_command = f'pdm run tensorboard --logdir="{tensorboard_path}"'
     print('tensorboard command: ', tensorboard_command)
 
@@ -309,6 +320,18 @@ def train(
             seed=seed,
             sim_randomise_reset=sim_randomise_reset,
         )
+    # ** Checkpoint
+    n_envs: int = 1
+    if num_procs is not None:
+        n_envs = num_procs
+    save_freq = max(STEPS_TILL_SAVE // n_envs, 1)
+    checkpoint_callback = CheckpointCallback(
+        save_freq=save_freq,
+        save_path=str(model_folder),
+        name_prefix=MODEL_BASE_NAME,
+        save_vecnormalize=NORMALISE_OBS,
+        verbose=2,
+    )
     # ** evaluation
     eval_env = make_env(
         EXP_TYPE,
@@ -324,18 +347,10 @@ def train(
             reward_threshold=REWARD_THRESHOLD,
             verbose=1,
         )
-
-    best_model_save_pth = common.prepare_save_paths(
-        base_folder=BASE_FOLDER,
-        target_folder=FOLDER_MODEL_SAVEPOINTS,
-        filename=None,
-        suffix=None,
-        include_timestamp=False,
-    )
     eval_callback = EvalCallback(
         callback_on_new_best=reward_thresh_callback,
         eval_env=eval_env,
-        best_model_save_path=str(best_model_save_pth),
+        best_model_save_path=str(model_folder),
         n_eval_episodes=NUM_EVAL_EPISODES,
         eval_freq=EVAL_FREQ,
         deterministic=True,
@@ -346,10 +361,9 @@ def train(
     if continue_learning:
         pth_vec_norm, model = load_model()
         model.set_env(env=env)
-        calc_iterations = CALC_ITERATIONS
-        if NORMALISE_OBS:
-            if not pth_vec_norm.exists():
-                raise FileNotFoundError(f'VecNormalize info not found under: {pth_vec_norm}')
+        if NORMALISE_OBS and not pth_vec_norm.exists():
+            raise FileNotFoundError(f'VecNormalize info not found under: {pth_vec_norm}')
+        elif NORMALISE_OBS:
             env = VecNormalize.load(str(pth_vec_norm), env)
             env.training = True
             print('Normalization info loaded successfully.')
@@ -359,60 +373,22 @@ def train(
             env,
             verbose=1,
             tensorboard_log=str(tensorboard_path),
-            seed=RNG_SEED,
+            seed=seed,
             n_steps=STEPS_TILL_UPDATE,
             policy_kwargs=POLICY_KWARGS,  # type: ignore
             device='cpu',
         )
-        calc_iterations = 0
 
     print('=============================================================')
     print(f'Network architecture is: {model.policy}')
     print('=============================================================')
-
-    for it in range(1, (ITERATIONS + 1)):
-        model.learn(
-            callback=eval_callback,
-            total_timesteps=TIMESTEPS_PER_ITER,
-            progress_bar=SHOW_PROGRESSBAR,
-            tb_log_name=f'{MODEL}',
-            reset_num_timesteps=False,
-        )
-        num_timesteps = TIMESTEPS_PER_ITER * (it + calc_iterations)
-        save_path_model, save_path_vec_norm = get_save_path_model(
-            num_timesteps=num_timesteps, base_name=MODEL_BASE_NAME
-        )
-        # break early if training should not be continued
-        if not eval_callback.continue_training:
-            # rename best model and vec normalize info if present
-            best_model_file = best_model_save_pth.joinpath('best_model.zip')
-            os.rename(best_model_file, save_path_model)
-            best_model_vec_norm: Path | None = None
-            vec_norm = model.get_vec_normalize_env()
-            if vec_norm is not None:
-                best_model_vec_norm = best_model_save_pth.joinpath('best_model_vec_norm.pkl')
-                os.rename(best_model_vec_norm, save_path_vec_norm)
-
-            break
-        # save regularly following config
-        if it % ITERATIONS_TILL_SAVE == 0:
-            model.save(save_path_model)
-            vec_norm = model.get_vec_normalize_env()
-            if vec_norm is not None:
-                vec_norm.save(str(save_path_vec_norm))
-
-    # rename best model and vec normalize info if present
-    save_path_model, save_path_vec_norm = get_save_path_model(
-        num_timesteps=(num_timesteps + 1), base_name=MODEL_BASE_NAME
+    model.learn(
+        callback=[eval_callback, checkpoint_callback],
+        total_timesteps=TIMESTEPS_TOTAL,
+        progress_bar=SHOW_PROGRESSBAR,
+        tb_log_name=f'{MODEL}',
+        reset_num_timesteps=False,
     )
-    best_model_file = best_model_save_pth.joinpath('best_model.zip')
-    os.rename(best_model_file, save_path_model)
-
-    best_model_vec_norm: Path | None = None
-    vec_norm = model.get_vec_normalize_env()
-    if vec_norm is not None:
-        best_model_vec_norm = best_model_save_pth.joinpath('best_model_vec_norm.pkl')
-        os.rename(best_model_vec_norm, save_path_vec_norm)
 
     print('------------------')
     print('Training finished.')
@@ -436,4 +412,25 @@ def main() -> None:
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('KeyboardInterrupt: Renaming best model if available...')
+    except Exception as err:
+        print('Following exception occured: ', err)
+    finally:
+        time.sleep(5)  # wait for other processes to end (for SubprocVecEnv)
+        # rename best model and vec normalize info if present
+        model_folder = prepare_model_path(BASE_FOLDER, FOLDER_MODEL_SAVEPOINTS, False)
+        save_path_model, save_path_vec_norm = get_save_path_model(
+            num_timesteps=(TIMESTEPS_TOTAL + 1), base_name=MODEL_BASE_NAME
+        )
+        best_model_file = model_folder / 'best_model.zip'
+        if best_model_file.exists():
+            os.rename(best_model_file, save_path_model)
+
+        best_model_vec_norm_file = model_folder / 'best_model_vec_norm.pkl'
+        if best_model_vec_norm_file.exists():
+            os.rename(best_model_vec_norm_file, save_path_vec_norm)
+
+        print('Best model renamed successfully')
