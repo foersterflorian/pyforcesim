@@ -11,14 +11,11 @@ from pyforcesim import common
 pyforcesim.loggers.disable_logging()
 
 
-USE_TRAIN_CONFIG: Final[bool] = True
+USE_TRAIN_CONFIG: Final[bool] = False
 if USE_TRAIN_CONFIG:
     from train import BASE_FOLDER, FOLDER_TB  # type: ignore
 else:
-    # EXPERIMENT_FOLDER: Final[str] = '2024-07-23-10__1-5-20__ConstIdeal__Util'
-    # EXPERIMENT_FOLDER: Final[str] = '2024-07-23-10__1-5-30__ConstIdeal__Util'
-    # EXPERIMENT_FOLDER: Final[str] = '2024-07-23-10__1-5-50__ConstIdeal__Util'
-    EXPERIMENT_FOLDER: Final[str] = '2024-07-23-11__1-5-70__ConstIdeal__Util'
+    EXPERIMENT_FOLDER: Final[str] = '2025-02-02-20__1-2-3__VarIdeal__Slack'
     BASE_FOLDER: Final[str] = f'results/{EXPERIMENT_FOLDER}'
     FOLDER_TB: Final[str] = 'tensorboard'
 
