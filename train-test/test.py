@@ -34,7 +34,7 @@ DEC_TYPE: Final[AgentDecisionTypes] = AgentDecisionTypes.SEQ
 USE_TRAIN_CONFIG: Final[bool] = False
 NORMALISE_OBS: Final[bool] = True
 NUM_EPISODES: Final[int] = 1
-FILENAME_TARGET_MODEL: Final[str] = '2025-02-02--19-00-00_pyf_sim_PPO_mask_TS-1000000'
+FILENAME_TARGET_MODEL: Final[str] = '2025-02-04--17-20-00_pyf_sim_PPO_mask_TS-999999'
 
 model_properties_pattern = re.compile(r'(?:pyf_sim_)([\w]+)_(TS-[\d]+)$')
 matches = model_properties_pattern.search(FILENAME_TARGET_MODEL)
@@ -45,7 +45,7 @@ if matches is None:
 ALGO_TYPE: Final[str] = matches.group(1)
 TIMESTEPS: Final[str] = matches.group(2)
 
-USER_TARGET_FOLDER: Final[str] = '2025-02-02-20__1-2-3__VarIdeal__Slack'
+USER_TARGET_FOLDER: Final[str] = '2025-02-04-01__1-2-3__VarIdeal__Slack'
 USER_FOLDER: Final[str] = f'results/{USER_TARGET_FOLDER}'
 user_exp_type_pattern = re.compile(
     r'^([\d\-]*)(?:[_]*)([\d\-]*)(?:[_]*)([a-zA-Z]*)(?:[_]*)([a-zA-Z]*)$'
