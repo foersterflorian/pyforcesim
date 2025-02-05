@@ -55,7 +55,7 @@ if matches is None:
     raise ValueError(f'Experiment type could not be extracted out of: {USER_TARGET_FOLDER}')
 
 USER_EXP_TYPE: Final[str] = f'{matches.group(2)}_{matches.group(3)}'
-USER_RNG_SEED: Final[int] = 42
+USER_RNG_SEED: Final[int] = 1234  # default: 42
 
 ROOT_FOLDER = USER_FOLDER
 ROOT_EXP_TYPE = USER_EXP_TYPE
