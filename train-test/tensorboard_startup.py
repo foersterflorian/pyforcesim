@@ -16,7 +16,7 @@ USE_TRAIN_CONFIG: Final[bool] = True
 if USE_TRAIN_CONFIG:
     from train import BASE_FOLDER, FOLDER_TB  # type: ignore
 else:
-    EXPERIMENT_FOLDER: Final[str] = '2025-02-02-20__1-2-3__VarIdeal__Slack'
+    EXPERIMENT_FOLDER: Final[str] = '2025-02-04-01__1-2-3__VarIdeal__Slack'
     BASE_FOLDER: Final[str] = f'results/{EXPERIMENT_FOLDER}'
     FOLDER_TB: Final[str] = 'tensorboard'
 
@@ -50,7 +50,7 @@ def main() -> None:
     parser.add_argument(
         '-w',
         '--webbrowser',
-        help='open Tensorboard page automatically',
+        help='open TensorBoard page automatically',
         action='store_true',
     )
     args = parser.parse_args()
