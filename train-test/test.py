@@ -188,8 +188,8 @@ def export_dbs(
     filename_job_db = f'{filename_base}-job-db'
     filename_op_db = f'{filename_base}-op-db'
     if is_benchmark:
-        filename_job_db = f'Benchmark_Episode_{episode_num}_job-db'
-        filename_op_db = f'Benchmark_Episode_{episode_num}_op-db'
+        filename_job_db = f'Benchmark_Episode_{episode_num}_job-db_Seed_{seed}'
+        filename_op_db = f'Benchmark_Episode_{episode_num}_op-db_Seed_{seed}'
 
     save_pth_job_db = common.prepare_save_paths(
         base_folder=ROOT_FOLDER,
