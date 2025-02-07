@@ -159,7 +159,7 @@ def export_gantt_chart(
             f'Gantt Chart<br>Benchmark (Policy: {policy_name})<br>ExpType: {VAL_EXP_TYPE}, '
         )
         title_chart = title + title_KPIs + title_reward
-        filename = f'Benchmark_Episode_{episode_num}_Seed_{seed}'
+        filename = f'Benchmark_{policy_name}_Episode_{episode_num}_Seed_{seed}'
     else:
         title = (
             f'Gantt Chart<br>Model (Algo: {ALGO_TYPE}, Timesteps: '
@@ -388,7 +388,7 @@ def main() -> None:
         message=r'^[\s]*.*to get variables from other wrappers is deprecated.*$',
     )
     t1 = time.perf_counter()
-    # eval_agent_policy(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
+    eval_agent_policy(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
     print('--------------------------------------------------------------------')
     eval_agent_benchmark(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
     t2 = time.perf_counter()
