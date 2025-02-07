@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from operator import attrgetter
 from random import Random
 from typing import TYPE_CHECKING, Never, TypeVar, cast
@@ -12,6 +12,7 @@ from pyforcesim.types import SystemID
 if TYPE_CHECKING:
     from pyforcesim.simulation.environment import (
         Job,
+        Operation,
         ProcessingStation,
         StationGroup,
     )
@@ -194,6 +195,21 @@ class PriorityPolicy(SequencingPolicy):
         items: Sequence[Job],
     ) -> Job:
         return max(items, key=attrgetter('prio'))
+
+
+# !! currently only op-wise
+class EDDPolicy(SequencingPolicy):
+    @override
+    def apply(
+        self,
+        items: Sequence[Job],
+    ) -> Job:
+        ops = tuple((job.current_op for job in items))
+        assert all((op is not None for op in ops)), 'at least one current operation is None'
+        ops = cast(tuple['Operation', ...], ops)
+        target_op = min(ops, key=attrgetter('time_planned_ending'))
+
+        return target_op.job
 
 
 # ** Allocation
