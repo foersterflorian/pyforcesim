@@ -107,7 +107,8 @@ def standard_env_single_area(
         starting_datetime=starting_dt,
         seed=seed,
     )
-    env.dispatcher.seq_rule = 'FIFO'
+    # env.dispatcher.seq_rule = 'FIFO'
+    env.dispatcher.seq_rule = 'EDD'
     env.dispatcher.alloc_rule = 'LOAD_TIME_REMAINING'
     # source
     area_source = sim.ProductionArea(
@@ -230,7 +231,7 @@ def standard_env_single_area(
 
         prod_sequence_PA = sequence_generator.retrieve(
             WIP_factor=factor_WIP,
-            random_due_date_diff=False,
+            random_due_date_diff=True,
         )
     else:
         sequence_generator = loads.ConstantSequenceSinglePA(

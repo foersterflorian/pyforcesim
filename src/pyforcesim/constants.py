@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from pyforcesim.simulation.policies import (
     AgentPolicy,
     AllocationPolicy,
+    EDDPolicy,
     FIFOPolicy,
     GeneralPolicy,
     LIFOPolicy,
@@ -94,7 +95,7 @@ TIMEZONE_UTC: Final[Timezone] = Timezone.utc
 DEFAULT_DATETIME: Final[Datetime] = Datetime(1970, 1, 1, tzinfo=TIMEZONE_UTC)
 SLACK_INIT_AS_UPPER_BOUND: Final[bool] = True
 # only takes effect if initial slack used as upper bound
-SLACK_USE_THRESHOLD_UPPER: Final[bool] = True
+SLACK_USE_THRESHOLD_UPPER: Final[bool] = False
 # value to use as slack if initial value is not set as upper bound
 SLACK_OVERWRITE_UPPER_BOUND: Final[Timedelta] = Timedelta(hours=1)
 SLACK_THRESHOLD_UPPER: Final[Timedelta] = Timedelta(hours=2)
@@ -224,6 +225,7 @@ POLICIES_SEQ: Final[dict[str, type[GeneralPolicy | SequencingPolicy]]] = {
     'LPT': LPTPolicy,
     'SST': SSTPolicy,
     'LST': LSTPolicy,
+    'EDD': EDDPolicy,
     'PRIORITY': PriorityPolicy,
     'RANDOM': RandomPolicy,
 }
