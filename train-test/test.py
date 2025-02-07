@@ -188,8 +188,9 @@ def export_dbs(
     filename_job_db = f'{filename_base}-job-db'
     filename_op_db = f'{filename_base}-op-db'
     if is_benchmark:
-        filename_job_db = f'Benchmark_Episode_{episode_num}_job-db_Seed_{seed}'
-        filename_op_db = f'Benchmark_Episode_{episode_num}_op-db_Seed_{seed}'
+        policy_name = env.policy_name if env.policy_name is not None else 'n.a.'
+        filename_job_db = f'Benchmark_{policy_name}_Episode_{episode_num}_job-db_Seed_{seed}'
+        filename_op_db = f'Benchmark_{policy_name}_Episode_{episode_num}_op-db_Seed_{seed}'
 
     save_pth_job_db = common.prepare_save_paths(
         base_folder=ROOT_FOLDER,
@@ -387,11 +388,9 @@ def main() -> None:
         message=r'^[\s]*.*to get variables from other wrappers is deprecated.*$',
     )
     t1 = time.perf_counter()
-    eval_agent_policy(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
-    # eval_agent_policy(num_episodes=1, seed=100, sim_randomise_reset=False)
+    # eval_agent_policy(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
     print('--------------------------------------------------------------------')
     eval_agent_benchmark(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
-    # eval_agent_benchmark(num_episodes=1, seed=100, sim_randomise_reset=False)
     t2 = time.perf_counter()
     dur = t2 - t1
     print(f'Duration for agent eval and benchmark: {dur:.4f} sec')
