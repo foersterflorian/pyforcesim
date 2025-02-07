@@ -25,61 +25,70 @@ def load_exported_db_from_pickle(
 
 
 def _validate_dbs_on_properties(
-    db_agent: pd.DataFrame,
-    db_bench: pd.DataFrame,
+    db_1: pd.DataFrame,
+    db_2: pd.DataFrame,
     field: str,
 ) -> None:
-    agent_fields = set(db_agent.columns)
-    bench_fields = set(db_bench.columns)
-    if agent_fields - bench_fields:
+    db_1_fields = set(db_1.columns)
+    db_2_fields = set(db_2.columns)
+    if db_1_fields - db_2_fields:
         raise KeyError('The provided databases do not contain the same fields.')
-    elif field not in agent_fields:
+    elif field not in db_1_fields:
         raise KeyError(
             f'Provided property >>{field}<< does not exist in the provided databases.'
         )
 
 
 def merge_dbs_on_property(
-    db_agent: pd.DataFrame,
-    db_bench: pd.DataFrame,
+    db_1: pd.DataFrame,
+    db_2: pd.DataFrame,
     field: str,
+    title_1: str = 'Agent',
+    title_2: str = 'Benchmark',
 ) -> pd.DataFrame:
-    _validate_dbs_on_properties(db_agent, db_bench, field)
+    _validate_dbs_on_properties(db_1, db_2, field)
     # check for timedelta:
     NORM_TD: Final[Timedelta] = pyf_dt.timedelta_from_val(1, TimeUnitsTimedelta.HOURS)
-    is_dt_like = hasattr(db_agent[field], 'dt')
-    is_timedelta: bool
+    is_dt_like = hasattr(db_1[field], 'dt')
+    is_timedelta: bool = False
     if is_dt_like:
         try:
-            db_agent[field].dt.days
+            db_1[field].dt.days
             is_timedelta = True
         except AttributeError:
-            is_timedelta = False
+            pass
 
-    # benchmark
-    data_bench = db_bench[field].copy()
-    bench_labels = ['bench'] * len(data_bench)
-    # agent
-    data_agent = db_agent[field].copy()
-    agent_labels = ['agent'] * len(data_agent)
+    data_1 = db_1[field].copy()
+    data_1_labels = [title_1] * len(data_1)
+    data_2 = db_2[field].copy()
+    data_2_labels = [title_2] * len(data_2)
 
     if is_timedelta:
-        data_bench = data_bench / NORM_TD  # type: ignore
-        data_agent = data_agent / NORM_TD  # type: ignore
+        data_1 = data_1 / NORM_TD  # type: ignore
+        data_2 = data_2 / NORM_TD  # type: ignore
 
-    df_slack_bench = pd.DataFrame({field: data_bench, 'label': bench_labels})
-    df_slack_agent = pd.DataFrame({field: data_agent, 'label': agent_labels})
+    df_data_1 = pd.DataFrame({field: data_1, 'label': data_1_labels})
+    df_data_2 = pd.DataFrame({field: data_2, 'label': data_2_labels})
+
     # concatenation
-    return pd.concat([df_slack_agent, df_slack_bench], ignore_index=True)
+    return pd.concat([df_data_1, df_data_2], ignore_index=True)
 
 
 def boxplot(
-    db_agent: pd.DataFrame,
-    db_bench: pd.DataFrame,
+    db_1: pd.DataFrame,
+    db_2: pd.DataFrame,
     field: str,
+    title_1: str = 'Agent',
+    title_2: str = 'Benchmark',
     height: int = 600,
 ) -> PlotlyFigure:
-    df_combined = merge_dbs_on_property(db_agent, db_bench, field=field)
+    df_combined = merge_dbs_on_property(
+        db_1,
+        db_2,
+        field=field,
+        title_1=title_1,
+        title_2=title_2,
+    )
     fig = px.box(df_combined, y=field, x='label')
     title = f'Boxplot - property: {field}'
     fig.update_layout(title=title, height=height)
@@ -88,19 +97,21 @@ def boxplot(
 
 
 def histogram(
-    db_agent: pd.DataFrame,
-    db_bench: pd.DataFrame,
+    db_1: pd.DataFrame,
+    db_2: pd.DataFrame,
     field: str,
+    title_1: str = 'Agent',
+    title_2: str = 'Benchmark',
     height: int = 800,
 ) -> PlotlyFigure:
-    _validate_dbs_on_properties(db_agent, db_bench, field)
-    data_agent = db_agent[field].copy()
-    data_bench = db_bench[field].copy()
+    _validate_dbs_on_properties(db_1, db_2, field)
+    data_1 = db_1[field].copy()
+    data_2 = db_2[field].copy()
 
     fig = make_subplots(
         rows=2,
         cols=2,
-        subplot_titles=('Agent', 'Benchmark', 'Benchmark', 'Agent'),
+        subplot_titles=(title_1, title_2, title_2, title_1),
         shared_xaxes=True,
         shared_yaxes=True,
         horizontal_spacing=0.01,
@@ -108,20 +119,20 @@ def histogram(
     )
 
     fig.add_trace(
-        go.Histogram(x=data_agent, name='Agent', marker=dict(color='#0099ff')), row=1, col=1
+        go.Histogram(x=data_1, name=title_1, marker=dict(color='#0099ff')), row=1, col=1
     )
     fig.add_trace(
-        go.Histogram(x=data_bench, name='Benchmark', marker=dict(color='#00cc66')),
+        go.Histogram(x=data_2, name=title_2, marker=dict(color='#00cc66')),
         row=1,
         col=2,
     )
     fig.add_trace(
-        go.Histogram(x=data_bench, name='Benchmark', marker=dict(color='#00cc66')),
+        go.Histogram(x=data_2, name=title_2, marker=dict(color='#00cc66')),
         row=2,
         col=1,
     )
     fig.add_trace(
-        go.Histogram(x=data_agent, name='Agent', marker=dict(color='#0099ff')), row=2, col=2
+        go.Histogram(x=data_1, name=title_1, marker=dict(color='#0099ff')), row=2, col=2
     )
 
     fig.add_vline(0, line_width=2, line_dash='dash')
