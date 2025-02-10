@@ -205,6 +205,128 @@ class AgentDecisionTypes(enum.StrEnum):
     SEQ = enum.auto()
 
 
+# ** train-test configuration
+@dataclass(kw_only=True)
+class Conf:
+    train: ConfTrain
+    test: ConfTest
+    tensorboard: ConfTensorboard
+
+
+@dataclass(kw_only=True)
+class ConfTrain:
+    system: ConfTrainSystem
+    files: ConfTrainFiles
+    experiment: ConfTrainExperiment
+    model: ConfTrainModel
+    runs: ConfTrainRuns
+    env: ConfTrainEnv
+    sb3: ConfTrainSB3
+
+
+@dataclass(kw_only=True)
+class ConfTrainSystem:
+    multiprocessing: bool
+    number_processes: int | None
+
+
+@dataclass(kw_only=True)
+class ConfTrainFiles:
+    overwrite_folders: bool
+    continue_learning: bool
+    folder_tensorboard: str
+    folder_models: str
+    model_name: str
+    filename_pretrained_model: str
+
+
+@dataclass(kw_only=True)
+class ConfTrainExperiment:
+    exp_number: str
+    env_structure: str
+    job_generation_method: str
+    feedback_mechanism: str
+
+
+@dataclass(kw_only=True)
+class ConfTrainModelInputs:
+    normalise_obs: bool
+    normalise_rew: bool
+
+
+@dataclass(kw_only=True)
+class ConfTrainModelSeeds:
+    rng: int | None
+    eval: int
+
+
+@dataclass(kw_only=True)
+class ConfTrainModelArch:
+    sb3_arch: SB3ActorCriticNetworkArch
+
+
+@dataclass(kw_only=True)
+class ConfTrainModel:
+    inputs: ConfTrainModelInputs
+    seeds: ConfTrainModelSeeds
+    arch: ConfTrainModelArch
+
+
+@dataclass(kw_only=True)
+class ConfTrainRuns:
+    ts_till_update: int
+    total_updates: int
+    updates_till_eval: int
+    updates_till_savepoint: int
+    num_eval_episodes: int
+    reward_threshold: int | None
+
+
+@dataclass(kw_only=True)
+class ConfTrainEnv:
+    randomise_reset: bool
+
+
+@dataclass(kw_only=True)
+class ConfTrainSB3:
+    show_progressbar: bool
+
+
+@dataclass(kw_only=True)
+class ConfTest:
+    use_train_config: bool
+    files: ConfTestFiles
+    inputs: ConfTestInputs
+    runs: ConfTestRuns
+
+
+@dataclass(kw_only=True)
+class ConfTestFiles:
+    target_folder: str
+    filename_target_model: str
+
+
+@dataclass(kw_only=True)
+class ConfTestInputs:
+    normalise_obs: bool
+
+
+@dataclass(kw_only=True)
+class ConfTestRuns:
+    num_episodes: int
+
+
+@dataclass(kw_only=True)
+class ConfTensorboard:
+    use_train_config: bool
+    files: ConfTensorboardFiles
+
+
+@dataclass(kw_only=True)
+class ConfTensorboardFiles:
+    exp_folder: str
+
+
 # ** database
 PandasDateColParseInfo: TypeAlias = dict[str, dict[str, bool]]
 PandasDatetimeCols: TypeAlias = list[str]
