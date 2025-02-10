@@ -26,6 +26,10 @@ scripts/connect_WS.sh
 file_system_backend/
 logs*
 
+# configs
+*.toml
+!example_config.toml
+
 # prototyping
 prototypes/
 notebooks/
