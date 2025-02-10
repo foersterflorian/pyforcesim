@@ -271,6 +271,7 @@ class JSSEnv(gym.Env):
         self.end_date_dev_std: Timedelta | None = None
         self.policy_name: str | None = None
         # only SEQ agents
+        self.waiting_chosen: int = 0
         self.jobs_total: int = 0
         self.jobs_tardy: int = 0
         self.jobs_early: int = 0
@@ -447,6 +448,7 @@ class JSSEnv(gym.Env):
         if self.sim_env.seq_agents:
             seq_agent = self.sim_env.seq_agents[0]  # only first one
         if seq_agent is not None:
+            self.waiting_chosen = seq_agent.waiting_chosen
             self.jobs_total = seq_agent.jobs_total
             self.jobs_tardy = seq_agent.jobs_tardy
             self.jobs_early = seq_agent.jobs_early

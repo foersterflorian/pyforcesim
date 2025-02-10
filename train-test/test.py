@@ -22,6 +22,7 @@ from config import (
     TEST_FILENAME_TARGET_MODEL,
     TEST_NORMALISE_OBS,
     TEST_NUM_EPISODES,
+    TEST_PERFORM_BENCHMARK,
     TEST_TARGET_FOLDER,
     TEST_USE_TRAIN_CONFIG,
 )
@@ -125,6 +126,7 @@ def export_gantt_chart(
     end_dev_mean_hours = end_dev_mean / norm_td
     end_dev_std_hours = end_dev_std / norm_td
 
+    waiting_chosen = env.waiting_chosen
     jobs_total = env.jobs_total
     jobs_tardy = env.jobs_tardy
     jobs_tardy_perc = jobs_tardy / jobs_total
@@ -134,7 +136,7 @@ def export_gantt_chart(
     jobs_punctual_perc = jobs_punctual / jobs_total
 
     title_KPIs = (
-        f'seed: {seed}<br>'
+        f'seed: {seed}, number of waiting actions: {waiting_chosen}<br>'
         f'cycle time: {cycle_time}, mean util: {mean_utilisation:.6%}'
         f'<br>ending date deviation: '
         f'mean: {end_dev_mean_hours:.6f}, std: {end_dev_std_hours:.6f}<br>'
@@ -383,12 +385,13 @@ def main() -> None:
         num_episodes=TEST_NUM_EPISODES, seed=ROOT_RNG_SEED, sim_randomise_reset=False
     )
     print('--------------------------------------------------------------------')
-    eval_agent_benchmark(
-        num_episodes=TEST_NUM_EPISODES, seed=ROOT_RNG_SEED, sim_randomise_reset=False
-    )
+    if TEST_PERFORM_BENCHMARK:
+        eval_agent_benchmark(
+            num_episodes=TEST_NUM_EPISODES, seed=ROOT_RNG_SEED, sim_randomise_reset=False
+        )
     t2 = time.perf_counter()
     dur = t2 - t1
-    print(f'Duration for agent eval and benchmark: {dur:.4f} sec')
+    print(f'Duration for run: {dur:.4f} sec')
 
 
 if __name__ == '__main__':

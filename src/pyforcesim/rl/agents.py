@@ -813,6 +813,7 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
         self._chosen_job: Job | None = None
         self._req_obj: InfrastructureObject | None = None
         # results
+        self.waiting_chosen: int = 0
         self.jobs_total: int = 0
         self.jobs_tardy: int = 0
         self.jobs_early: int = 0
@@ -945,7 +946,9 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
         loggers.agents.debug(
             '[Agent %s]: Associated queue jobs are >>%s<<', self, self.assoc_contents
         )
-        if action != 0:
+        if action == 0:
+            self.waiting_chosen += 1
+        else:
             if action > len(self._relevant_jobs) and self.env.check_agent_feasibility:
                 raise IndexError('Chosen action out of bounds of relevant jobs.')
             elif action > len(self._relevant_jobs):
@@ -953,6 +956,7 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
                 action = len(self._relevant_jobs)
             job_idx = action - 1
             self._chosen_job = self._relevant_jobs[job_idx]
+
         self.num_decisions += 1
         # indicator that request was processed, reset dispatching signal
         self.set_dispatching_signal(reset=True)
