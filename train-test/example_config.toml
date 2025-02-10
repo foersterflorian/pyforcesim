@@ -1,0 +1,65 @@
+[train]
+
+[train.system]
+multiprocessing = true
+number_processes = nan # nan: use num CPU cores of machine
+
+[train.files]
+overwrite_folders = true
+continue_learning = false
+folder_tensorboard = 'tensorboard'
+folder_models = 'models'
+model_name = 'PPO_mask'
+filename_pretrained_model = '2025-01-17--15-36-17_pyf_sim_PPO_mask_TS-1310720'
+
+[train.experiment]
+exp_number = 1
+env_structure = '1-2-3'
+job_generation_method = 'VarIdeal'
+feedback_mechanism = 'Slack'
+
+[train.model.inputs]
+normalise_obs = true
+normalise_rew = true
+
+[train.model.seeds]
+rng = nan # nan: use random state
+eval = 42
+
+[train.model.arch]
+sb3_arch = {pi = [128, 64], vf = [128,64]}
+
+[train.runs]
+ts_till_update = 2048
+total_updates = 10_000
+updates_till_eval = 2
+updates_till_savepoint = 16
+num_eval_episodes = 1
+reward_threshold = nan # nan: do not apply
+
+[train.env]
+randomise_reset = true
+
+[train.sb3]
+show_progressbar = false
+
+
+[test]
+use_train_config = true
+
+[test.files]
+target_folder = '2025-02-04-01__1-2-3__VarIdeal__Slack'
+filename_target_model = '2025-02-04--17-20-00_pyf_sim_PPO_mask_TS-999999'
+
+[test.inputs]
+normalise_obs = true
+
+[test.runs]
+num_episodes = 1
+
+
+[tensorboard]
+use_train_config = true
+
+[tensorboard.files]
+exp_folder = '2025-02-02-20__1-2-3__VarIdeal__Slack'

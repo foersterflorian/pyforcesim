@@ -3,10 +3,9 @@ import time
 import warnings
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Final
+from typing import Any
 
 import psutil
-import sb3_monkeypatch
 import stable_baselines3.common.vec_env.subproc_vec_env as sb3_to_patch
 from sb3_contrib.ppo_mask import MaskablePPO
 from stable_baselines3.common.callbacks import (
@@ -17,65 +16,43 @@ from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 
+import sb3_monkeypatch
+from config import (
+    BASE_FOLDER,
+    CONTINUE_LEARNING,
+    DEC_TYPE,
+    EVAL_FREQ,
+    EVAL_SEED,
+    EXP_TYPE,
+    FILENAME_PRETRAINED_MODEL,
+    FOLDER_MODEL_SAVEPOINTS,
+    FOLDER_TB,
+    MODEL,
+    MODEL_BASE_NAME,
+    NORMALISE_OBS,
+    NORMALISE_REWARDS,
+    NUM_EVAL_EPISODES,
+    NUM_PROCS,
+    OVERWRITE_FOLDERS,
+    POLICY_KWARGS,
+    RANDOMISE_RESET,
+    REWARD_THRESHOLD,
+    RNG_SEED,
+    SHOW_PROGRESSBAR,
+    STEPS_TILL_SAVE,
+    STEPS_TILL_UPDATE,
+    TIMESTEPS_TOTAL,
+    USE_MULTIPROCESSING,
+)
 from pyforcesim import common
 from pyforcesim.rl.gym_env import JSSEnv
 from pyforcesim.rl.sb3.custom_callbacks import MaskableEvalCallback as EvalCallback
 from pyforcesim.types import (
-    AgentDecisionTypes,
     BuilderFuncFamilies,
-    SB3ActorCriticNetworkArch,
-    SB3PolicyArgs,
 )
 
 # ** monkeypatch SB3 to work with SubprocVecEnv and MaskablePPO from sb3_contrib
 sb3_to_patch._worker = sb3_monkeypatch.worker
-
-# ** input
-USE_MULTIPROCESSING: Final[bool] = True
-NUM_PROCS: Final[int | None] = None
-OVERWRITE_FOLDERS: Final[bool] = True
-CONTINUE_LEARNING: Final[bool] = False
-NORMALISE_OBS: Final[bool] = True
-NORMALISE_REWARDS: Final[bool] = True
-# ** seeding
-RNG_SEED: Final[int | None] = None
-EVAL_SEED: Final[int] = 42
-# ** SB3 config
-SHOW_PROGRESSBAR: Final[bool] = False
-# network
-net_arch: SB3ActorCriticNetworkArch = {'pi': [128, 64], 'vf': [128, 64]}
-POLICY_KWARGS: Final[SB3PolicyArgs] = {'net_arch': net_arch}
-
-DATE = common.get_timestamp(with_time=False)
-DEC_TYPE: Final[AgentDecisionTypes] = AgentDecisionTypes.SEQ
-EXP_NUM: Final[str] = '1'
-ENV_STRUCTURE: Final[str] = '1-2-3'
-JOB_GEN_METHOD: Final[str] = 'VarIdeal'
-EXP_TYPE: Final[str] = f'{ENV_STRUCTURE}_{JOB_GEN_METHOD}'
-FEEDBACK_MACHANISM: Final[str] = 'Slack'
-EXPERIMENT_FOLDER: Final[str] = (
-    f'{DATE}-{EXP_NUM.zfill(2)}__{ENV_STRUCTURE}__{JOB_GEN_METHOD}__{FEEDBACK_MACHANISM}'
-)
-BASE_FOLDER: Final[str] = f'results/{EXPERIMENT_FOLDER}'
-
-FOLDER_TB: Final[str] = 'tensorboard'
-FOLDER_MODEL_SAVEPOINTS: Final[str] = 'models'
-
-MODEL: Final[str] = 'PPO_mask'
-MODEL_BASE_NAME: Final[str] = f'pyf_sim_{MODEL}'
-STEPS_TILL_UPDATE: Final[int] = 2048  # 2 * 2048
-NUM_EVAL_EPISODES: Final[int] = 1
-EVAL_FREQ: Final[int] = STEPS_TILL_UPDATE * 2
-REWARD_THRESHOLD: Final[float | None] = None  # -0.01
-TIMESTEPS_TOTAL: Final[int] = STEPS_TILL_UPDATE * 100_000
-STEPS_TILL_SAVE: Final[int] = 2048 * 16
-# ITERATIONS: Final[int] = 500
-# ITERATIONS_TILL_SAVE: Final[int] = 16
-# CALC_ITERATIONS: Final[int] = 1310721 // TIMESTEPS_PER_ITER
-# ** simulation
-RANDOMISE_RESET: Final[bool] = True
-# ** pretrained model to continue learning
-FILENAME_PRETRAINED_MODEL: Final[str] = '2025-01-17--15-36-17_pyf_sim_PPO_mask_TS-1310720'
 
 
 def prepare_base_folder(

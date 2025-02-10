@@ -12,47 +12,47 @@ from sb3_contrib.common.maskable.evaluation import evaluate_policy
 from sb3_contrib.ppo_mask import MaskablePPO
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-from train import (
+
+from config import (
     BASE_FOLDER,
+    DEC_TYPE,
     EXP_TYPE,
     FOLDER_MODEL_SAVEPOINTS,
     RNG_SEED,
-    make_env,
+    TEST_FILENAME_TARGET_MODEL,
+    TEST_NORMALISE_OBS,
+    TEST_NUM_EPISODES,
+    TEST_TARGET_FOLDER,
+    TEST_USE_TRAIN_CONFIG,
 )
-
 from pyforcesim import common, loggers
 from pyforcesim import datetime as pyf_dt
 from pyforcesim.constants import TimeUnitsTimedelta
 from pyforcesim.rl.gym_env import JSSEnv
-from pyforcesim.types import AgentDecisionTypes, BuilderFuncFamilies
+from pyforcesim.types import BuilderFuncFamilies
+from train import make_env
 
 if TYPE_CHECKING:
     from pyforcesim.rl.agents import ValidateAllocationAgent, ValidateSequencingAgent
 
 
-DEC_TYPE: Final[AgentDecisionTypes] = AgentDecisionTypes.SEQ
-USE_TRAIN_CONFIG: Final[bool] = False
-NORMALISE_OBS: Final[bool] = True
-NUM_EPISODES: Final[int] = 1
-FILENAME_TARGET_MODEL: Final[str] = '2025-02-04--17-20-00_pyf_sim_PPO_mask_TS-999999'
-
+# ** files
 model_properties_pattern = re.compile(r'(?:pyf_sim_)([\w]+)_(TS-[\d]+)$')
-matches = model_properties_pattern.search(FILENAME_TARGET_MODEL)
+matches = model_properties_pattern.search(TEST_FILENAME_TARGET_MODEL)
 if matches is None:
     raise ValueError(
-        f'Model properties could not be extracted out of: {FILENAME_TARGET_MODEL}'
+        f'Model properties could not be extracted out of: {TEST_FILENAME_TARGET_MODEL}'
     )
 ALGO_TYPE: Final[str] = matches.group(1)
 TIMESTEPS: Final[str] = matches.group(2)
 
-USER_TARGET_FOLDER: Final[str] = '2025-02-04-01__1-2-3__VarIdeal__Slack'
-USER_FOLDER: Final[str] = f'results/{USER_TARGET_FOLDER}'
+USER_FOLDER: Final[str] = f'results/{TEST_TARGET_FOLDER}'
 user_exp_type_pattern = re.compile(
     r'^([\d\-]*)(?:[_]*)([\d\-]*)(?:[_]*)([a-zA-Z]*)(?:[_]*)([a-zA-Z]*)$'
 )
-matches = user_exp_type_pattern.match(USER_TARGET_FOLDER)
+matches = user_exp_type_pattern.match(TEST_TARGET_FOLDER)
 if matches is None:
-    raise ValueError(f'Experiment type could not be extracted out of: {USER_TARGET_FOLDER}')
+    raise ValueError(f'Experiment type could not be extracted out of: {TEST_TARGET_FOLDER}')
 
 USER_EXP_TYPE: Final[str] = f'{matches.group(2)}_{matches.group(3)}'
 USER_RNG_SEED: Final[int] = 1234  # default: 42
@@ -60,7 +60,7 @@ USER_RNG_SEED: Final[int] = 1234  # default: 42
 ROOT_FOLDER = USER_FOLDER
 ROOT_EXP_TYPE = USER_EXP_TYPE
 ROOT_RNG_SEED = USER_RNG_SEED
-if USE_TRAIN_CONFIG:
+if TEST_USE_TRAIN_CONFIG:
     ROOT_FOLDER = BASE_FOLDER
     ROOT_EXP_TYPE = EXP_TYPE
     ROOT_RNG_SEED = RNG_SEED
@@ -69,21 +69,12 @@ VAL_EXP_TYPE: Final[str] = f'{ROOT_EXP_TYPE}_validate'
 VAL_EXP_EPISODES: Final[int] = 1
 
 
-# def get_list_of_models(
-#     folder_models: str,
-# ) -> list[Path]:
-#     pth_models = (Path.cwd() / folder_models).resolve()
-#     models = list(pth_models.glob(r'*.zip'))
-#     models.sort(reverse=True)
-#     return models
-
-
 def load_model(env: VecNormalize | JSSEnv | None = None) -> MaskablePPO:
     # ** load model
     pth_model = common.prepare_save_paths(
         base_folder=ROOT_FOLDER,
         target_folder=FOLDER_MODEL_SAVEPOINTS,
-        filename=FILENAME_TARGET_MODEL,
+        filename=TEST_FILENAME_TARGET_MODEL,
         suffix='zip',
     )
 
@@ -93,7 +84,7 @@ def load_model(env: VecNormalize | JSSEnv | None = None) -> MaskablePPO:
 
 
 def get_path_vec_norm() -> Path:
-    vec_norm_filename = f'{FILENAME_TARGET_MODEL}_vec_norm'
+    vec_norm_filename = f'{TEST_FILENAME_TARGET_MODEL}_vec_norm'
     pth_vec_norm = common.prepare_save_paths(
         base_folder=ROOT_FOLDER,
         target_folder=FOLDER_MODEL_SAVEPOINTS,
@@ -252,9 +243,9 @@ def callback(locals, *_):
 
 
 def eval_agent_policy(
-    num_episodes: int = NUM_EPISODES,
-    seed: int | None = ROOT_RNG_SEED,
-    sim_randomise_reset: bool = False,
+    num_episodes: int,
+    seed: int | None,
+    sim_randomise_reset: bool,
 ) -> None:
     env = make_env(
         ROOT_EXP_TYPE,
@@ -267,7 +258,7 @@ def eval_agent_policy(
         sim_randomise_reset=sim_randomise_reset,
     )
 
-    if NORMALISE_OBS:
+    if TEST_NORMALISE_OBS:
         pth_vec_norm = get_path_vec_norm()
         if not pth_vec_norm.exists():
             raise FileNotFoundError(f'VecNormalize info not found under: {pth_vec_norm}')
@@ -298,9 +289,9 @@ def eval_agent_policy(
 
 
 def eval_agent_benchmark(
-    num_episodes: int = VAL_EXP_EPISODES,
-    seed: int | None = ROOT_RNG_SEED,
-    sim_randomise_reset: bool = False,
+    num_episodes: int,
+    seed: int | None,
+    sim_randomise_reset: bool,
 ) -> None:
     env = JSSEnv(
         VAL_EXP_TYPE,
@@ -388,9 +379,13 @@ def main() -> None:
         message=r'^[\s]*.*to get variables from other wrappers is deprecated.*$',
     )
     t1 = time.perf_counter()
-    eval_agent_policy(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
+    eval_agent_policy(
+        num_episodes=TEST_NUM_EPISODES, seed=ROOT_RNG_SEED, sim_randomise_reset=False
+    )
     print('--------------------------------------------------------------------')
-    eval_agent_benchmark(num_episodes=1, seed=ROOT_RNG_SEED, sim_randomise_reset=False)
+    eval_agent_benchmark(
+        num_episodes=TEST_NUM_EPISODES, seed=ROOT_RNG_SEED, sim_randomise_reset=False
+    )
     t2 = time.perf_counter()
     dur = t2 - t1
     print(f'Duration for agent eval and benchmark: {dur:.4f} sec')

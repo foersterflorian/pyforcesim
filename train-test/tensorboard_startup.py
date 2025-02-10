@@ -7,17 +7,16 @@ from threading import Thread
 from typing import Final
 
 import pyforcesim.loggers
+from config import TB_EXP_FOLDER, TB_USE_TRAIN_CONFIG
 from pyforcesim import common
 
 pyforcesim.loggers.disable_logging()
 
 
-USE_TRAIN_CONFIG: Final[bool] = True
-if USE_TRAIN_CONFIG:
+if TB_USE_TRAIN_CONFIG:
     from train import BASE_FOLDER, FOLDER_TB  # type: ignore
 else:
-    EXPERIMENT_FOLDER: Final[str] = '2025-02-04-01__1-2-3__VarIdeal__Slack'
-    BASE_FOLDER: Final[str] = f'results/{EXPERIMENT_FOLDER}'
+    BASE_FOLDER: Final[str] = f'results/{TB_EXP_FOLDER}'
     FOLDER_TB: Final[str] = 'tensorboard'
 
 LOG_DIR = common.prepare_save_paths(BASE_FOLDER, FOLDER_TB, None, None)
