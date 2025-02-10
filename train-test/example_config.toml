@@ -56,6 +56,7 @@ normalise_obs = true
 
 [test.runs]
 num_episodes = 1
+perform_benchmark = true
 
 
 [tensorboard]
