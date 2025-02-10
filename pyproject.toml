@@ -76,7 +76,7 @@ general = [
 line-length = 94
 indent-width = 4
 target-version = "py311"
-src = ["src"]
+src = ["src", "train-test"]
 
 [tool.ruff.format]
 quote-style = "single"
