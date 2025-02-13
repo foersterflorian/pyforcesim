@@ -886,7 +886,7 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                         due_date_planned += planned_ending_dev
 
                     order_dates = OrderDates(
-                        starting_planned=[curr_time],
+                        starting_planned=[adapted_time],
                         ending_planned=[due_date_planned],
                     )
 
