@@ -141,6 +141,15 @@ class JobGenerationInfo:
     current_state: SimStatesCommon
 
 
+@dataclass(slots=True)
+class SequenceBatchCom:
+    start_date: Datetime | None = None
+    interval: Timedelta | None = None
+    adapted_date: Datetime | None = None
+    job_gen_info: JobGenerationInfo | None = None
+    batch: list[SourceSequence] | None = None
+
+
 SourceSequence: TypeAlias = tuple[JobGenerationInfo, Timedelta]
 
 # ** simulation environments

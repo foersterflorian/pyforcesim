@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from abc import ABCMeta, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar, cast
 from typing_extensions import override
 
 import numpy as np
@@ -17,6 +17,7 @@ from pyforcesim.types import (
     JobGenerationInfo,
     OrderDates,
     OrderTimes,
+    SequenceBatchCom,
     StatDistributionInfo,
 )
 
@@ -743,8 +744,9 @@ class WIPSequenceSinglePA(SequenceSinglePA):
     def retrieve(
         self,
         WIP_factor: float = 0,
+        batch_size: int = 1,
         random_due_date_diff: bool = False,
-    ) -> Iterator[SourceSequence]:
+    ) -> Generator[SourceSequence, SequenceBatchCom, None]:
         """(-1) < factor_WIP < 0: underload condition, factor_WIP <= (-1) only
         allowed, if WIP would initially be higher than ideal
         factor_WIP = 0: ideal condition
@@ -815,6 +817,10 @@ class WIPSequenceSinglePA(SequenceSinglePA):
         upper_bound_dev = np.sqrt(3)
         lower_bound_dev = (-1) * upper_bound_dev
 
+        # batching generator
+        gen_com = SequenceBatchCom()
+        batching_seq = generate_batch(batch_size=batch_size)
+
         # generate endless sequence
         while True:
             # iterate over all StationGroups
@@ -853,7 +859,22 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                     # ** planned dates
                     # calc based on planned values: set relative WIP target to 1.5
                     curr_time = self.env.t_as_dt()
-                    due_date_planned = curr_time + lead_time_planned
+
+                    # source processing time
+                    interval_td = self.dist_arrival.sample_timedelta(round_to_minutes=True)
+
+                    # send current time and interval to generator
+                    # retrieve adapted current time
+                    gen_com.start_date = curr_time
+                    gen_com.interval = interval_td
+                    next(batching_seq)
+                    com = batching_seq.send(gen_com)  # type: ignore
+                    assert com is not None, 'response of batch generator is None'
+
+                    assert com.adapted_date is not None, 'adapted date is None'
+                    adapted_time = com.adapted_date
+                    due_date_planned = adapted_time + lead_time_planned
+
                     # random change in planned due date
                     if random_due_date_diff:
                         hours_deviation = self.rnd_gen.uniform(
@@ -878,8 +899,20 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                         prio=None,
                         current_state=SimStatesCommon.INIT,
                     )
-                    # source processing time
-                    interval_td = self.dist_arrival.sample_timedelta(round_to_minutes=True)
+
+                    # send job_gen_info; interval_td already known
+                    com.job_gen_info = job_gen_info
+                    next(batching_seq)
+                    com = batching_seq.send(gen_com)  # type: ignore
+
+                    # TODO retrieve batch or not
+                    assert com is not None, 'response of batch generator is None'
+                    batch = com.batch
+
+                    if batch is not None:
+                        self.rnd_gen.shuffle(batch)  # type: ignore
+                        yield from batch
+
                     # assert (
                     #     self.arrival_time_expected is not None
                     # ), 'Expected value for interval not set'
@@ -902,4 +935,37 @@ class WIPSequenceSinglePA(SequenceSinglePA):
 
                     logger.debug('Generated new job at %s', curr_time)
 
-                    yield job_gen_info, interval_td
+                    # yield job_gen_info, interval_td
+
+
+def generate_batch(
+    batch_size: int = 1,
+) -> Generator[SequenceBatchCom | None, None, None]:
+    batch: list[SourceSequence] = []
+    adapted_start_date: Datetime | None = None
+
+    while True:  # generate endlessly
+        com = yield
+        com = cast(SequenceBatchCom, com)
+        if adapted_start_date is None:
+            assert com.start_date is not None, 'starting date None'
+            adapted_start_date = com.start_date
+        com.adapted_date = adapted_start_date
+        yield com
+        assert com.interval is not None, 'interval None'
+        adapted_start_date = adapted_start_date + com.interval
+
+        com = yield
+        com = cast(SequenceBatchCom, com)
+        assert com.job_gen_info is not None, 'JobGenInfo None'
+        assert com.interval is not None, 'interval None'
+        batch.append((com.job_gen_info, com.interval))
+
+        if len(batch) == batch_size:
+            com.batch = batch
+            yield com
+            batch = []
+            adapted_start_date = None
+        else:
+            com.batch = None
+            yield com
