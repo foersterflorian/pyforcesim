@@ -48,6 +48,7 @@ def standard_env_single_area(
     WIP_relative_planned: float = 1.5,  # util about 95 % with alpha = 7
     alpha: float = 7,
     buffer_size: int = MAX_LOGICAL_QUEUE_SIZE,
+    job_pool_size: int = 1,
 ) -> EnvAgentConstructorReturn:
     """constructor function for simulation environment of a single production area
 
@@ -231,7 +232,9 @@ def standard_env_single_area(
 
         prod_sequence_PA = sequence_generator.retrieve(
             WIP_factor=factor_WIP,
-            random_due_date_diff=True,
+            job_pool_size=job_pool_size,
+            shuffle_job_pool=True,
+            random_due_date_diff=False,
         )
     else:
         sequence_generator = loads.ConstantSequenceSinglePA(

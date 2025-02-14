@@ -744,7 +744,8 @@ class WIPSequenceSinglePA(SequenceSinglePA):
     def retrieve(
         self,
         WIP_factor: float = 0,
-        batch_size: int = 1,
+        job_pool_size: int = 1,
+        shuffle_job_pool: bool = True,
         random_due_date_diff: bool = False,
     ) -> Generator[SourceSequence, SequenceBatchCom, None]:
         """(-1) < factor_WIP < 0: underload condition, factor_WIP <= (-1) only
@@ -819,7 +820,7 @@ class WIPSequenceSinglePA(SequenceSinglePA):
 
         # batching generator
         gen_com = SequenceBatchCom()
-        batching_seq = generate_batch(batch_size=batch_size)
+        batching_seq = generate_job_pool(pool_size=job_pool_size)
 
         # generate endless sequence
         while True:
@@ -869,7 +870,7 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                     gen_com.interval = interval_td
                     next(batching_seq)
                     com = batching_seq.send(gen_com)  # type: ignore
-                    assert com is not None, 'response of batch generator is None'
+                    assert com is not None, 'response of job pool generator is None'
 
                     assert com.adapted_date is not None, 'adapted date is None'
                     adapted_time = com.adapted_date
@@ -899,18 +900,20 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                         prio=None,
                         current_state=SimStatesCommon.INIT,
                     )
+                    logger.debug('[LOADS] Generated new job at %s', curr_time)
 
                     # send job_gen_info; interval_td already known
                     com.job_gen_info = job_gen_info
-                    next(batching_seq)
+                    # next(batching_seq)
                     com = batching_seq.send(gen_com)  # type: ignore
 
-                    # TODO retrieve batch or not
+                    # retrieve job pool if fully filled else not available
                     assert com is not None, 'response of batch generator is None'
                     batch = com.batch
 
                     if batch is not None:
-                        self.rnd_gen.shuffle(batch)  # type: ignore
+                        if shuffle_job_pool and len(batch) > 1:
+                            self.rnd_gen.shuffle(batch)  # type: ignore
                         yield from batch
 
                     # assert (
@@ -933,35 +936,33 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                     # elif overload_condition and duration_non_ideal_sequence <= td_zero:
                     #     exp_val_interval = exp_val_interval_ideal
 
-                    logger.debug('Generated new job at %s', curr_time)
-
                     # yield job_gen_info, interval_td
 
 
-def generate_batch(
-    batch_size: int = 1,
+def generate_job_pool(
+    pool_size: int = 1,
 ) -> Generator[SequenceBatchCom | None, None, None]:
     batch: list[SourceSequence] = []
     adapted_start_date: Datetime | None = None
 
     while True:  # generate endlessly
+        # receive starting date and interval
         com = yield
         com = cast(SequenceBatchCom, com)
         if adapted_start_date is None:
             assert com.start_date is not None, 'starting date None'
             adapted_start_date = com.start_date
         com.adapted_date = adapted_start_date
-        yield com
         assert com.interval is not None, 'interval None'
-        adapted_start_date = adapted_start_date + com.interval
-
-        com = yield
+        curr_interval = com.interval
+        adapted_start_date = adapted_start_date + curr_interval
+        # send adapted date, receive job generation info
+        com = yield com
         com = cast(SequenceBatchCom, com)
         assert com.job_gen_info is not None, 'JobGenInfo None'
-        assert com.interval is not None, 'interval None'
-        batch.append((com.job_gen_info, com.interval))
+        batch.append((com.job_gen_info, curr_interval))
 
-        if len(batch) == batch_size:
+        if len(batch) == pool_size:
             com.batch = batch
             yield com
             batch = []
