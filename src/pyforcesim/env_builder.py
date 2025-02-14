@@ -231,7 +231,7 @@ def standard_env_single_area(
             factor_WIP = WIP_relative_target[0]
 
         prod_sequence_PA = sequence_generator.retrieve(
-            WIP_factor=factor_WIP,
+            WIP_relative=factor_WIP,
             job_pool_size=job_pool_size,
             shuffle_job_pool=True,
             random_due_date_diff=False,
@@ -293,7 +293,7 @@ def standard_env_single_area(
         'WIP-Supervisor',
         prod_area=area_prod,
         supervised_sources=(source,),
-        WIP_factor=WIP_relative_target[0],
+        WIP_relative=WIP_relative_target[0],
         stat_info_orders=dist_order.stat_info,
         WIP_time=None,
     )
@@ -311,7 +311,7 @@ def standard_env_single_area(
             'WIP-Limit-Setter',
             WIP_setter_interval,
             WIP_source_supervisor=WIP_supervisor,
-            WIP_factors=WIP_relative_target,
+            WIP_relatives=WIP_relative_target,
             WIP_times=None,
         )
         logger.info(
