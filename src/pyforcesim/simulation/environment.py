@@ -4915,36 +4915,6 @@ class Operation:
         self.target_station_group = target_stat_group
         self.time_creation = time_creation
 
-    # def _calc_slack(self) -> None:
-    #     if self.time_planned_ending is not None:
-    #         env = self.dispatcher.env
-    #         curr_time = env.t_as_dt()
-    #         time_till_due = self.time_planned_ending - curr_time
-    #         self.slack = time_till_due - self.remaining_order_time
-
-    #         loggers.operations.debug('[%s] Calculated slack as %s', self, self.slack)
-
-    # def _calc_remaining_order_time(self) -> None:
-    #     if self.time_actual_starting is not None:
-    #         env = self.dispatcher.env
-    #         curr_time = env.t_as_dt()
-    #         delta = curr_time - self.time_actual_starting
-    #         if delta > self.order_time:
-    #             self.remaining_order_time = Timedelta()
-    #         else:
-    #             self.remaining_order_time = self.order_time - delta
-
-    #     loggers.operations.debug(
-    #         '[%s] Calculated remaining order time as %s, total: %s',
-    #         self,
-    #         self.remaining_order_time,
-    #         self.order_time,
-    #     )
-
-    # def calc_KPI(self) -> None:
-    #     self._calc_remaining_order_time()
-    #     self._calc_slack()
-
 
 class Job(salabim.Component):
     def __init__(
