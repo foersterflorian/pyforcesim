@@ -493,6 +493,19 @@ class OperationMonitor(LoadMonitor['Operation']):
                 time_planned_ending,
             )
 
+    def _adapt_slack(self) -> None:
+        prod_area = self.target_object.target_exec_system
+        lead_time_delta = prod_area.lead_time_delta
+
+        if lead_time_delta != Timedelta():
+            self.slack_upper_bound += lead_time_delta
+            self.slack_upper_bound_hours = self.slack_upper_bound / self.NORM_TD
+
+    @override
+    def release(self) -> None:
+        super().release()
+        self._adapt_slack()
+
     @override
     def calc_KPI(self) -> None:
         super().calc_KPI()  # especially time proportions

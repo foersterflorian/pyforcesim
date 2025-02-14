@@ -289,7 +289,7 @@ class WIPSourceSupervisor(Supervisor):
         *,
         prod_area: ProductionArea,
         supervised_sources: Iterable[Source],
-        WIP_factor: float | None = None,
+        WIP_relative: float | None = None,
         stat_info_orders: StatDistributionInfo | None = None,
         WIP_time: Timedelta | None = None,
     ) -> None:
@@ -297,8 +297,8 @@ class WIPSourceSupervisor(Supervisor):
             env=env,
             name=name,
         )
-        # either WIP_factor + stat_info or WIP_Limit
-        self.factor_based = bool(WIP_factor and stat_info_orders)
+        # either WIP_relative + stat_info or WIP_Limit
+        self.factor_based = bool(WIP_relative and stat_info_orders)
         self.time_based = bool(WIP_time)
         if not any((self.factor_based, self.time_based)):
             raise ValueError(
@@ -313,7 +313,7 @@ class WIPSourceSupervisor(Supervisor):
 
         self.prod_area = prod_area
         self.supervised_sources = supervised_sources
-        self.WIP_factor = WIP_factor
+        self.WIP_relative = WIP_relative
         self.stat_info = stat_info_orders
         self._prod_area_WIP_ideal: Timedelta | None = None
         self.WIP_time = WIP_time
@@ -349,18 +349,19 @@ class WIPSourceSupervisor(Supervisor):
 
         return self.prod_area.WIP_ideal(self.stat_info)
 
-    def _change_expected_arrival_time(self, WIP_factor: float) -> None:
+    def _change_depending_parameters(self, WIP_relative: float) -> None:
         for source in self.supervised_sources:
             for job_generator in source.job_generators:
-                job_generator.recalculate_expected_arrival_time(WIP_factor)
+                job_generator.recalculate_expected_arrival_time(WIP_relative)
+                job_generator.recalculate_lead_time_delta(WIP_relative)
 
-    def _set_WIP_factor(
+    def _set_WIP_relative(
         self,
-        WIP_factor: float,
+        WIP_relative: float,
     ) -> Timedelta:
-        if not WIP_factor > 0:
+        if not WIP_relative > 0:
             raise ValueError(f'[CONDITION] {self}: WIP factor must be greater than 0.')
-        WIP_limit = self.prod_area_WIP_ideal * WIP_factor
+        WIP_limit = self.prod_area_WIP_ideal * WIP_relative
 
         return WIP_limit
 
@@ -376,17 +377,17 @@ class WIPSourceSupervisor(Supervisor):
 
     def change_WIP_limit(
         self,
-        WIP_factor_set: float | None = None,
+        WIP_relative_set: float | None = None,
         WIP_time_set: Timedelta | None = None,
     ) -> None:
         WIP_limit: Timedelta
-        if self.factor_based and WIP_factor_set is None:
+        if self.factor_based and WIP_relative_set is None:
             raise ValueError(
-                f'[CONDITION] {self}: Factor based WIP calculation needs new WIP-factor.'
+                f'[CONDITION] {self}: Factor based WIP calculation needs new WIP-relative.'
             )
-        elif self.factor_based and WIP_factor_set is not None:
-            WIP_limit = self._set_WIP_factor(WIP_factor_set)
-            self._change_expected_arrival_time(WIP_factor_set)
+        elif self.factor_based and WIP_relative_set is not None:
+            WIP_limit = self._set_WIP_relative(WIP_relative_set)
+            self._change_depending_parameters(WIP_relative_set)
         elif self.time_based and WIP_time_set is None:
             raise ValueError(f'[CONDITION] {self}: calculation needs new WIP-limit.')
         elif self.time_based and WIP_time_set is not None:
@@ -397,7 +398,7 @@ class WIPSourceSupervisor(Supervisor):
                     f'[CONDITION] {self}: Wrong combination of used parameter '
                     f'to set and underlying WIP limit type. WIP limit type: '
                     f'factor={self.factor_based}, limit(Timedelta)={self.time_based}, '
-                    f'type of variable factor={type(WIP_factor_set).__name__}, '
+                    f'type of variable factor={type(WIP_relative_set).__name__}, '
                     f'limit={type(WIP_time_set).__name__}'
                 )
             )
@@ -442,7 +443,7 @@ class WIPSourceSupervisor(Supervisor):
         if self.factor_based:
             self._prod_area_WIP_ideal = self._get_WIP_ideal()
 
-        self.change_WIP_limit(self.WIP_factor, self.WIP_time)
+        self.change_WIP_limit(self.WIP_relative, self.WIP_time)
 
     @override
     def sim_logic(self) -> Generator[None, None, None]:
@@ -461,7 +462,7 @@ class WIPSourceSupervisorLimitSetter(Supervisor):
         sim_interval: Timedelta,
         *,
         WIP_source_supervisor: WIPSourceSupervisor,
-        WIP_factors: Sequence[float] | None = None,
+        WIP_relatives: Sequence[float] | None = None,
         WIP_times: Sequence[Timedelta] | None = None,
     ) -> None:
         super().__init__(env=env, name=name)
@@ -469,15 +470,15 @@ class WIPSourceSupervisorLimitSetter(Supervisor):
 
         self.target_WIP_supervisor = WIP_source_supervisor
         self.target_WIP_supervisor.register_supervisor(self)
-        WIP_inputs = self._verify_WIP_inputs(WIP_factors=WIP_factors, WIP_times=WIP_times)
+        WIP_inputs = self._verify_WIP_inputs(WIP_relatives=WIP_relatives, WIP_times=WIP_times)
 
-        self._WIP_factors: tuple[float, ...] | None = None
+        self._WIP_relatives: tuple[float, ...] | None = None
         self._WIP_times: tuple[Timedelta, ...] | None = None
         self.WIP_limits_max_idx: int
         if WIP_inputs.factors:
-            self._WIP_factors = WIP_inputs.factors
-            self.WIP_limits_max_idx = len(self._WIP_factors) - 1
-            self._check_WIP_factors()
+            self._WIP_relatives = WIP_inputs.factors
+            self.WIP_limits_max_idx = len(self._WIP_relatives) - 1
+            self._check_WIP_relatives()
         elif WIP_inputs.times:
             self._WIP_times = WIP_inputs.times
             self.WIP_limits_max_idx = len(self._WIP_times) - 1
@@ -489,11 +490,11 @@ class WIPSourceSupervisorLimitSetter(Supervisor):
         self.sim_priority = self.target_WIP_supervisor.sim_priority - 1
 
     @property
-    def WIP_factors(self) -> tuple[float, ...]:
-        if self._WIP_factors is None:
+    def WIP_relatives(self) -> tuple[float, ...]:
+        if self._WIP_relatives is None:
             raise ValueError(f'[CONDITION] {self}: WIP factors must be set before access.')
 
-        return self._WIP_factors
+        return self._WIP_relatives
 
     @property
     def WIP_times(self) -> tuple[Timedelta, ...]:
@@ -504,7 +505,7 @@ class WIPSourceSupervisorLimitSetter(Supervisor):
 
     def _verify_WIP_inputs(
         self,
-        WIP_factors: Sequence[float] | None,
+        WIP_relatives: Sequence[float] | None,
         WIP_times: Sequence[Timedelta] | None,
     ) -> WIPInputTypes:
         factor_based = self.target_WIP_supervisor.factor_based
@@ -512,15 +513,15 @@ class WIPSourceSupervisorLimitSetter(Supervisor):
         factors: tuple[float, ...] = tuple()
         times: tuple[Timedelta, ...] = tuple()
 
-        if factor_based and WIP_factors is None:
+        if factor_based and WIP_relatives is None:
             raise ValueError(
                 (
                     f'[CONDITION] {self}: Parent supervisor is factor-based, '
                     f'but no factors were provided.'
                 )
             )
-        elif factor_based and WIP_factors is not None:
-            factors = tuple(WIP_factors)
+        elif factor_based and WIP_relatives is not None:
+            factors = tuple(WIP_relatives)
         elif time_based and WIP_times is None:
             raise ValueError(
                 (
@@ -537,17 +538,17 @@ class WIPSourceSupervisorLimitSetter(Supervisor):
                     f'[CONDITION] {self}: Wrong combination of used parameter '
                     f'to set and underlying WIP limit type. WIP limit type: '
                     f'factor={factor_based}, limit(Timedelta)={time_based}, '
-                    f'type of variable factor={type(WIP_factors).__name__}, '
+                    f'type of variable factor={type(WIP_relatives).__name__}, '
                     f'limit={type(WIP_times).__name__}'
                 )
             )
 
         return WIPInputTypes(factors=factors, times=times)
 
-    def _check_WIP_factors(self) -> None:
+    def _check_WIP_relatives(self) -> None:
         WIP_lower_bound: float = 0
 
-        for idx, factor in enumerate(self.WIP_factors):
+        for idx, factor in enumerate(self.WIP_relatives):
             if not factor > WIP_lower_bound:
                 raise ValueError(
                     (
@@ -602,7 +603,7 @@ class WIPSourceSupervisorLimitSetter(Supervisor):
         factor_to_set: float | None = None
         time_to_set: Timedelta | None = None
         if self.target_WIP_supervisor.factor_based:
-            factor_to_set = self.WIP_factors[limit_idx]
+            factor_to_set = self.WIP_relatives[limit_idx]
         elif self.target_WIP_supervisor.time_based:
             time_to_set = self.WIP_times[limit_idx]
         else:
@@ -611,7 +612,7 @@ class WIPSourceSupervisorLimitSetter(Supervisor):
             )
 
         self.target_WIP_supervisor.change_WIP_limit(
-            WIP_factor_set=factor_to_set,
+            WIP_relative_set=factor_to_set,
             WIP_time_set=time_to_set,
         )
         loggers.conditions.info(
@@ -642,9 +643,9 @@ class WIPSourceSupervisorLimitSetter(Supervisor):
         ), 'Interval in simulation time units must not be >>None<<'
 
         loggers.conditions.info(
-            '[CONDITION] %s: WIP_factors = %s, WIP_limits = %s',
+            '[CONDITION] %s: WIP_relatives = %s, WIP_limits = %s',
             self.__class__.__name__,
-            self._WIP_factors,
+            self._WIP_relatives,
             self._WIP_times,
         )
         # initial WIP limit set in pre-process method

@@ -2596,6 +2596,11 @@ class ContainerSystem(Generic[T], System):
         self.contents_WIP_load_num_jobs: int = 0
         # workload distribution
         self.load_distribution_ideal: LoadDistribution = {}
+        # WIPs and lead times
+        self._WIP_alpha: float | None = None
+        self._lead_time_planned: Timedelta | None = None
+        self._lead_time_current: Timedelta | None = None
+        self._lead_time_delta: Timedelta | None = None
 
     def __contains__(
         self,
@@ -2658,6 +2663,30 @@ class ContainerSystem(Generic[T], System):
             raise TypeError(f'Type of {val} must be boolean, but is {type(val)}')
 
         self._containing_proc_stations = val
+
+    @property
+    def WIP_alpha(self) -> float:
+        if self._WIP_alpha is None:
+            raise AttributeError(f'System >>{self}<<: Alpha parameter is not set.')
+        return self._WIP_alpha
+
+    @property
+    def lead_time_planned(self) -> Timedelta:
+        if self._lead_time_planned is None:
+            raise AttributeError(f'System >>{self}<<: Planned lead time is not set.')
+        return self._lead_time_planned
+
+    @property
+    def lead_time_current(self) -> Timedelta:
+        if self._lead_time_current is None:
+            raise AttributeError(f'System >>{self}<<: Current lead time is not set.')
+        return self._lead_time_current
+
+    @property
+    def lead_time_delta(self) -> Timedelta:
+        if self._lead_time_delta is None:
+            raise AttributeError(f'System >>{self}<<: Lead time difference is not set.')
+        return self._lead_time_delta
 
     def subsystems_as_list(
         self,
@@ -2999,7 +3028,39 @@ class ContainerSystem(Generic[T], System):
 
         return WIP_ideal
 
-    def lead_time_planned(
+    def set_lead_time_planned(
+        self,
+        WIP_relative: float,
+        order_time_stats_info: StatDistributionInfo,
+        alpha: float = 10,
+    ) -> None:
+        if self._lead_time_planned is not None:
+            # TODO maybe allow setting planned lead times during simulation at later stages
+            raise RuntimeError(
+                (
+                    f'System >>{self}<<: Tried to change planned '
+                    f'lead time, even though it had already been set.'
+                )
+            )
+        self._lead_time_planned = self.calc_lead_time(
+            WIP_relative, order_time_stats_info, alpha
+        )
+        self._WIP_alpha = alpha
+
+    def set_lead_time_current(
+        self,
+        WIP_relative: float,
+        order_time_stats_info: StatDistributionInfo,
+        alpha: float = 10,
+        recalculate_delta: bool = True,
+    ) -> None:
+        self._lead_time_current = self.calc_lead_time(
+            WIP_relative, order_time_stats_info, alpha
+        )
+        if recalculate_delta:
+            self._lead_time_delta = self.lead_time_current - self.lead_time_planned
+
+    def calc_lead_time(
         self,
         WIP_relative: float,
         order_time_stats_info: StatDistributionInfo,

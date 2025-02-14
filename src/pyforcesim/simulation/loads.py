@@ -11,6 +11,7 @@ import numpy as np
 
 from pyforcesim import datetime as pyf_dt
 from pyforcesim.constants import SimStatesCommon, SimSystemTypes, TimeUnitsTimedelta
+from pyforcesim.errors import SystemNotInitialisedError
 from pyforcesim.loggers import loads as logger
 from pyforcesim.types import (
     ExpectedArrivalTimes,
@@ -143,6 +144,11 @@ def calc_expected_arrival_time(
     stat_info_orders: StatDistributionInfo,
     WIP_factor: float,
 ) -> ExpectedArrivalTimes:
+    if not prod_area.initialised:
+        raise SystemNotInitialisedError(
+            f'System >>{prod_area}<< must be initialised, before WIP related KPIs can be calculated.'
+        )
+
     NORM_TD = pyf_dt.timedelta_from_val(1, TimeUnitsTimedelta.HOURS)
     total_num_proc_stations = prod_area.num_assoc_proc_station
     # statistical information for order times
@@ -487,19 +493,30 @@ class SequenceSinglePA(ProductionSequence):
 
     def recalculate_expected_arrival_time(
         self,
-        WIP_factor: float,
+        WIP_relative: float,
     ) -> None:
         arrival_times = calc_expected_arrival_time(
             source=self.source,
             prod_area=self.prod_area,
             stat_info_orders=self.dist_order.stat_info,
-            WIP_factor=WIP_factor,
+            WIP_factor=WIP_relative,
         )
         arrival_time_expected = arrival_times.current
         # update distribution
         StatParams = self.dist_arrival.get_param_type()
         new_params = StatParams(scale=arrival_time_expected)
         self.dist_arrival.set_params(new_params)
+
+    def recalculate_lead_time_delta(
+        self,
+        WIP_relative: float,
+    ) -> None:
+        self.prod_area.set_lead_time_current(
+            WIP_relative=WIP_relative,
+            order_time_stats_info=self.dist_order.stat_info,
+            alpha=self.prod_area.WIP_alpha,
+            recalculate_delta=True,
+        )
 
 
 class ConstantSequenceSinglePA(SequenceSinglePA):
@@ -743,7 +760,7 @@ class WIPSequenceSinglePA(SequenceSinglePA):
     @override
     def retrieve(
         self,
-        WIP_factor: float = 0,
+        WIP_relative: float = 0,
         job_pool_size: int = 1,
         shuffle_job_pool: bool = True,
         random_due_date_diff: bool = False,
@@ -769,7 +786,7 @@ class WIPSequenceSinglePA(SequenceSinglePA):
         Iterator[SourceSequence]
             _description_
         """
-        self.recalculate_expected_arrival_time(WIP_factor)
+        self.recalculate_expected_arrival_time(WIP_relative)
         # # number of all processing stations in associated production area
         # total_num_proc_stations = self.prod_area.num_assoc_proc_station
         # # statistical information
@@ -804,15 +821,22 @@ class WIPSequenceSinglePA(SequenceSinglePA):
         # td_zero = Timedelta()
 
         # ** planned lead time: identical for each job
-        lead_time_planned = self.prod_area.lead_time_planned(
+        self.prod_area.set_lead_time_planned(
             WIP_relative=self.WIP_relative_planned,
             order_time_stats_info=self.dist_order.stat_info,
             alpha=self.WIP_alpha,
         )
+        lead_time_planned = self.prod_area.lead_time_planned
         logger.info(
             '[LOADS] ProdArea: %s, Calculated planned lead time: %s',
             self.prod_area,
             lead_time_planned,
+        )
+        self.recalculate_lead_time_delta(WIP_relative)
+        logger.debug(
+            '[LOADS] ProdArea: %s, Calculated lead time delta: %s',
+            self.prod_area,
+            self.prod_area.lead_time_delta,
         )
         # random change in planned due date
         upper_bound_dev = np.sqrt(3)
