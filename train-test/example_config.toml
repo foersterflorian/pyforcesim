@@ -45,7 +45,8 @@ show_progressbar = false
 
 
 [test]
-use_train_config = true
+use_train_config = false
+seed = 1234
 
 [test.files]
 target_folder = '2025-02-04-01__1-2-3__VarIdeal__Slack'

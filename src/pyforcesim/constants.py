@@ -43,18 +43,18 @@ LOGGING_LEVEL_BASE: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_ENV: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_GYM_ENV: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_ENV_BUILDER: Final[loglevel] = loglevel.INFO
-LOGGING_LEVEL_DISPATCHER: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_DISPATCHER: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_INFSTRCT: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_SOURCES: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_SINKS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_PRODSTATIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_JOBS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_OPERATIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_BUFFERS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_QUEUES: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.DEBUG
-LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.WARNING
-LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_LOADS: Final[loglevel] = loglevel.WARNING
+LOGGING_LEVEL_MONITORS: Final[loglevel] = loglevel.DEBUG
+LOGGING_LEVEL_AGENTS: Final[loglevel] = loglevel.DEBUG
 LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_POLICIES: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_DB: Final[loglevel] = loglevel.WARNING
@@ -102,7 +102,7 @@ SLACK_THRESHOLD_UPPER: Final[Timedelta] = Timedelta(hours=2)
 SLACK_THRESHOLD_LOWER: Final[Timedelta] = Timedelta(hours=0)
 # slack adaption
 SLACK_ADAPTION: Final[bool] = True
-SLACK_ADAPTION_MIN_UPPER_BOUND: Final[Timedelta] = Timedelta(hours=1)
+SLACK_ADAPTION_MIN_UPPER_BOUND: Final[Timedelta] = Timedelta(hours=2)
 
 
 # ** database

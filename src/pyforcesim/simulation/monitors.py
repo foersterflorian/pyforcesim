@@ -360,6 +360,7 @@ class LoadMonitor(Monitor[L]):
         self.slack_init: Timedelta = Timedelta()
         self.slack_init_hours: float = 0.0
         self.slack_upper_bound: Timedelta = Timedelta()
+        self.slack_upper_bound_adaption_delta: Timedelta = Timedelta()
         self.slack_upper_bound_hours: float = 0.0
         self.slack_lower_bound: Timedelta = SLACK_THRESHOLD_LOWER
         self.slack_lower_bound_hours: float = SLACK_THRESHOLD_LOWER / self.NORM_TD
@@ -408,6 +409,7 @@ class JobMonitor(LoadMonitor['Job']):
             obj=obj,
             current_state=current_state,
         )
+        self._num_open_ops: int = 0
 
     def _KPI_remaining_order_time(self) -> None:
         # !! make sure that all open operations' KPIs are calculated
@@ -441,12 +443,41 @@ class JobMonitor(LoadMonitor['Job']):
                 time_planned_ending,
             )
 
+    def _total_slack_upper_bound_adaption(self) -> None:
+        ops = self.target_object.open_operations
+        # TODO check later
+        # if len(ops) == self._num_open_ops:
+        #     # nothing changed since last calculation
+        #     return
+
+        self.slack_upper_bound_adaption_delta = Timedelta()
+        for op in ops:
+            self.slack_upper_bound_adaption_delta += (
+                op.stat_monitor.slack_upper_bound_adaption_delta
+            )
+            loggers.monitors.debug(
+                '[MONITOR]: Slack - Adaption delta of OP is >%s<, new total delta: >%s<',
+                op.stat_monitor.slack_upper_bound_adaption_delta,
+                self.slack_upper_bound_adaption_delta,
+            )
+        self._num_open_ops = len(ops)
+
+        self.slack_upper_bound += self.slack_upper_bound_adaption_delta
+        self.slack_upper_bound_hours = self.slack_upper_bound / self.NORM_TD
+        loggers.monitors.debug(
+            '[MONITOR]: Slack - Adaption delta is >%s<, new upper bound is >%s<',
+            self.slack_upper_bound_adaption_delta,
+            self.slack_upper_bound,
+        )
+
     @override
     def calc_KPI(self) -> None:
         super().calc_KPI()  # especially time proportions
         for op in self.target_object.open_operations:
             op.stat_monitor.calc_KPI()
         self._KPI_remaining_order_time()
+        if SLACK_ADAPTION:
+            self._total_slack_upper_bound_adaption()
         self._KPI_slack()
 
 
@@ -500,9 +531,18 @@ class OperationMonitor(LoadMonitor['Operation']):
         lead_time_delta = prod_area.lead_time_delta
 
         if lead_time_delta != Timedelta():
-            upper_bound_adapted = self.slack_upper_bound + lead_time_delta
-            self.slack_upper_bound = max(upper_bound_adapted, SLACK_ADAPTION_MIN_UPPER_BOUND)
+            upper_bound_calc = self.slack_upper_bound + lead_time_delta
+            upper_bound_adapted = max(upper_bound_calc, SLACK_ADAPTION_MIN_UPPER_BOUND)
+            self.slack_upper_bound_adaption_delta += (
+                upper_bound_adapted - self.slack_upper_bound
+            )
+            self.slack_upper_bound = upper_bound_adapted
             self.slack_upper_bound_hours = self.slack_upper_bound / self.NORM_TD
+
+            loggers.monitors.debug(
+                '[MONITOR][Ops] Slack: upper bound adaption delta >%s<',
+                self.slack_upper_bound_adaption_delta,
+            )
 
     @override
     def release(self) -> None:

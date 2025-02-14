@@ -135,6 +135,7 @@ def _parse_train_cfg(cfg: dict[str, Any]) -> ConfTrain:
 def _parse_test_cfg(cfg: dict[str, Any]) -> ConfTest:
     # test
     use_train_cfg = cast(bool, cfg['test']['use_train_config'])
+    rng_seed = cast(int, cfg['test']['seed'])
     # test.files
     target_folder = cast(str, cfg['test']['files']['target_folder'])
     filename_target_model = cast(str, cfg['test']['files']['filename_target_model'])
@@ -151,6 +152,7 @@ def _parse_test_cfg(cfg: dict[str, Any]) -> ConfTest:
 
     return ConfTest(
         use_train_config=use_train_cfg,
+        seed=rng_seed,
         files=test_files,
         inputs=test_inputs,
         runs=test_runs,
@@ -228,6 +230,7 @@ SHOW_PROGRESSBAR: Final[bool] = CFG.train.sb3.show_progressbar
 
 # ** tests
 TEST_USE_TRAIN_CONFIG: Final[bool] = CFG.test.use_train_config
+TEST_RNG_SEED: Final[int] = CFG.test.seed
 # ** files
 TEST_FILENAME_TARGET_MODEL: Final[str] = CFG.test.files.filename_target_model
 TEST_TARGET_FOLDER: Final[str] = CFG.test.files.target_folder

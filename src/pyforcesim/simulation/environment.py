@@ -1525,6 +1525,7 @@ class Dispatcher:
         # self.update_operation_db(
         #     op=op, property='target_station_sys_id', val=target_station.system_id
         # )
+        op.job.stat_monitor.calc_KPI()
 
     def assign_operation(
         self,
@@ -1748,6 +1749,15 @@ class Dispatcher:
     ) -> tuple[bool, AllocationAgent | None]:
         # get next operation of job
         next_op = self.get_next_operation(job=job)
+        # release operation and job if applicable
+        if next_op is not None:
+            # release OP first because relevant KPIs are calculated which
+            # which are necessary for the initial release
+            self.release_operation(op=next_op)
+        if not job.is_released:
+            assert next_op is not None, 'not released job with no next op'
+            self.release_job(job=job)
+
         is_agent: bool = False
         agent: AllocationAgent | None = None
 
@@ -1851,9 +1861,6 @@ class Dispatcher:
                 is_agent=is_agent,
                 target_station_group=target_station_group,
             )
-            # with allocation request operation is released
-            # self.release_operation(op=op, target_station=target_station)
-            self.release_operation(op=op)
         else:
             # ?? [PERHAPS CHANGE IN FUTURE]
             # all operations done, look for sinks
@@ -3758,9 +3765,9 @@ class InfrastructureObject(System, metaclass=ABCMeta):
         yield self.sim_control.hold(random_sim_time, priority=self.sim_put_prio)
         # call dispatcher to check for allocation rule
         # resets current feasibility status
-        dispatcher.jobs_temp_state(jobs=[job], reset_temp=False)
         loggers.agents.debug('[%s] Checking agent allocation at %s', self, self.env.t_as_dt())
         is_agent, alloc_agent = dispatcher.check_alloc_dispatch(job=job)
+        dispatcher.jobs_temp_state(jobs=[job], reset_temp=False)
         target_station: InfrastructureObject
         if is_agent and alloc_agent is None:
             raise ValueError('Agent [ALLOC] decision is set, but no agent is provided.')
@@ -4705,7 +4712,7 @@ class Source(InfrastructureObject):
                 job.operations[0].target_station_group,
             )
             # [Call:DISPATCHER]
-            dispatcher.release_job(job=job)
+            # dispatcher.release_job(job=job)
             # [STATS:Source] inputs
             loggers.sources.debug(
                 '[SOURCE: %s] Generated %s at %s', self, job, self.env.t_as_dt()

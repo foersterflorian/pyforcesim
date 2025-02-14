@@ -23,6 +23,7 @@ from config import (
     TEST_NORMALISE_OBS,
     TEST_NUM_EPISODES,
     TEST_PERFORM_BENCHMARK,
+    TEST_RNG_SEED,
     TEST_TARGET_FOLDER,
     TEST_USE_TRAIN_CONFIG,
 )
@@ -56,7 +57,7 @@ if matches is None:
     raise ValueError(f'Experiment type could not be extracted out of: {TEST_TARGET_FOLDER}')
 
 USER_EXP_TYPE: Final[str] = f'{matches.group(2)}_{matches.group(3)}'
-USER_RNG_SEED: Final[int] = 1234  # default: 42
+USER_RNG_SEED: Final[int] = TEST_RNG_SEED
 
 ROOT_FOLDER = USER_FOLDER
 ROOT_EXP_TYPE = USER_EXP_TYPE

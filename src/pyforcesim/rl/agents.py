@@ -902,6 +902,7 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
                 slack,
             )
             job_data.extend(job_info)
+            loggers.agents.debug('[SEQ AGENT] Job ID %d info: %s', job.job_id, job_info)
 
             job_feasible: bool = False
             if res_SGI == job_SGI:

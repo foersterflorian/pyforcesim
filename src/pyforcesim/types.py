@@ -306,6 +306,7 @@ class ConfTrainSB3:
 @dataclass(kw_only=True)
 class ConfTest:
     use_train_config: bool
+    seed: int
     files: ConfTestFiles
     inputs: ConfTestInputs
     runs: ConfTestRuns
