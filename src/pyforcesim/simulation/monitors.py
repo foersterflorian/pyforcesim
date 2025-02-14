@@ -19,6 +19,8 @@ from pyforcesim.constants import (
     HELPER_STATES,
     INF,
     PROCESSING_PROPERTIES,
+    SLACK_ADAPTION,
+    SLACK_ADAPTION_MIN_UPPER_BOUND,
     SLACK_INIT_AS_UPPER_BOUND,
     SLACK_OVERWRITE_UPPER_BOUND,
     SLACK_THRESHOLD_LOWER,
@@ -498,13 +500,15 @@ class OperationMonitor(LoadMonitor['Operation']):
         lead_time_delta = prod_area.lead_time_delta
 
         if lead_time_delta != Timedelta():
-            self.slack_upper_bound += lead_time_delta
+            upper_bound_adapted = self.slack_upper_bound + lead_time_delta
+            self.slack_upper_bound = max(upper_bound_adapted, SLACK_ADAPTION_MIN_UPPER_BOUND)
             self.slack_upper_bound_hours = self.slack_upper_bound / self.NORM_TD
 
     @override
     def release(self) -> None:
         super().release()
-        self._adapt_slack()
+        if SLACK_ADAPTION:
+            self._adapt_slack()
 
     @override
     def calc_KPI(self) -> None:

@@ -100,6 +100,9 @@ SLACK_USE_THRESHOLD_UPPER: Final[bool] = False
 SLACK_OVERWRITE_UPPER_BOUND: Final[Timedelta] = Timedelta(hours=1)
 SLACK_THRESHOLD_UPPER: Final[Timedelta] = Timedelta(hours=2)
 SLACK_THRESHOLD_LOWER: Final[Timedelta] = Timedelta(hours=0)
+# slack adaption
+SLACK_ADAPTION: Final[bool] = True
+SLACK_ADAPTION_MIN_UPPER_BOUND: Final[Timedelta] = Timedelta(hours=1)
 
 
 # ** database
