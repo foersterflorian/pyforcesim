@@ -180,6 +180,7 @@ class EnvBuilderFunc(Protocol):
         WIP_relative_planned: float = ...,
         alpha: float = ...,
         buffer_size: int = ...,
+        job_pool_size: int = ...,
     ) -> EnvAgentConstructorReturn: ...
 
 
@@ -191,6 +192,7 @@ class EnvBuilderAdditionalConfig(TypedDict):
     WIP_relative_planned: float
     alpha: float
     buffer_size: int
+    job_pool_size: int
 
 
 class BuilderFuncFamilies(enum.StrEnum):
