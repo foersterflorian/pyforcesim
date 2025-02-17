@@ -1028,6 +1028,14 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
             # other reward
             reward = self._reward_slack_polynomial(x=proportion)
 
+        loggers.agents.debug(
+            '[SEQ-Agent] reward calc func: slack_lb=%.4f, slack=%.4f, slack_ub=%.4f',
+            slack_lower_bound,
+            slack,
+            slack_upper_bound,
+        )
+        loggers.agents.debug('[SEQ-Agent] reward calc func: delta=%.4f', delta)
+
         return round(reward, ROUNDING_PRECISION)
 
     @override
@@ -1058,6 +1066,12 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
                 slack_lower_bound=slack_lower_bound,
                 slack_upper_bound=slack_upper_bound,
             )
+            if abs(reward) > 1000:
+                loggers.agents.info(
+                    '[SEQ-Agent] huge reward difference for job >%s<: %.4f',
+                    job_reward,
+                    reward,
+                )
 
             current_op = job_reward.current_op
             if current_op is None:

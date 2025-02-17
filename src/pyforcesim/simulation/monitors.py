@@ -32,7 +32,7 @@ from pyforcesim.constants import (
     SimStatesStorage,
     TimeUnitsTimedelta,
 )
-from pyforcesim.types import LoadObjects, MonitorObjects, PlotlyFigure
+from pyforcesim.types import LoadObjects, MonitorObjects
 
 if TYPE_CHECKING:
     from pyforcesim.simulation.environment import (
@@ -42,6 +42,10 @@ if TYPE_CHECKING:
         SimulationEnvironment,
         StationGroup,
         StorageLike,
+    )
+    from pyforcesim.types import (
+        LoadID,
+        PlotlyFigure,
     )
 
 T = TypeVar('T', bound=MonitorObjects)
@@ -355,18 +359,23 @@ class LoadMonitor(Monitor[L]):
             current_state=current_state,
             states=SimStatesCommon,
         )
+        self._released: bool = False
         self.remaining_order_time = self.target_object.order_time
         self.slack: Timedelta = Timedelta()
         self.slack_init: Timedelta = Timedelta()
         self.slack_init_hours: float = 0.0
         self.slack_upper_bound: Timedelta = Timedelta()
+        self.slack_upper_bound_init: Timedelta | None = None
         self.slack_upper_bound_adaption_delta: Timedelta = Timedelta()
         self.slack_upper_bound_hours: float = 0.0
         self.slack_lower_bound: Timedelta = SLACK_THRESHOLD_LOWER
         self.slack_lower_bound_hours: float = SLACK_THRESHOLD_LOWER / self.NORM_TD
 
-    def release(self) -> None:
-        """certain actions performed on release"""
+    @property
+    def released(self) -> bool:
+        return self._released
+
+    def _init_slack(self) -> None:
         self.calc_KPI()
         self.slack_init = self.slack
         self.slack_init_hours = self.slack_hours
@@ -385,6 +394,12 @@ class LoadMonitor(Monitor[L]):
                 self.slack_upper_bound = SLACK_OVERWRITE_UPPER_BOUND
 
         self.slack_upper_bound_hours = self.slack_upper_bound / self.NORM_TD
+        self.slack_upper_bound_init = self.slack_upper_bound
+
+    def release(self) -> None:
+        """certain actions performed on release"""
+        self._init_slack()
+        self._released = True
 
     def slack_time_units(
         self,
@@ -409,7 +424,7 @@ class JobMonitor(LoadMonitor['Job']):
             obj=obj,
             current_state=current_state,
         )
-        self._num_open_ops: int = 0
+        self._slack_considered_ops: set[LoadID] = set()
 
     def _KPI_remaining_order_time(self) -> None:
         # !! make sure that all open operations' KPIs are calculated
@@ -444,28 +459,51 @@ class JobMonitor(LoadMonitor['Job']):
             )
 
     def _total_slack_upper_bound_adaption(self) -> None:
-        ops = self.target_object.open_operations
-        # TODO check later
-        # if len(ops) == self._num_open_ops:
-        #     # nothing changed since last calculation
-        #     return
-
-        self.slack_upper_bound_adaption_delta = Timedelta()
-        for op in ops:
-            self.slack_upper_bound_adaption_delta += (
-                op.stat_monitor.slack_upper_bound_adaption_delta
+        if not SLACK_ADAPTION:
+            raise RuntimeError(
+                f'Tried to adapt slack of {self.target_object} even though slack '
+                f'adaption is not enbaled.'
             )
-            loggers.monitors.debug(
-                '[MONITOR]: Slack - Adaption delta of OP is >%s<, new total delta: >%s<',
-                op.stat_monitor.slack_upper_bound_adaption_delta,
-                self.slack_upper_bound_adaption_delta,
-            )
-        self._num_open_ops = len(ops)
+        if not self.released:
+            # only with release status all slack parameters initialised
+            return
 
-        self.slack_upper_bound += self.slack_upper_bound_adaption_delta
-        self.slack_upper_bound_hours = self.slack_upper_bound / self.NORM_TD
+        op = self.target_object.current_op
+        if op is None:
+            return
+        elif not op.stat_monitor.slack_adapted:
+            return
+        elif op.op_id in self._slack_considered_ops:
+            return
+        # consecutively add adaption delta of all operations
+        self.slack_upper_bound_adaption_delta += (
+            op.stat_monitor.slack_upper_bound_adaption_delta
+        )
+        self._slack_considered_ops.add(op.op_id)
+
         loggers.monitors.debug(
-            '[MONITOR]: Slack - Adaption delta is >%s<, new upper bound is >%s<',
+            '[MONITOR]: OpID: %d Slack - Adaption delta of OP is >%s<, new total delta: >%s<',
+            op.op_id,
+            op.stat_monitor.slack_upper_bound_adaption_delta,
+            self.slack_upper_bound_adaption_delta,
+        )
+        loggers.monitors.debug(
+            '[MONITOR]: JobID: %d Slack UB before adaption >%s<',
+            self.target_object.job_id,
+            self.slack_upper_bound,
+        )
+
+        assert (
+            self.slack_upper_bound_init is not None
+        ), f'init upper bound not set for JobID: {self.target_object.job_id}'
+        self.slack_upper_bound = (
+            self.slack_upper_bound_init + self.slack_upper_bound_adaption_delta
+        )
+        self.slack_upper_bound_hours = self.slack_upper_bound / self.NORM_TD
+
+        loggers.monitors.debug(
+            '[MONITOR]: JobID: %d Slack - Adaption delta is >%s<, new upper bound is >%s<',
+            self.target_object.job_id,
             self.slack_upper_bound_adaption_delta,
             self.slack_upper_bound,
         )
@@ -493,6 +531,11 @@ class OperationMonitor(LoadMonitor['Operation']):
             obj=obj,
             current_state=current_state,
         )
+        self._slack_adapted: bool = False
+
+    @property
+    def slack_adapted(self) -> bool:
+        return self._slack_adapted
 
     def _KPI_remaining_order_time(self) -> None:
         time_actual_starting = self.target_object.time_actual_starting
@@ -527,6 +570,10 @@ class OperationMonitor(LoadMonitor['Operation']):
             )
 
     def _adapt_slack(self) -> None:
+        if self.slack_adapted:
+            # perform slack adaption only once for OPs
+            return
+
         prod_area = self.target_object.target_exec_system
         lead_time_delta = prod_area.lead_time_delta
 
@@ -540,9 +587,19 @@ class OperationMonitor(LoadMonitor['Operation']):
             self.slack_upper_bound_hours = self.slack_upper_bound / self.NORM_TD
 
             loggers.monitors.debug(
-                '[MONITOR][Ops] Slack: upper bound adaption delta >%s<',
+                '[MONITOR][Ops] ID: %d Slack: upper bound calc >%s<, upper bound adapted >%s<',
+                self.target_object.op_id,
+                upper_bound_calc,
+                upper_bound_adapted,
+            )
+            loggers.monitors.debug(
+                '[MONITOR][Ops] OP(%s), ID: %d Slack: upper bound adaption delta >%s<',
+                self.target_object,
+                self.target_object.op_id,
                 self.slack_upper_bound_adaption_delta,
             )
+
+        self._slack_adapted = True
 
     @override
     def release(self) -> None:
@@ -706,7 +763,7 @@ class StorageMonitor(Monitor['StorageLike']):
         temp1: DataFrame = pd.DataFrame(columns=data.columns, data=[[val1, val2, val3]])
         temp1 = pd.concat([temp1, data], ignore_index=True)
 
-        fig: PlotlyFigure = px.line(x=temp1['sim_time'], y=temp1['level'], line_shape='vh')
+        fig = px.line(x=temp1['sim_time'], y=temp1['level'], line_shape='vh')
         fig.update_traces(line=dict(width=3))
         fig.update_layout(title=f'Fill Level of {self._target_object}')
         fig.update_yaxes(title=dict({'text': 'fill level [-]'}))
@@ -1079,7 +1136,7 @@ class InfStructMonitor(Monitor['InfrastructureObject']):
         last_entry = pd.DataFrame(columns=data.columns, data=[[l_val1, l_val2, l_val3]])
         temp1 = pd.concat([first_entry, data, last_entry], ignore_index=True)
 
-        fig: PlotlyFigure = px.line(x=temp1['sim_time'], y=temp1['level'], line_shape='vh')
+        fig = px.line(x=temp1['sim_time'], y=temp1['level'], line_shape='vh')
         fig.update_traces(line=dict(width=3))
         fig.update_layout(title=title)
         fig.update_yaxes(title=dict({'text': yaxis}))
