@@ -69,7 +69,7 @@ BUILDER_FUNC_WIP_CFG: Final[EnvBuilderAdditionalConfig] = {
     'WIP_relative_planned': 2.75,
     'alpha': 10,
     'buffer_size': 20,
-    'job_pool_size': 1,
+    'job_pool_size': 5,
 }
 
 
