@@ -35,7 +35,7 @@ from pyforcesim.types import LoggingLevels as loglevel
 LOG_FMT: Final[str] = ' %(asctime)s | pyfsim:%(module)s:%(levelname)s | %(message)s'
 LOG_DATE_FMT: Final[str] = '%Y-%m-%d %H:%M:%S +0000'
 LOGGING_ENABLED: Final[bool] = True
-LOGGING_TO_FILE: Final[bool] = False
+LOGGING_TO_FILE: Final[bool] = True
 LOGGING_FILE_SIZE: Final[int] = 10485760  # in bytes
 LOGGING_LEVEL_STD_OUT: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_FILE: Final[loglevel] = loglevel.DEBUG
@@ -96,10 +96,11 @@ DEFAULT_DATETIME: Final[Datetime] = Datetime(1970, 1, 1, tzinfo=TIMEZONE_UTC)
 SLACK_INIT_AS_UPPER_BOUND: Final[bool] = True
 # only takes effect if initial slack used as upper bound
 SLACK_USE_THRESHOLD_UPPER: Final[bool] = False
-# value to use as slack if initial value is not set as upper bound
-SLACK_OVERWRITE_UPPER_BOUND: Final[Timedelta] = Timedelta(hours=1)
 SLACK_THRESHOLD_UPPER: Final[Timedelta] = Timedelta(hours=2)
 SLACK_THRESHOLD_LOWER: Final[Timedelta] = Timedelta(hours=0)
+SLACK_MIN_RANGE: Final[Timedelta] = Timedelta(hours=2)
+# value to use as slack if initial value is not set as upper bound
+SLACK_OVERWRITE_UPPER_BOUND: Final[Timedelta] = Timedelta(hours=1)
 # slack adaption
 SLACK_ADAPTION: Final[bool] = True
 SLACK_ADAPTION_MIN_UPPER_BOUND: Final[Timedelta] = Timedelta(hours=2)

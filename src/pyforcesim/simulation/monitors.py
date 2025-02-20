@@ -22,6 +22,7 @@ from pyforcesim.constants import (
     SLACK_ADAPTION,
     SLACK_ADAPTION_MIN_UPPER_BOUND,
     SLACK_INIT_AS_UPPER_BOUND,
+    SLACK_MIN_RANGE,
     SLACK_OVERWRITE_UPPER_BOUND,
     SLACK_THRESHOLD_LOWER,
     SLACK_THRESHOLD_UPPER,
@@ -392,6 +393,18 @@ class LoadMonitor(Monitor[L]):
         elif not SLACK_INIT_AS_UPPER_BOUND:
             if self.slack_upper_bound > SLACK_OVERWRITE_UPPER_BOUND:
                 self.slack_upper_bound = SLACK_OVERWRITE_UPPER_BOUND
+
+        if (
+            self.slack_upper_bound <= self.slack_lower_bound
+            or abs(self.slack_upper_bound - self.slack_lower_bound) < SLACK_MIN_RANGE
+        ):
+            self.slack_lower_bound = self.slack_upper_bound - SLACK_MIN_RANGE
+            self.slack_lower_bound_hours = self.slack_lower_bound / self.NORM_TD
+            loggers.monitors.debug(
+                '[MONITOR]: Slack lower bound adapted for min range: >%s< (%.4f)',
+                self.slack_lower_bound,
+                self.slack_lower_bound_hours,
+            )
 
         self.slack_upper_bound_hours = self.slack_upper_bound / self.NORM_TD
         self.slack_upper_bound_init = self.slack_upper_bound
