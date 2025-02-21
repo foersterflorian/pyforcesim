@@ -19,6 +19,10 @@ class ViolationStartingConditionError(Exception):
     """error occurring if a starting condition of a ConditionSetter is not met"""
 
 
+class InvalidPolicyError(Exception):
+    """error raised if chosen policy is unknown"""
+
+
 class CommonSQLError(Exception):
     """error that describes a common SQL error"""
 
