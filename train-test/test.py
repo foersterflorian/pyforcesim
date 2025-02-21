@@ -22,6 +22,7 @@ from config import (
     TEST_FILENAME_TARGET_MODEL,
     TEST_NORMALISE_OBS,
     TEST_NUM_EPISODES,
+    TEST_PERFORM_AGENT,
     TEST_PERFORM_BENCHMARK,
     TEST_RNG_SEED,
     TEST_TARGET_FOLDER,
@@ -382,9 +383,10 @@ def main() -> None:
         message=r'^[\s]*.*to get variables from other wrappers is deprecated.*$',
     )
     t1 = time.perf_counter()
-    eval_agent_policy(
-        num_episodes=TEST_NUM_EPISODES, seed=ROOT_RNG_SEED, sim_randomise_reset=False
-    )
+    if TEST_PERFORM_AGENT:
+        eval_agent_policy(
+            num_episodes=TEST_NUM_EPISODES, seed=ROOT_RNG_SEED, sim_randomise_reset=False
+        )
     print('--------------------------------------------------------------------')
     if TEST_PERFORM_BENCHMARK:
         eval_agent_benchmark(

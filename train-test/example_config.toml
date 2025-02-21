@@ -46,17 +46,18 @@ show_progressbar = false
 
 [test]
 use_train_config = false
-seed = 1234
+seed = 42
 
 [test.files]
-target_folder = '2025-02-04-01__1-2-3__VarIdeal__Slack'
-filename_target_model = '2025-02-04--17-20-00_pyf_sim_PPO_mask_TS-999999'
+target_folder = '2025-02-20-01__1-2-3__VarIdeal__Slack'
+filename_target_model = '2025-02-21--06-44-31_pyf_sim_PPO_mask_TS-20480001'
 
 [test.inputs]
 normalise_obs = true
 
 [test.runs]
 num_episodes = 1
+perform_agent = true
 perform_benchmark = true
 
 

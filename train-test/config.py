@@ -147,8 +147,13 @@ def _parse_test_cfg(cfg: dict[str, Any]) -> ConfTest:
     test_inputs = ConfTestInputs(normalise_obs=normalise_obs)
     # test.runs
     num_episodes = cast(int, cfg['test']['runs']['num_episodes'])
+    perform_agent = cast(bool, cfg['test']['runs']['perform_agent'])
     perform_benchmark = cast(bool, cfg['test']['runs']['perform_benchmark'])
-    test_runs = ConfTestRuns(num_episodes=num_episodes, perform_benchmark=perform_benchmark)
+    test_runs = ConfTestRuns(
+        num_episodes=num_episodes,
+        perform_agent=perform_agent,
+        perform_benchmark=perform_benchmark,
+    )
 
     return ConfTest(
         use_train_config=use_train_cfg,
@@ -238,6 +243,7 @@ TEST_TARGET_FOLDER: Final[str] = CFG.test.files.target_folder
 TEST_NORMALISE_OBS: Final[bool] = CFG.test.inputs.normalise_obs
 # ** runs
 TEST_NUM_EPISODES: Final[int] = CFG.test.runs.num_episodes
+TEST_PERFORM_AGENT: Final[bool] = CFG.test.runs.perform_agent
 TEST_PERFORM_BENCHMARK: Final[bool] = CFG.test.runs.perform_benchmark
 
 

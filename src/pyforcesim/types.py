@@ -327,6 +327,7 @@ class ConfTestInputs:
 @dataclass(kw_only=True)
 class ConfTestRuns:
     num_episodes: int
+    perform_agent: bool
     perform_benchmark: bool
 
 
