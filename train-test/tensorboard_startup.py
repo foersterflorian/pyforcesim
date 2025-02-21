@@ -25,13 +25,18 @@ assert LOG_DIR.exists(), 'Tensorboard path does not exist'
 PORT: Final[int] = 6006
 
 
-def start_tensorboard() -> None:
+def start_tensorboard(
+    expose_network: bool = False,
+) -> None:
     command_parts: list[str] = [
         'pdm run',
         'tensorboard',
         f'--logdir="{LOG_DIR}"',
         f'--port={PORT}',
     ]
+    if expose_network:
+        command_parts.append('--bind_all')
+
     command = ' '.join(command_parts)
     print(f'Starting with command: >> {command}')
     run_cmd = shlex.split(command)
@@ -52,14 +57,24 @@ def main() -> None:
         help='open TensorBoard page automatically',
         action='store_true',
     )
+    parser.add_argument(
+        '-e',
+        '--expose',
+        help='expose TensorBoard port to network',
+        action='store_true',
+    )
     args = parser.parse_args()
 
     if args.webbrowser:
         webbrowser_thread = Thread(target=open_browser, daemon=True)
         webbrowser_thread.start()
 
+    expose_network: bool = False
+    if args.expose:
+        expose_network = True
+
     try:
-        start_tensorboard()
+        start_tensorboard(expose_network)
     except KeyboardInterrupt:
         print('KeyboardInterrupt: Tensorboard host stopped.')
 
