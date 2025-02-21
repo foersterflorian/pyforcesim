@@ -47,7 +47,8 @@ def get_cfg_path() -> Path:
         cfg_path = Path(cfg_path_env).absolute()
         if not cfg_path.exists():
             raise FileNotFoundError(
-                'Config path via environment variable provided, but file does not seem to exist.'
+                'Config path via environment variable provided, '
+                'but file does not seem to exist.'
             )
     else:
         if not CFG_DEFAULT_PATH.exists():
