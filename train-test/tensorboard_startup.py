@@ -7,8 +7,8 @@ from threading import Thread
 from typing import Final
 
 import pyforcesim.loggers
-from config import TB_EXP_FOLDER, TB_USE_TRAIN_CONFIG
 from pyforcesim import common
+from pyforcesim.config import TB_EXP_FOLDER, TB_USE_TRAIN_CONFIG
 
 pyforcesim.loggers.disable_logging()
 

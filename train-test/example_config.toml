@@ -1,3 +1,31 @@
+[lib]
+
+[lib.gym_env]
+sim_dur_weeks = 39
+buffer_size = 20
+job_pool_size = 5  # >1: use batching with shuffling
+dispatcher_seq_rule = 'FIFO'
+dispatcher_alloc_rule = 'LOAD_TIME_REMAINING'
+
+[lib.gym_env.WIP]
+factor_WIP = nan # nan: do not apply
+use_WIP_targets = true # use linearly generated WIP-levels from table "WIP_targets"
+WIP_relative_targets = [1.0, 2.0] # ignored if "use_WIP_targets" = true
+# [0.5, 3, 6]
+# [0.5,]
+# [1.5, 0.5, 2.5, 5, 3.5]
+# [3.5, 4.25, 5]
+# [0.5, 1, 1.75]
+WIP_level_cycles = 5 # how many full cycles with all WIP levels should be performed
+WIP_relative_planned = 2.75
+alpha = 10
+
+[lib.gym_env.WIP_targets]
+min = 0.5
+max = 5
+number_WIP_levels = 5 # must be odd
+
+
 [train]
 
 [train.system]
@@ -46,11 +74,13 @@ show_progressbar = false
 
 [test]
 use_train_config = false
-seed = 42
+seed = 100
 
 [test.files]
 target_folder = '2025-02-20-01__1-2-3__VarIdeal__Slack'
 filename_target_model = '2025-02-21--06-44-31_pyf_sim_PPO_mask_TS-20480001'
+# target_folder = '2025-02-18-01__1-2-3__VarIdeal__Slack'
+# filename_target_model = '2025-02-19--02-55-18_pyf_sim_PPO_mask_TS-20480001'
 
 [test.inputs]
 normalise_obs = true
@@ -58,11 +88,11 @@ normalise_obs = true
 [test.runs]
 num_episodes = 1
 perform_agent = true
-perform_benchmark = true
+perform_benchmark = false
 
 
 [tensorboard]
-use_train_config = true
+use_train_config = false
 
 [tensorboard.files]
-exp_folder = '2025-02-02-20__1-2-3__VarIdeal__Slack'
+exp_folder = '2025-02-20-01__1-2-3__VarIdeal__Slack'

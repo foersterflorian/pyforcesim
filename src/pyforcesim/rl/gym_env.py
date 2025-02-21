@@ -12,12 +12,27 @@ from pandas import DataFrame
 
 from pyforcesim import datetime as pyf_dt
 from pyforcesim.constants import (
+    CFG_ALPHA,
+    CFG_BUFFER_SIZE,
+    CFG_DISPATCHER_ALLOC_RULE,
+    CFG_DISPATCHER_SEQ_RULE,
+    CFG_FACTOR_WIP,
+    CFG_JOB_POOL_SIZE,
+    CFG_SIM_DUR_WEEKS,
+    CFG_USE_WIP_TARGETS,
+    CFG_WIP_LEVEL_CYCLES,
+    CFG_WIP_RELATIVE_PLANNED,
+    CFG_WIP_RELATIVE_TARGETS,
+    CFG_WIP_TARGET_MAX,
+    CFG_WIP_TARGET_MIN,
+    CFG_WIP_TARGET_NUM_LEVELS,
     DEFAULT_SEED,
     SLACK_THRESHOLD_LOWER,
     SLACK_THRESHOLD_UPPER,
     TimeUnitsTimedelta,
 )
 from pyforcesim.env_builder import (
+    calc_WIP_relative_targets,
     standard_env_single_area,
 )
 from pyforcesim.loggers import gym_env as logger
@@ -46,31 +61,33 @@ BUILDER_FUNCS: Final[dict[BuilderFuncFamilies, EnvBuilderFunc]] = {
     BuilderFuncFamilies.SINGLE_PRODUCTION_AREA: standard_env_single_area,
 }
 
-WIP_TARGET_MIN: Final[float] = 0.5
-WIP_TARGET_MAX: Final[float] = 5
-NUM_DIFF_WIP_LEVELS: Final[int] = 5  # must be odd
-assert NUM_DIFF_WIP_LEVELS % 2 != 0, 'number of WIP levels must be odd'
-WIP_relative_targets: tuple[float, ...] = tuple(
-    np.linspace(
-        WIP_TARGET_MIN, WIP_TARGET_MAX, num=NUM_DIFF_WIP_LEVELS, dtype=np.float64
-    ).tolist()
-)
 
-BUILDER_FUNC_WIP_CFG: Final[EnvBuilderAdditionalConfig] = {
-    'sim_dur_weeks': 39,  # 2/4/39
-    'factor_WIP': None,
-    # 'WIP_relative_target': (0.5, 3, 6),
-    # 'WIP_relative_target': (0.5,),
-    # 'WIP_relative_target': (1.5, 0.5, 2.5, 5, 3.5),
-    # 'WIP_relative_target': (3.5, 4.25, 5),
-    # 'WIP_relative_target': (0.5, 1, 1.75),
-    'WIP_relative_target': WIP_relative_targets,
-    'WIP_level_cycles': 5,
-    'WIP_relative_planned': 2.75,
-    'alpha': 10,
-    'buffer_size': 20,
-    'job_pool_size': 1,  # 1/5
-}
+def get_builder_func_WIP_config() -> EnvBuilderAdditionalConfig:
+    # calculate WIP targets or not
+    WIP_relative_targets: tuple[float, ...]
+    if CFG_USE_WIP_TARGETS:
+        _, WIP_relative_targets = calc_WIP_relative_targets(
+            CFG_WIP_TARGET_MIN,
+            CFG_WIP_TARGET_MAX,
+            CFG_WIP_TARGET_NUM_LEVELS,
+        )
+    else:
+        WIP_relative_targets = CFG_WIP_RELATIVE_TARGETS
+
+    builder_func_wip_cfg: EnvBuilderAdditionalConfig = {
+        'sim_dur_weeks': CFG_SIM_DUR_WEEKS,  # 2/4/39
+        'factor_WIP': CFG_FACTOR_WIP,
+        'WIP_relative_target': WIP_relative_targets,
+        'WIP_level_cycles': CFG_WIP_LEVEL_CYCLES,
+        'WIP_relative_planned': CFG_WIP_RELATIVE_PLANNED,
+        'alpha': CFG_ALPHA,
+        'buffer_size': CFG_BUFFER_SIZE,
+        'job_pool_size': CFG_JOB_POOL_SIZE,  # 1/5
+        'dispatcher_seq_rule': CFG_DISPATCHER_SEQ_RULE,
+        'dispatcher_alloc_rule': CFG_DISPATCHER_ALLOC_RULE,
+    }
+
+    return builder_func_wip_cfg
 
 
 def parse_exp_type(
@@ -134,6 +151,9 @@ class JSSEnv(gym.Env):
         seed_layout: int | None = DEFAULT_SEED,
     ) -> None:
         super().__init__()
+        BUILDER_FUNC_WIP_CFG: Final[EnvBuilderAdditionalConfig] = (
+            get_builder_func_WIP_config()
+        )
         # exp type example: '1-2-3_VarIdeal_validate'
         self.seed = seed
         self.seed_layout = seed_layout

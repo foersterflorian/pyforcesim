@@ -182,6 +182,8 @@ class EnvBuilderFunc(Protocol):
         alpha: float = ...,
         buffer_size: int = ...,
         job_pool_size: int = ...,
+        dispatcher_seq_rule: str = ...,
+        dispatcher_alloc_rule: str = ...,
     ) -> EnvAgentConstructorReturn: ...
 
 
@@ -194,6 +196,8 @@ class EnvBuilderAdditionalConfig(TypedDict):
     alpha: float
     buffer_size: int
     job_pool_size: int
+    dispatcher_seq_rule: str
+    dispatcher_alloc_rule: str
 
 
 class BuilderFuncFamilies(enum.StrEnum):
@@ -220,9 +224,43 @@ class AgentDecisionTypes(enum.StrEnum):
 # ** train-test configuration
 @dataclass(kw_only=True)
 class Conf:
+    lib: ConfLib
     train: ConfTrain
     test: ConfTest
     tensorboard: ConfTensorboard
+
+
+@dataclass(kw_only=True)
+class ConfLib:
+    gym_env: ConfLibGymEnv
+
+
+@dataclass(kw_only=True)
+class ConfLibGymEnv:
+    sim_dur_weeks: int
+    buffer_size: int
+    job_pool_size: int
+    dispatcher_seq_rule: str
+    dispatcher_alloc_rule: str
+    WIP: ConfLibGymEnvWIP
+    WIP_targets: ConfLibGymEnvWIPTargets
+
+
+@dataclass(kw_only=True)
+class ConfLibGymEnvWIP:
+    factor_WIP: float | None
+    use_WIP_targets: bool
+    WIP_relative_targets: tuple[float, ...]
+    WIP_level_cycles: int
+    WIP_relative_planned: float
+    alpha: float
+
+
+@dataclass(kw_only=True)
+class ConfLibGymEnvWIPTargets:
+    min: float
+    max: float
+    number_WIP_levels: int
 
 
 @dataclass(kw_only=True)

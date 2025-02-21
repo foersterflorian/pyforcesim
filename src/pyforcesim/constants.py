@@ -5,6 +5,7 @@ from datetime import timezone as Timezone
 from typing import Final
 from zoneinfo import ZoneInfo
 
+from pyforcesim.config import CFG
 from pyforcesim.simulation.policies import (
     AgentPolicy,
     AllocationPolicy,
@@ -59,6 +60,25 @@ LOGGING_LEVEL_CONDITIONS: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_POLICIES: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_DB: Final[loglevel] = loglevel.WARNING
 LOGGING_LEVEL_DIST: Final[loglevel] = loglevel.WARNING
+
+# ** config
+# ** GymEnv
+CFG_SIM_DUR_WEEKS: Final[int] = CFG.lib.gym_env.sim_dur_weeks
+CFG_BUFFER_SIZE: Final[int] = CFG.lib.gym_env.buffer_size
+CFG_JOB_POOL_SIZE: Final[int] = CFG.lib.gym_env.job_pool_size
+CFG_DISPATCHER_SEQ_RULE: Final[str] = CFG.lib.gym_env.dispatcher_seq_rule
+CFG_DISPATCHER_ALLOC_RULE: Final[str] = CFG.lib.gym_env.dispatcher_alloc_rule
+# ** GymEnv: WIP
+CFG_FACTOR_WIP: Final[float | None] = CFG.lib.gym_env.WIP.factor_WIP
+CFG_USE_WIP_TARGETS: Final[bool] = CFG.lib.gym_env.WIP.use_WIP_targets
+CFG_WIP_RELATIVE_TARGETS: Final[tuple[float, ...]] = CFG.lib.gym_env.WIP.WIP_relative_targets
+CFG_WIP_LEVEL_CYCLES: Final[int] = CFG.lib.gym_env.WIP.WIP_level_cycles
+CFG_WIP_RELATIVE_PLANNED: Final[float] = CFG.lib.gym_env.WIP.WIP_relative_planned
+CFG_ALPHA: Final[float] = CFG.lib.gym_env.WIP.alpha
+# ** GymEnv: WIP targets
+CFG_WIP_TARGET_MIN: Final[float] = CFG.lib.gym_env.WIP_targets.min
+CFG_WIP_TARGET_MAX: Final[float] = CFG.lib.gym_env.WIP_targets.max
+CFG_WIP_TARGET_NUM_LEVELS: Final[int] = CFG.lib.gym_env.WIP_targets.number_WIP_levels
 
 
 # ** common
@@ -205,7 +225,7 @@ DISTRIBUTION_PARAMETERS: Final[DistributionParameters] = DistributionParameters(
 
 
 # ** policies
-POLICIES: Final[dict[str, type[Policy]]] = {
+POLICIES_TYPE: Final[dict[str, type[Policy]]] = {
     'AGENT': AgentPolicy,
     'FIFO': FIFOPolicy,
     'LIFO': LIFOPolicy,
@@ -213,6 +233,7 @@ POLICIES: Final[dict[str, type[Policy]]] = {
     'LPT': LPTPolicy,
     'SST': SSTPolicy,
     'LST': LSTPolicy,
+    'EDD': EDDPolicy,
     'PRIORITY': PriorityPolicy,
     'RANDOM': RandomPolicy,
     'LOAD_TIME': LoadTimePolicy,
@@ -221,7 +242,7 @@ POLICIES: Final[dict[str, type[Policy]]] = {
     'UTILISATION': UtilisationPolicy,
 }
 
-POLICIES_SEQ: Final[dict[str, type[GeneralPolicy | SequencingPolicy]]] = {
+POLICIES_SEQ_TYPE: Final[dict[str, type[GeneralPolicy | SequencingPolicy]]] = {
     'AGENT': AgentPolicy,
     'FIFO': FIFOPolicy,
     'LIFO': LIFOPolicy,
@@ -234,7 +255,7 @@ POLICIES_SEQ: Final[dict[str, type[GeneralPolicy | SequencingPolicy]]] = {
     'RANDOM': RandomPolicy,
 }
 
-POLICIES_ALLOC: Final[dict[str, type[GeneralPolicy | AllocationPolicy]]] = {
+POLICIES_ALLOC_TYPE: Final[dict[str, type[GeneralPolicy | AllocationPolicy]]] = {
     'AGENT': AgentPolicy,
     'LOAD_TIME': LoadTimePolicy,
     'LOAD_TIME_REMAINING': LoadTimeRemainingPolicy,
@@ -242,3 +263,7 @@ POLICIES_ALLOC: Final[dict[str, type[GeneralPolicy | AllocationPolicy]]] = {
     'UTILISATION': UtilisationPolicy,
     'RANDOM': RandomPolicy,
 }
+
+POLICIES: Final[frozenset[str]] = frozenset(POLICIES_TYPE.keys())
+POLICIES_SEQ: Final[frozenset[str]] = frozenset(POLICIES_SEQ_TYPE.keys())
+POLICIES_ALLOC: Final[frozenset[str]] = frozenset(POLICIES_ALLOC_TYPE.keys())

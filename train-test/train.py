@@ -17,7 +17,8 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 
 import sb3_monkeypatch
-from config import (
+from pyforcesim import common
+from pyforcesim.config import (
     BASE_FOLDER,
     CONTINUE_LEARNING,
     DEC_TYPE,
@@ -44,7 +45,6 @@ from config import (
     TIMESTEPS_TOTAL,
     USE_MULTIPROCESSING,
 )
-from pyforcesim import common
 from pyforcesim.rl.gym_env import JSSEnv
 from pyforcesim.rl.sb3.custom_callbacks import MaskableEvalCallback as EvalCallback
 from pyforcesim.types import (

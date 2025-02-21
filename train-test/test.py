@@ -13,7 +13,9 @@ from sb3_contrib.ppo_mask import MaskablePPO
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
-from config import (
+from pyforcesim import common, loggers
+from pyforcesim import datetime as pyf_dt
+from pyforcesim.config import (
     BASE_FOLDER,
     DEC_TYPE,
     EXP_TYPE,
@@ -28,8 +30,6 @@ from config import (
     TEST_TARGET_FOLDER,
     TEST_USE_TRAIN_CONFIG,
 )
-from pyforcesim import common, loggers
-from pyforcesim import datetime as pyf_dt
 from pyforcesim.constants import TimeUnitsTimedelta
 from pyforcesim.rl.gym_env import JSSEnv
 from pyforcesim.types import BuilderFuncFamilies

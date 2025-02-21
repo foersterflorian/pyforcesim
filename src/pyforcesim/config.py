@@ -1,12 +1,18 @@
 import math
 import tomllib
+from datetime import datetime as Datetime
 from pathlib import Path
 from typing import Any, Final, cast
+from zoneinfo import ZoneInfo
 
 from pyforcesim import common
 from pyforcesim.types import (
     AgentDecisionTypes,
     Conf,
+    ConfLib,
+    ConfLibGymEnv,
+    ConfLibGymEnvWIP,
+    ConfLibGymEnvWIPTargets,
     ConfTensorboard,
     ConfTensorboardFiles,
     ConfTest,
@@ -30,12 +36,62 @@ from pyforcesim.types import (
 
 
 def load_cfg(path: Path) -> dict[str, Any]:
-    assert path.exists(), 'config path not existing'
+    if not path.exists():
+        raise FileNotFoundError(f'Config file not found under: >{path}<')
 
     with open(path, 'rb') as cfg_file:
         cfg = tomllib.load(cfg_file)
 
     return cfg
+
+
+def _parse_lib_cfg(cfg: dict[str, Any]) -> ConfLib:
+    # lib.gym_env.WIP
+    factor_WIP = cast(float, cfg['lib']['gym_env']['WIP']['factor_WIP'])
+    if math.isnan(factor_WIP):
+        factor_WIP = None
+    else:
+        factor_WIP = float(factor_WIP)
+    use_WIP_targets = cast(bool, cfg['lib']['gym_env']['WIP']['use_WIP_targets'])
+    WIP_relative_targets = cast(
+        list[float], cfg['lib']['gym_env']['WIP']['WIP_relative_targets']
+    )
+    WIP_relative_targets = tuple(WIP_relative_targets)
+    WIP_level_cycles = cast(int, cfg['lib']['gym_env']['WIP']['WIP_level_cycles'])
+    WIP_relative_planned = cast(float, cfg['lib']['gym_env']['WIP']['WIP_relative_planned'])
+    alpha = cast(float, cfg['lib']['gym_env']['WIP']['alpha'])
+    lib_gym_WIP = ConfLibGymEnvWIP(
+        factor_WIP=factor_WIP,
+        use_WIP_targets=use_WIP_targets,
+        WIP_relative_targets=WIP_relative_targets,
+        WIP_level_cycles=WIP_level_cycles,
+        WIP_relative_planned=WIP_relative_planned,
+        alpha=alpha,
+    )
+    # lib.gym_env.WIP_targets
+    min_ = cast(float, cfg['lib']['gym_env']['WIP_targets']['min'])
+    max_ = cast(float, cfg['lib']['gym_env']['WIP_targets']['max'])
+    number_WIP_levels = cast(int, cfg['lib']['gym_env']['WIP_targets']['number_WIP_levels'])
+    lib_gym_WIP_targets = ConfLibGymEnvWIPTargets(
+        min=min_, max=max_, number_WIP_levels=number_WIP_levels
+    )
+    # lib.gym_env
+    sim_dur_weeks = cast(int, cfg['lib']['gym_env']['sim_dur_weeks'])
+    buffer_size = cast(int, cfg['lib']['gym_env']['buffer_size'])
+    job_pool_size = cast(int, cfg['lib']['gym_env']['job_pool_size'])
+    dispatcher_seq_rule = cast(str, cfg['lib']['gym_env']['dispatcher_seq_rule'])
+    dispatcher_alloc_rule = cast(str, cfg['lib']['gym_env']['dispatcher_alloc_rule'])
+    lib_gym = ConfLibGymEnv(
+        sim_dur_weeks=sim_dur_weeks,
+        buffer_size=buffer_size,
+        job_pool_size=job_pool_size,
+        dispatcher_seq_rule=dispatcher_seq_rule,
+        dispatcher_alloc_rule=dispatcher_alloc_rule,
+        WIP=lib_gym_WIP,
+        WIP_targets=lib_gym_WIP_targets,
+    )
+    # lib
+    return ConfLib(gym_env=lib_gym)
 
 
 def _parse_train_cfg(cfg: dict[str, Any]) -> ConfTrain:
@@ -175,17 +231,20 @@ def _parse_tensorboard_cfg(cfg: dict[str, Any]) -> ConfTensorboard:
 
 
 def parse_cfg(cfg: dict[str, Any]) -> Conf:
+    lib_cfg = _parse_lib_cfg(cfg=cfg)
     train_cfg = _parse_train_cfg(cfg=cfg)
     test_cfg = _parse_test_cfg(cfg=cfg)
     tb_cfg = _parse_tensorboard_cfg(cfg=cfg)
 
-    return Conf(train=train_cfg, test=test_cfg, tensorboard=tb_cfg)
+    return Conf(lib=lib_cfg, train=train_cfg, test=test_cfg, tensorboard=tb_cfg)
 
 
 CFG_FILENAME: Final[str] = 'config.toml'
 CFG_PATH: Final[Path] = Path.cwd() / CFG_FILENAME
-cfg_raw = load_cfg(CFG_PATH)
-CFG: Final[Conf] = parse_cfg(cfg_raw)
+_cfg_raw = load_cfg(CFG_PATH)
+CFG: Final[Conf] = parse_cfg(_cfg_raw)
+
+# ** library: managed in constants
 
 # ** training
 # ** system
@@ -200,7 +259,8 @@ MODEL: Final[str] = CFG.train.files.model_name
 FILENAME_PRETRAINED_MODEL: Final[str] = CFG.train.files.filename_pretrained_model
 MODEL_BASE_NAME: Final[str] = f'pyf_sim_{MODEL}'
 # ** experiment characterisation
-DATE = common.get_timestamp(with_time=False)
+dt = Datetime.now(tz=ZoneInfo('Europe/Berlin')).replace(microsecond=0)
+DATE: Final[str] = dt.strftime(r'%Y-%m-%d')
 DEC_TYPE: Final[AgentDecisionTypes] = AgentDecisionTypes.SEQ
 EXP_NUM: Final[str] = CFG.train.experiment.exp_number
 ENV_STRUCTURE: Final[str] = CFG.train.experiment.env_structure
