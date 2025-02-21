@@ -57,7 +57,7 @@ WIP_relative_targets: tuple[float, ...] = tuple(
 )
 
 BUILDER_FUNC_WIP_CFG: Final[EnvBuilderAdditionalConfig] = {
-    'sim_dur_weeks': 39,  # 39
+    'sim_dur_weeks': 39,  # 2/4/39
     'factor_WIP': None,
     # 'WIP_relative_target': (0.5, 3, 6),
     # 'WIP_relative_target': (0.5,),
@@ -69,7 +69,7 @@ BUILDER_FUNC_WIP_CFG: Final[EnvBuilderAdditionalConfig] = {
     'WIP_relative_planned': 2.75,
     'alpha': 10,
     'buffer_size': 20,
-    'job_pool_size': 1,
+    'job_pool_size': 1,  # 1/5
 }
 
 
