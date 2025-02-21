@@ -31,6 +31,22 @@ def calc_setter_interval_by_num_iterations(
     return pyf_dt.round_td_by_seconds(duration_per_level, round_to_next_seconds=60)
 
 
+def calc_WIP_relative_targets(
+    WIP_rel_min: float,
+    WIP_rel_max: float,
+    num_levels: int,
+) -> tuple[float, tuple[float, ...]]:
+    if num_levels % 2 == 0:
+        raise ValueError('Number of WIP levels must be odd')
+
+    WIP_relative_targets: tuple[float, ...] = tuple(
+        np.linspace(WIP_rel_min, WIP_rel_max, num=num_levels, dtype=np.float64).tolist()
+    )
+    mean = (WIP_rel_min + WIP_rel_max) / 2
+
+    return mean, WIP_relative_targets
+
+
 def standard_env_single_area(
     sequencing: bool = False,
     with_agent: bool = False,
@@ -49,6 +65,8 @@ def standard_env_single_area(
     alpha: float = 7,
     buffer_size: int = MAX_LOGICAL_QUEUE_SIZE,
     job_pool_size: int = 1,
+    dispatcher_seq_rule: str = 'FIFO',
+    dispatcher_alloc_rule: str = 'LOAD_TIME_REMAINING',
 ) -> EnvAgentConstructorReturn:
     """constructor function for simulation environment of a single production area
 
@@ -108,9 +126,8 @@ def standard_env_single_area(
         starting_datetime=starting_dt,
         seed=seed,
     )
-    # env.dispatcher.seq_rule = 'FIFO'
-    env.dispatcher.seq_rule = 'EDD'
-    env.dispatcher.alloc_rule = 'LOAD_TIME_REMAINING'
+    env.dispatcher.seq_rule = dispatcher_seq_rule
+    env.dispatcher.alloc_rule = dispatcher_alloc_rule
     # source
     area_source = sim.ProductionArea(
         env=env,

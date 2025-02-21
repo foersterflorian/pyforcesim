@@ -44,7 +44,9 @@ from pyforcesim.constants import (
     MAX_LOGICAL_QUEUE_SIZE,
     MAX_PROCESSING_CAPACITY,
     POLICIES_ALLOC,
+    POLICIES_ALLOC_TYPE,
     POLICIES_SEQ,
+    POLICIES_SEQ_TYPE,
     ROUNDING_PRECISION,
     SEQUENCING_WAITING_TIME,
     SOURCE_GENERATION_WAITING_TIME,
@@ -57,6 +59,7 @@ from pyforcesim.constants import (
 )
 from pyforcesim.errors import (
     AssociationError,
+    InvalidPolicyError,
     SequencingAgentAssignmentError,
     SQLNotFoundError,
     SQLTooManyValuesFoundError,
@@ -1018,11 +1021,11 @@ class Dispatcher:
 
         ####################################
         # sequencing rules
-        self._sequencing_rules: frozenset[str] = frozenset(POLICIES_SEQ.keys())
+        self._sequencing_rules = POLICIES_SEQ
         self._seq_rule: str | None = None
         self.seq_policy: GeneralPolicy | SequencingPolicy | None = None
         # allocation rule
-        self._allocation_rules: frozenset[str] = frozenset(POLICIES_ALLOC.keys())
+        self._allocation_rules = POLICIES_ALLOC
         self._alloc_rule: str | None = None
         self.alloc_policy: GeneralPolicy | AllocationPolicy | None = None
 
@@ -1055,12 +1058,12 @@ class Dispatcher:
         rule: str,
     ) -> None:
         if rule not in self.sequencing_rules:
-            raise ValueError(
+            raise InvalidPolicyError(
                 f'Priority rule {rule} unknown. Must be one of {self.sequencing_rules}'
             )
         else:
             self._seq_rule = rule
-            self.seq_policy = POLICIES_SEQ[rule]()
+            self.seq_policy = POLICIES_SEQ_TYPE[rule]()
             loggers.dispatcher.info('Changed priority rule to %s', rule)
 
     @property
@@ -1073,12 +1076,12 @@ class Dispatcher:
         rule: str,
     ) -> None:
         if rule not in self.allocation_rules:
-            raise ValueError(
+            raise InvalidPolicyError(
                 f'Allocation rule {rule} unknown. Must be one of {self.allocation_rules}'
             )
         else:
             self._alloc_rule = rule
-            self.alloc_policy = POLICIES_ALLOC[rule]()
+            self.alloc_policy = POLICIES_ALLOC_TYPE[rule]()
             loggers.dispatcher.info('Changed allocation rule to >>%s<<', rule)
 
     def _obtain_load_obj_id(
