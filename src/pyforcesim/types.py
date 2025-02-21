@@ -5,6 +5,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime as Datetime
 from datetime import timedelta as Timedelta
+from decimal import Decimal
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -376,3 +377,15 @@ class SB3PolicyArgs(TypedDict):
 class SB3ActorCriticNetworkArch(TypedDict):
     pi: list[int]
     vf: list[int]
+
+
+# ** Evaluation
+@dataclass(slots=True, kw_only=True)
+class EvalJobDistribution:
+    total: int
+    range_punctual: Decimal
+    range_early: Decimal
+    range_tardy: Decimal
+    punctual: Decimal
+    early: Decimal
+    tardy: Decimal
