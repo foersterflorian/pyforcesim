@@ -1,11 +1,13 @@
+from __future__ import annotations
+
 import math
+import os
 import tomllib
 from datetime import datetime as Datetime
 from pathlib import Path
 from typing import Any, Final, cast
 from zoneinfo import ZoneInfo
 
-from pyforcesim import common
 from pyforcesim.types import (
     AgentDecisionTypes,
     Conf,
@@ -34,13 +36,34 @@ from pyforcesim.types import (
     SB3PolicyArgs,
 )
 
+CFG_FILENAME: Final[str] = 'config.toml'
+CFG_DEFAULT_PATH: Final[Path] = Path.cwd() / CFG_FILENAME
+
+
+def get_cfg_path() -> Path:
+    cfg_path_env = os.environ.get('PYFORCESIM_CFG_PATH', None)
+    cfg_path: Path
+    if cfg_path_env is not None:
+        cfg_path = Path(cfg_path_env).absolute()
+        if not cfg_path.exists():
+            raise FileNotFoundError(
+                'Config path via environment variable provided, but file does not seem to exist.'
+            )
+    else:
+        if not CFG_DEFAULT_PATH.exists():
+            raise FileNotFoundError(
+                f'Config file not found under default location: >{CFG_DEFAULT_PATH}<'
+            )
+        cfg_path = CFG_DEFAULT_PATH
+
+    return cfg_path
+
 
 def load_cfg(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        raise FileNotFoundError(f'Config file not found under: >{path}<')
-
     with open(path, 'rb') as cfg_file:
         cfg = tomllib.load(cfg_file)
+
+    print(f'Sucessfully loaded config from: {path}')
 
     return cfg
 
@@ -239,8 +262,7 @@ def parse_cfg(cfg: dict[str, Any]) -> Conf:
     return Conf(lib=lib_cfg, train=train_cfg, test=test_cfg, tensorboard=tb_cfg)
 
 
-CFG_FILENAME: Final[str] = 'config.toml'
-CFG_PATH: Final[Path] = Path.cwd() / CFG_FILENAME
+CFG_PATH: Final[Path] = get_cfg_path()
 _cfg_raw = load_cfg(CFG_PATH)
 CFG: Final[Conf] = parse_cfg(_cfg_raw)
 
