@@ -29,7 +29,7 @@ logs*
 
 # configs
 *.toml
-!example_config.toml
+!train-test/config.toml
 
 # prototyping
 prototypes/
