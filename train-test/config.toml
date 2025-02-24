@@ -41,7 +41,7 @@ model_name = 'PPO_mask'
 filename_pretrained_model = '2025-01-17--15-36-17_pyf_sim_PPO_mask_TS-1310720'
 
 [train.experiment]
-exp_number = 1
+exp_number = 5
 env_structure = '1-2-3'
 job_generation_method = 'VarIdeal'
 feedback_mechanism = 'Slack'
@@ -55,7 +55,7 @@ rng = nan # nan: use random state
 eval = 42
 
 [train.model.arch]
-sb3_arch = {pi = [128, 64], vf = [128,64]}
+sb3_arch = {pi = [64, 64], vf = [64, 64]}
 
 [train.runs]
 ts_till_update = 2048
