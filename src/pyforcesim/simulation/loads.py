@@ -248,171 +248,8 @@ class BaseJobGenerator(Generic[J, A], metaclass=ABCMeta):
     def rnd_gen(self) -> NPRandomGenerator:
         return self._rnd_gen
 
-    # @property
-    # def stat_info(self) -> StatDistributionInfo | None:
-    #     return self._stat_info
-
-    # @stat_info.setter
-    # def stat_info(
-    #     self,
-    #     value: StatDistributionInfo,
-    # ) -> None:
-    #     if not isinstance(value, StatDistributionInfo):
-    #         raise TypeError(
-    #             (
-    #                 f'Type >StatDistributionInfo< must be assigned, '
-    #                 f'but value >>{value}<< was of type {type(value)}'
-    #             )
-    #         )
-    #     self._stat_info = value
-
     @abstractmethod
     def retrieve(self) -> Iterator[SourceSequence]: ...
-
-
-# TODO: rewrite or remove
-# class RandomJobGenerator(BaseJobGenerator):
-#     def __init__(
-#         self,
-#         env: SimulationEnvironment,
-#         source: Source,
-#         seed: int | None = None,
-#         min_proc_time: int = 1,
-#         max_proc_time: int = 10,
-#         min_setup_time: int = 1,
-#         max_setup_time: int = 10,
-#         min_prio: OrderPriority = 1,
-#         max_prio: OrderPriority = 9,
-#     ) -> None:
-#         # init base class
-#         super().__init__(env=env, source=source, seed=seed)
-
-#         self.min_proc_time = min_proc_time
-#         self.max_proc_time = max_proc_time
-#         self.min_setup_time = min_setup_time
-#         self.max_setup_time = max_setup_time
-#         self.min_prio = min_prio
-#         self.max_prio = max_prio
-
-#     def gen_rnd_JSSP_inst(
-#         self,
-#         n_jobs: int,
-#         n_machines: int,
-#     ) -> tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint32]]:
-#         # generate random process time matrix shape=(n_jobs, n_machines)
-#         mat_ProcTimes = self.rnd_gen.integers(
-#             1, 10, size=(n_jobs, n_machines), dtype=np.uint32
-#         )
-
-#         # generate randomly shuffled job machine combinations
-#         # machine IDs from 1 to n_machines
-#         temp = np.arange(0, n_machines, step=1, dtype=np.uint32)
-#         temp = np.expand_dims(temp, axis=0)
-#         # repeat dummy line until number n_jobs is reached
-#         temp = np.repeat(temp, n_jobs, axis=0)
-#         # randomly permute the machine indices job-wise
-#         mat_JobMachID = self.rnd_gen.permuted(temp, axis=1)
-
-#         return mat_ProcTimes, mat_JobMachID
-
-#     def retrieve(
-#         self,
-#         exec_system_ids: Sequence[SystemID],
-#         target_station_group_ids: dict[SystemID, Sequence[SystemID]],
-#         gen_setup_times: bool = False,
-#         time_unit: TimeUnitsTimedelta = TimeUnitsTimedelta.HOURS,
-#         gen_prio: bool = False,
-#     ) -> Iterator[JobGenerationInfo]:
-#         """Generic function to generate processing times and execution flow of a job object"""
-
-#         n_objects = len(exec_system_ids)
-
-#         while True:
-#             # ** execution order
-#             # randomly permute the execution systems indices
-#             execution_systems = cast(
-#                 list[SystemID], self.rnd_gen.permuted(exec_system_ids).tolist()
-#             )
-
-#             station_groups: list[SystemID] | None = None
-#             station_groups = []
-#             for exec_system_id in execution_systems:
-#                 # multiple candidates: random choice
-#                 candidates = target_station_group_ids[exec_system_id]
-
-#                 if len(candidates) > 1:
-#                     candidate = cast(SystemID, self.rnd_gen.choice(candidates))
-#                 else:
-#                     candidate = candidates[0]
-
-#                 station_groups.append(candidate)
-
-#             # ** order times
-#             # processing times
-#             proc_times: list[Timedelta] = []
-#             proc_times_time_unit = cast(
-#                 list[int],
-#                 self.rnd_gen.integers(
-#                     self.min_proc_time, self.max_proc_time, size=n_objects, dtype=np.uint32
-#                 ).tolist(),
-#             )
-#             for time in proc_times_time_unit:
-#                 td = pyf_dt.timedelta_from_val(val=time, time_unit=time_unit)
-#                 proc_times.append(td)
-
-#             # setup times
-#             setup_times: list[Timedelta]
-#             if gen_setup_times:
-#                 setup_times = []
-#                 setup_times_time_unit = cast(
-#                     list[int],
-#                     self.rnd_gen.integers(
-#                         self.min_setup_time,
-#                         self.max_setup_time,
-#                         size=n_objects,
-#                         dtype=np.uint32,
-#                     ).tolist(),
-#                 )
-#                 for time in setup_times_time_unit:
-#                     td = pyf_dt.timedelta_from_val(val=time, time_unit=time_unit)
-#                     setup_times.append(td)
-#             else:
-#                 setup_times = [Timedelta()] * n_objects
-
-#             prio: OrderPriority | None = None
-#             if gen_prio:
-#                 prio = self.gen_prio()
-
-#             job_gen_info = JobGenerationInfo(
-#                 custom_id=None,
-#                 execution_systems=execution_systems,
-#                 station_groups=station_groups,
-#                 order_time=OrderTimes(proc=proc_times, setup=setup_times),
-#                 dates=OrderDates(),
-#                 prio=prio,
-#                 current_state=SimStatesCommon.INIT,
-#             )
-
-#             yield job_gen_info
-
-#     def gen_prio(
-#         self,
-#     ) -> OrderPriority:
-#         """Generates a single priority score
-
-#         Parameters
-#         ----------
-#         lowest_prio : int
-#             lowest available priority
-#         highest_prio : int
-#             highest available priority
-
-#         Returns
-#         -------
-#         int
-#             randomly chosen priority between lowest and highest value
-#         """
-#         return int(self.rnd_gen.integers(low=self.min_prio, high=self.max_prio))
 
 
 # ** special sequence generation
@@ -761,7 +598,8 @@ class WIPSequenceSinglePA(SequenceSinglePA):
     def retrieve(
         self,
         WIP_relative: float = 0,
-        job_pool_size: int = 1,
+        job_pool_size_min: int = 1,
+        job_pool_size_max: int = 1,
         shuffle_job_pool: bool = True,
         random_due_date_diff: bool = False,
     ) -> Generator[SourceSequence, SequenceBatchCom, None]:
@@ -787,38 +625,11 @@ class WIPSequenceSinglePA(SequenceSinglePA):
             _description_
         """
         self.recalculate_expected_arrival_time(WIP_relative)
-        # # number of all processing stations in associated production area
-        # total_num_proc_stations = self.prod_area.num_assoc_proc_station
-        # # statistical information
-        # mean = self.stat_info.mean
-        # std = self.stat_info.std
-        # # calc expected value of interval
-        # # C_S / (C_M/µ + a*(1+(std^2/mean^2))
-        # prod_area_capa = self.prod_area.processing_capacities(total=True) / self._norm_td
-        # source_capa = target_obj.processing_capacity / self._norm_td
-        # exp_val_interval_ideal = (source_capa / prod_area_capa) * mean
-        # n_M = total_num_proc_stations
-        # exp_val_interval = source_capa / (
-        #     (prod_area_capa / mean) + n_M * factor_WIP * (1 + std**2 / mean**2)
-        # )
-        # determine condition
-        # underload condition: sustain longer time spans to hold it
-        # otherwise ideal condition is met again
-        # overload_condition: bool = False
-        # if factor_WIP > 0:
-        #     # later used to switch back to ideal sequence
-        #     overload_condition = True
 
         # request StationGroupIDs by ProdAreaID in StationGroup database
         stat_groups = self.prod_area.subsystems_as_tuple()
         logger.debug('stat_groups: %s', stat_groups)
         logger.debug('total_num_proc_stations: %s', self.prod_area.num_assoc_proc_station)
-
-        # duration for WIP build-up/tear-down phase
-        # implicit in equation: 1 day
-        # TODO changed for test of WIP regulation
-        # duration_non_ideal_sequence = pyf_dt.timedelta_from_val(104, TimeUnitsTimedelta.WEEKS)
-        # td_zero = Timedelta()
 
         # ** planned lead time: identical for each job
         self.prod_area.set_lead_time_planned(
@@ -839,12 +650,16 @@ class WIPSequenceSinglePA(SequenceSinglePA):
             self.prod_area.lead_time_delta,
         )
         # random change in planned due date
-        upper_bound_dev = np.sqrt(3)
-        lower_bound_dev = (-1) * upper_bound_dev
+        upper_bound_date_dev = np.sqrt(3)
+        lower_bound_date_dev = (-1) * upper_bound_date_dev
 
         # batching generator
-        gen_com = SequenceBatchCom()
-        batching_seq = generate_job_pool(pool_size=job_pool_size)
+        random_pool_sizes: bool = False
+        if job_pool_size_min != job_pool_size_max:
+            random_pool_sizes = True
+        job_pool_size = int(np.mean([job_pool_size_min, job_pool_size_max]))
+        gen_com = SequenceBatchCom(batch_size=job_pool_size)
+        batching_seq = generate_job_pool()
 
         # generate endless sequence
         while True:
@@ -884,26 +699,23 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                     # ** planned dates
                     # calc based on planned values: set relative WIP target to 1.5
                     curr_time = self.env.t_as_dt()
-
                     # source processing time
                     interval_td = self.dist_arrival.sample_timedelta(round_to_minutes=True)
-
                     # send current time and interval to generator
                     # retrieve adapted current time
                     gen_com.start_date = curr_time
                     gen_com.interval = interval_td
                     next(batching_seq)
-                    com = batching_seq.send(gen_com)  # type: ignore
-                    assert com is not None, 'response of job pool generator is None'
-
-                    assert com.adapted_date is not None, 'adapted date is None'
-                    adapted_time = com.adapted_date
+                    gen_com = batching_seq.send(gen_com)  # type: ignore
+                    assert gen_com is not None, 'response of job pool generator is None'
+                    assert gen_com.adapted_date is not None, 'adapted date is None'
+                    adapted_time = gen_com.adapted_date
                     due_date_planned = adapted_time + lead_time_planned
 
                     # random change in planned due date
                     if random_due_date_diff:
                         hours_deviation = self.rnd_gen.uniform(
-                            lower_bound_dev, upper_bound_dev
+                            lower_bound_date_dev, upper_bound_date_dev
                         )
                         planned_ending_dev = pyf_dt.timedelta_from_val(
                             hours_deviation, time_unit=TimeUnitsTimedelta.HOURS
@@ -927,18 +739,22 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                     logger.debug('[LOADS] Generated new job at %s', curr_time)
 
                     # send job_gen_info; interval_td already known
-                    com.job_gen_info = job_gen_info
-                    # next(batching_seq)
-                    com = batching_seq.send(gen_com)  # type: ignore
+                    gen_com.job_gen_info = job_gen_info
+                    gen_com = cast(SequenceBatchCom, batching_seq.send(gen_com))
 
                     # retrieve job pool if fully filled else not available
-                    assert com is not None, 'response of batch generator is None'
-                    batch = com.batch
+                    assert gen_com is not None, 'response of batch generator is None'
+                    batch = gen_com.batch
 
                     if batch is not None:
                         if shuffle_job_pool and len(batch) > 1:
                             self.rnd_gen.shuffle(batch)  # type: ignore
                         yield from batch
+                        if random_pool_sizes:
+                            job_pool_size = self.rnd_gen.integers(
+                                job_pool_size_min, (job_pool_size_max + 1)
+                            )
+                            gen_com.batch_size = job_pool_size
 
                     # assert (
                     #     self.arrival_time_expected is not None
@@ -963,11 +779,10 @@ class WIPSequenceSinglePA(SequenceSinglePA):
                     # yield job_gen_info, interval_td
 
 
-def generate_job_pool(
-    pool_size: int = 1,
-) -> Generator[SequenceBatchCom | None, None, None]:
+def generate_job_pool() -> Generator[SequenceBatchCom | None, None, None]:
     batch: list[SourceSequence] = []
     adapted_start_date: Datetime | None = None
+    pool_size: int
 
     while True:  # generate endlessly
         # receive starting date and interval
@@ -980,6 +795,7 @@ def generate_job_pool(
         assert com.interval is not None, 'interval None'
         curr_interval = com.interval
         adapted_start_date = adapted_start_date + curr_interval
+        pool_size = com.batch_size
         # send adapted date, receive job generation info
         com = yield com
         com = cast(SequenceBatchCom, com)

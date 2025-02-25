@@ -2,7 +2,7 @@
 
 [lib.logging]
 enabled = true
-file = false
+file = true
 
 [lib.sim]
 
@@ -20,9 +20,10 @@ adaption_min_upper_bound = 1.0 # in hours -- minimum upper bound after slack is 
 
 
 [lib.gym_env]
-sim_dur_weeks = 39 # 39
+sim_dur_weeks = 1 # 39
 buffer_size = 20
-job_pool_size = 5  # >1: use batching with shuffling
+job_pool_size_min = 2  # >1: use batching with shuffling
+job_pool_size_max = 8  # >1: use batching with shuffling
 dispatcher_seq_rule = 'FIFO'
 dispatcher_alloc_rule = 'LOAD_TIME_REMAINING'
 
@@ -35,14 +36,14 @@ WIP_relative_targets = [0.35,] # ignored if "use_WIP_targets" = true
 # [1.5, 0.5, 2.5, 5, 3.5]
 # [3.5, 4.25, 5]
 # [0.5, 1, 1.75]
-WIP_level_cycles = 5 # how many full cycles with all WIP levels should be performed
+WIP_level_cycles = 1 # how many full cycles with all WIP levels should be performed
 WIP_relative_planned = 2.75
 alpha = 10
 
 [lib.gym_env.WIP_targets]
 min = 0.5 # 0.5
 max = 5 # 5
-number_WIP_levels = 5 # must be odd
+number_WIP_levels = 3 # must be odd
 
 
 [train]

@@ -64,7 +64,8 @@ def standard_env_single_area(
     WIP_relative_planned: float = 1.5,  # util about 95 % with alpha = 7
     alpha: float = 7,
     buffer_size: int = MAX_LOGICAL_QUEUE_SIZE,
-    job_pool_size: int = 1,
+    job_pool_size_min: int = 1,
+    job_pool_size_max: int = 1,
     dispatcher_seq_rule: str = 'FIFO',
     dispatcher_alloc_rule: str = 'LOAD_TIME_REMAINING',
 ) -> EnvAgentConstructorReturn:
@@ -249,7 +250,8 @@ def standard_env_single_area(
 
         prod_sequence_PA = sequence_generator.retrieve(
             WIP_relative=factor_WIP,
-            job_pool_size=job_pool_size,
+            job_pool_size_min=job_pool_size_min,
+            job_pool_size_max=job_pool_size_max,
             shuffle_job_pool=True,
             random_due_date_diff=False,
         )

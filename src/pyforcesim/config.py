@@ -134,13 +134,15 @@ def _parse_lib_cfg(cfg: dict[str, Any]) -> ConfLib:
     # lib.gym_env
     sim_dur_weeks = cast(int, cfg['lib']['gym_env']['sim_dur_weeks'])
     buffer_size = cast(int, cfg['lib']['gym_env']['buffer_size'])
-    job_pool_size = cast(int, cfg['lib']['gym_env']['job_pool_size'])
+    job_pool_size_min = cast(int, cfg['lib']['gym_env']['job_pool_size_min'])
+    job_pool_size_max = cast(int, cfg['lib']['gym_env']['job_pool_size_max'])
     dispatcher_seq_rule = cast(str, cfg['lib']['gym_env']['dispatcher_seq_rule'])
     dispatcher_alloc_rule = cast(str, cfg['lib']['gym_env']['dispatcher_alloc_rule'])
     lib_gym = ConfLibGymEnv(
         sim_dur_weeks=sim_dur_weeks,
         buffer_size=buffer_size,
-        job_pool_size=job_pool_size,
+        job_pool_size_min=job_pool_size_min,
+        job_pool_size_max=job_pool_size_max,
         dispatcher_seq_rule=dispatcher_seq_rule,
         dispatcher_alloc_rule=dispatcher_alloc_rule,
         WIP=lib_gym_WIP,

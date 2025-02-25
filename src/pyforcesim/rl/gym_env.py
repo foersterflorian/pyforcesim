@@ -17,7 +17,8 @@ from pyforcesim.constants import (
     CFG_DISPATCHER_ALLOC_RULE,
     CFG_DISPATCHER_SEQ_RULE,
     CFG_FACTOR_WIP,
-    CFG_JOB_POOL_SIZE,
+    CFG_JOB_POOL_SIZE_MAX,
+    CFG_JOB_POOL_SIZE_MIN,
     CFG_SIM_DUR_WEEKS,
     CFG_USE_WIP_TARGETS,
     CFG_WIP_LEVEL_CYCLES,
@@ -82,7 +83,8 @@ def get_builder_func_WIP_config() -> EnvBuilderAdditionalConfig:
         'WIP_relative_planned': CFG_WIP_RELATIVE_PLANNED,
         'alpha': CFG_ALPHA,
         'buffer_size': CFG_BUFFER_SIZE,
-        'job_pool_size': CFG_JOB_POOL_SIZE,  # 1/5
+        'job_pool_size_min': CFG_JOB_POOL_SIZE_MIN,  # 1/5
+        'job_pool_size_max': CFG_JOB_POOL_SIZE_MAX,
         'dispatcher_seq_rule': CFG_DISPATCHER_SEQ_RULE,
         'dispatcher_alloc_rule': CFG_DISPATCHER_ALLOC_RULE,
     }

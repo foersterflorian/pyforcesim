@@ -144,6 +144,7 @@ class JobGenerationInfo:
 
 @dataclass(slots=True)
 class SequenceBatchCom:
+    batch_size: int
     start_date: Datetime | None = None
     interval: Timedelta | None = None
     adapted_date: Datetime | None = None
@@ -181,7 +182,8 @@ class EnvBuilderFunc(Protocol):
         WIP_relative_planned: float = ...,
         alpha: float = ...,
         buffer_size: int = ...,
-        job_pool_size: int = ...,
+        job_pool_size_min: int = ...,
+        job_pool_size_max: int = ...,
         dispatcher_seq_rule: str = ...,
         dispatcher_alloc_rule: str = ...,
     ) -> EnvAgentConstructorReturn: ...
@@ -195,7 +197,8 @@ class EnvBuilderAdditionalConfig(TypedDict):
     WIP_relative_planned: float
     alpha: float
     buffer_size: int
-    job_pool_size: int
+    job_pool_size_min: int
+    job_pool_size_max: int
     dispatcher_seq_rule: str
     dispatcher_alloc_rule: str
 
@@ -264,7 +267,8 @@ class ConfLibSimSlack:
 class ConfLibGymEnv:
     sim_dur_weeks: int
     buffer_size: int
-    job_pool_size: int
+    job_pool_size_min: int
+    job_pool_size_max: int
     dispatcher_seq_rule: str
     dispatcher_alloc_rule: str
     WIP: ConfLibGymEnvWIP

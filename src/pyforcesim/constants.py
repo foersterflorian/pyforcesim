@@ -65,7 +65,8 @@ LOGGING_LEVEL_DIST: Final[loglevel] = loglevel.WARNING
 # ** GymEnv
 CFG_SIM_DUR_WEEKS: Final[int] = CFG.lib.gym_env.sim_dur_weeks
 CFG_BUFFER_SIZE: Final[int] = CFG.lib.gym_env.buffer_size
-CFG_JOB_POOL_SIZE: Final[int] = CFG.lib.gym_env.job_pool_size
+CFG_JOB_POOL_SIZE_MIN: Final[int] = CFG.lib.gym_env.job_pool_size_min
+CFG_JOB_POOL_SIZE_MAX: Final[int] = CFG.lib.gym_env.job_pool_size_max
 CFG_DISPATCHER_SEQ_RULE: Final[str] = CFG.lib.gym_env.dispatcher_seq_rule
 CFG_DISPATCHER_ALLOC_RULE: Final[str] = CFG.lib.gym_env.dispatcher_alloc_rule
 # ** GymEnv: WIP

@@ -401,9 +401,13 @@ class LoadMonitor(Monitor[L]):
             self.slack_lower_bound = self.slack_upper_bound - SLACK_MIN_RANGE
             self.slack_lower_bound_hours = self.slack_lower_bound / self.NORM_TD
             loggers.monitors.debug(
-                '[MONITOR]: Slack lower bound adapted for min range: >%s< (%.4f)',
+                (
+                    '[MONITOR]: Slack lower bound adapted for min range: >%s< '
+                    '(%.4f), upper bound: (%.4f)'
+                ),
                 self.slack_lower_bound,
                 self.slack_lower_bound_hours,
+                self.slack_upper_bound_hours,
             )
 
         self.slack_upper_bound_hours = self.slack_upper_bound / self.NORM_TD
