@@ -35,8 +35,8 @@ from pyforcesim.types import LoggingLevels as loglevel
 # ** logging
 LOG_FMT: Final[str] = ' %(asctime)s | pyfsim:%(module)s:%(levelname)s | %(message)s'
 LOG_DATE_FMT: Final[str] = '%Y-%m-%d %H:%M:%S +0000'
-LOGGING_ENABLED: Final[bool] = True
-LOGGING_TO_FILE: Final[bool] = False
+LOGGING_ENABLED: Final[bool] = CFG.lib.logging.enabled
+LOGGING_TO_FILE: Final[bool] = CFG.lib.logging.file
 LOGGING_FILE_SIZE: Final[int] = 10485760  # in bytes
 LOGGING_LEVEL_STD_OUT: Final[loglevel] = loglevel.INFO
 LOGGING_LEVEL_FILE: Final[loglevel] = loglevel.DEBUG
@@ -113,17 +113,21 @@ class TimeUnitsTimedelta(enum.StrEnum):
 TIMEZONE_CEST: Final[ZoneInfo] = ZoneInfo('Europe/Berlin')
 TIMEZONE_UTC: Final[Timezone] = Timezone.utc
 DEFAULT_DATETIME: Final[Datetime] = Datetime(1970, 1, 1, tzinfo=TIMEZONE_UTC)
-SLACK_INIT_AS_UPPER_BOUND: Final[bool] = True
+SLACK_INIT_AS_UPPER_BOUND: Final[bool] = CFG.lib.sim.slack.init_as_upper_bound
 # only takes effect if initial slack used as upper bound
-SLACK_USE_THRESHOLD_UPPER: Final[bool] = False
-SLACK_THRESHOLD_UPPER: Final[Timedelta] = Timedelta(hours=2)
-SLACK_THRESHOLD_LOWER: Final[Timedelta] = Timedelta(hours=0)
-SLACK_MIN_RANGE: Final[Timedelta] = Timedelta(hours=2)
+SLACK_USE_THRESHOLD_UPPER: Final[bool] = CFG.lib.sim.slack.use_threshold_upper
+SLACK_THRESHOLD_UPPER: Final[Timedelta] = Timedelta(hours=CFG.lib.sim.slack.threshold_upper)
+SLACK_THRESHOLD_LOWER: Final[Timedelta] = Timedelta(hours=CFG.lib.sim.slack.threshold_lower)
+SLACK_MIN_RANGE: Final[Timedelta] = Timedelta(hours=CFG.lib.sim.slack.min_range)
 # value to use as slack if initial value is not set as upper bound
-SLACK_OVERWRITE_UPPER_BOUND: Final[Timedelta] = Timedelta(hours=1)
+SLACK_OVERWRITE_UPPER_BOUND: Final[Timedelta] = Timedelta(
+    hours=CFG.lib.sim.slack.overwrite_upper_bound
+)
 # slack adaption
-SLACK_ADAPTION: Final[bool] = True
-SLACK_ADAPTION_MIN_UPPER_BOUND: Final[Timedelta] = Timedelta(hours=2)
+SLACK_ADAPTION: Final[bool] = CFG.lib.sim.slack.adaption
+SLACK_ADAPTION_MIN_UPPER_BOUND: Final[Timedelta] = Timedelta(
+    hours=CFG.lib.sim.slack.adaption_min_upper_bound
+)
 
 
 # ** database

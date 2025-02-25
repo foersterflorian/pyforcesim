@@ -232,7 +232,32 @@ class Conf:
 
 @dataclass(kw_only=True)
 class ConfLib:
+    logging: ConfLibLogging
+    sim: ConfLibSim
     gym_env: ConfLibGymEnv
+
+
+@dataclass(kw_only=True)
+class ConfLibLogging:
+    enabled: bool
+    file: bool
+
+
+@dataclass(kw_only=True)
+class ConfLibSim:
+    slack: ConfLibSimSlack
+
+
+@dataclass(kw_only=True)
+class ConfLibSimSlack:
+    init_as_upper_bound: bool
+    use_threshold_upper: bool
+    overwrite_upper_bound: float
+    threshold_upper: float
+    threshold_lower: float
+    min_range: float
+    adaption: bool
+    adaption_min_upper_bound: float
 
 
 @dataclass(kw_only=True)

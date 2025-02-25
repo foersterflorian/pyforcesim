@@ -1,5 +1,24 @@
 [lib]
 
+[lib.logging]
+enabled = true
+file = false
+
+[lib.sim]
+
+[lib.sim.slack]
+init_as_upper_bound = true
+use_threshold_upper = false # whether to overwrite slack upper bound or not if slack falls below threshold
+overwrite_upper_bound = 1.0 # in hours -- value to use if upper bound should be overwritten
+# threshold values
+threshold_lower = 0.0 # in hours
+threshold_upper = 2.0 # in hours
+min_range = 2.0 # in hours -- minimum range (slack lower bound and upper bound) which must be adhered to
+# slack adaption
+adaption = true
+adaption_min_upper_bound = 1.0 # in hours -- minimum upper bound after slack is adapted
+
+
 [lib.gym_env]
 sim_dur_weeks = 39 # 39
 buffer_size = 20
@@ -77,8 +96,12 @@ use_train_config = false
 seed = 42
 
 [test.files]
-target_folder = '2025-02-21-02__1-2-3__VarIdeal__Slack'
-filename_target_model = '2025-02-22--00-00-00_pyf_sim_PPO_mask_TS-20480001'
+target_folder = '2025-02-24-06__1-2-3__VarIdeal__Slack'
+filename_target_model = '2025-02-24--06-00-00_pyf_sim_PPO_mask_TS-20480001'
+# target_folder = '2025-02-24-05__1-2-3__VarIdeal__Slack'
+# filename_target_model = '2025-02-24--00-00-00_pyf_sim_PPO_mask_TS-20480001'
+# target_folder = '2025-02-21-02__1-2-3__VarIdeal__Slack'
+# filename_target_model = '2025-02-22--00-00-00_pyf_sim_PPO_mask_TS-20480001'
 # target_folder = '2025-02-20-01__1-2-3__VarIdeal__Slack'
 # filename_target_model = '2025-02-21--06-44-31_pyf_sim_PPO_mask_TS-20480001'
 # target_folder = '2025-02-18-01__1-2-3__VarIdeal__Slack'
@@ -97,4 +120,6 @@ perform_benchmark = false
 use_train_config = false
 
 [tensorboard.files]
+# exp_folder = '2025-02-24-05__1-2-3__VarIdeal__Slack'
 exp_folder = '2025-02-20-01__1-2-3__VarIdeal__Slack'
+# exp_folder = '2025-02-18-01__1-2-3__VarIdeal__Slack'

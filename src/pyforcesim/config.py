@@ -15,6 +15,9 @@ from pyforcesim.types import (
     ConfLibGymEnv,
     ConfLibGymEnvWIP,
     ConfLibGymEnvWIPTargets,
+    ConfLibLogging,
+    ConfLibSim,
+    ConfLibSimSlack,
     ConfTensorboard,
     ConfTensorboardFiles,
     ConfTest,
@@ -70,6 +73,35 @@ def load_cfg(path: Path) -> dict[str, Any]:
 
 
 def _parse_lib_cfg(cfg: dict[str, Any]) -> ConfLib:
+    # lib.logging
+    logging_enabled = cast(bool, cfg['lib']['logging']['enabled'])
+    logging_to_file = cast(bool, cfg['lib']['logging']['file'])
+    lib_logging = ConfLibLogging(enabled=logging_enabled, file=logging_to_file)
+    # lib.sim.slack
+    slack_init_as_upper_bound = cast(bool, cfg['lib']['sim']['slack']['init_as_upper_bound'])
+    slack_use_threshold_upper = cast(bool, cfg['lib']['sim']['slack']['use_threshold_upper'])
+    slack_overwrite_upper_bound = cast(
+        float, cfg['lib']['sim']['slack']['overwrite_upper_bound']
+    )
+    slack_threshold_lower = cast(float, cfg['lib']['sim']['slack']['threshold_lower'])
+    slack_threshold_upper = cast(float, cfg['lib']['sim']['slack']['threshold_upper'])
+    slack_min_range = cast(float, cfg['lib']['sim']['slack']['min_range'])
+    slack_adaption = cast(bool, cfg['lib']['sim']['slack']['adaption'])
+    slack_adaption_min_upper_bound = cast(
+        float, cfg['lib']['sim']['slack']['adaption_min_upper_bound']
+    )
+    lib_sim_slack = ConfLibSimSlack(
+        init_as_upper_bound=slack_init_as_upper_bound,
+        use_threshold_upper=slack_use_threshold_upper,
+        overwrite_upper_bound=slack_overwrite_upper_bound,
+        threshold_lower=slack_threshold_lower,
+        threshold_upper=slack_threshold_upper,
+        min_range=slack_min_range,
+        adaption=slack_adaption,
+        adaption_min_upper_bound=slack_adaption_min_upper_bound,
+    )
+    # lib.sim
+    lib_sim = ConfLibSim(slack=lib_sim_slack)
     # lib.gym_env.WIP
     factor_WIP = cast(float, cfg['lib']['gym_env']['WIP']['factor_WIP'])
     if math.isnan(factor_WIP):
@@ -115,7 +147,7 @@ def _parse_lib_cfg(cfg: dict[str, Any]) -> ConfLib:
         WIP_targets=lib_gym_WIP_targets,
     )
     # lib
-    return ConfLib(gym_env=lib_gym)
+    return ConfLib(logging=lib_logging, sim=lib_sim, gym_env=lib_gym)
 
 
 def _parse_train_cfg(cfg: dict[str, Any]) -> ConfTrain:
