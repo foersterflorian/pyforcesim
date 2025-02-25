@@ -13,7 +13,7 @@ overwrite_upper_bound = 1.0 # in hours -- value to use if upper bound should be 
 # threshold values
 threshold_lower = 0.0 # in hours
 threshold_upper = 2.0 # in hours
-min_range = 2.0 # in hours -- minimum range (slack lower bound and upper bound) which must be adhered to
+min_range = 2.0 # in hours -- minimum range (slack lower bound and upper bound) which must be adhered to, can be smaller after slack adaption
 # slack adaption
 adaption = true
 adaption_min_upper_bound = 1.0 # in hours -- minimum upper bound after slack is adapted
