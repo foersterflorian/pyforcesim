@@ -447,6 +447,7 @@ class LoadMonitor(Monitor[L]):
                 self.slack_upper_bound,
                 self.slack_init,
             )
+            # upper bound is at least 1 hour (default config)
             lower_bound_adapted = self.slack_upper_bound - SLACK_MIN_RANGE
             self.slack_lower_bound = max(lower_bound_adapted, SLACK_ADAPTION_MIN_LOWER_BOUND)
             self.slack_lower_bound_hours = self.slack_lower_bound / self.NORM_TD

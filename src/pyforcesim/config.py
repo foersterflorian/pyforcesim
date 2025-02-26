@@ -90,6 +90,9 @@ def _parse_lib_cfg(cfg: dict[str, Any]) -> ConfLib:
     slack_adaption_min_upper_bound = cast(
         float, cfg['lib']['sim']['slack']['adaption_min_upper_bound']
     )
+    slack_adaption_min_lower_bound = cast(
+        float, cfg['lib']['sim']['slack']['adaption_min_lower_bound']
+    )
     lib_sim_slack = ConfLibSimSlack(
         init_as_upper_bound=slack_init_as_upper_bound,
         use_threshold_upper=slack_use_threshold_upper,
@@ -99,6 +102,7 @@ def _parse_lib_cfg(cfg: dict[str, Any]) -> ConfLib:
         min_range=slack_min_range,
         adaption=slack_adaption,
         adaption_min_upper_bound=slack_adaption_min_upper_bound,
+        adaption_min_lower_bound=slack_adaption_min_lower_bound,
     )
     # lib.sim
     lib_sim = ConfLibSim(slack=lib_sim_slack)

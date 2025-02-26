@@ -261,6 +261,7 @@ class ConfLibSimSlack:
     min_range: float
     adaption: bool
     adaption_min_upper_bound: float
+    adaption_min_lower_bound: float
 
 
 @dataclass(kw_only=True)
