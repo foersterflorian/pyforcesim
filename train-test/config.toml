@@ -75,7 +75,7 @@ rng = nan # nan: use random state
 eval = 42
 
 [train.model.arch]
-sb3_arch = {pi = [64, 64], vf = [64, 64]}
+sb3_arch = {pi = [128, 64], vf = [128, 64]}
 
 [train.runs]
 ts_till_update = 2048
