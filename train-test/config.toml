@@ -2,7 +2,7 @@
 
 [lib.logging]
 enabled = true
-file = true
+file = false
 
 [lib.sim]
 
@@ -36,7 +36,7 @@ WIP_relative_targets = [0.35,] # ignored if "use_WIP_targets" = true
 # [1.5, 0.5, 2.5, 5, 3.5]
 # [3.5, 4.25, 5]
 # [0.5, 1, 1.75]
-WIP_level_cycles = 1 # how many full cycles with all WIP levels should be performed
+WIP_level_cycles = 5 # how many full cycles with all WIP levels should be performed
 WIP_relative_planned = 2.75
 alpha = 10
 
@@ -61,7 +61,7 @@ model_name = 'PPO_mask'
 filename_pretrained_model = '2025-01-17--15-36-17_pyf_sim_PPO_mask_TS-1310720'
 
 [train.experiment]
-exp_number = 5
+exp_number = 9
 env_structure = '1-2-3'
 job_generation_method = 'VarIdeal'
 feedback_mechanism = 'Slack'
