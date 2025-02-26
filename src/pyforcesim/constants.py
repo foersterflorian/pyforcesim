@@ -129,6 +129,7 @@ SLACK_ADAPTION: Final[bool] = CFG.lib.sim.slack.adaption
 SLACK_ADAPTION_MIN_UPPER_BOUND: Final[Timedelta] = Timedelta(
     hours=CFG.lib.sim.slack.adaption_min_upper_bound
 )
+SLACK_ADAPTION_MIN_LOWER_BOUND: Final[Timedelta] = Timedelta(hours=0)
 
 
 # ** database
