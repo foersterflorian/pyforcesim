@@ -24,7 +24,7 @@ sim_dur_weeks = 39 # 39
 buffer_size = 20
 job_pool_size_min = 5  # >1: use batching with shuffling
 job_pool_size_max = 5  # >1: use batching with shuffling
-dispatcher_seq_rule = 'FIFO'
+dispatcher_seq_rule = 'EDD'
 dispatcher_alloc_rule = 'LOAD_TIME_REMAINING'
 
 [lib.gym_env.WIP]
@@ -94,11 +94,13 @@ show_progressbar = false
 
 [test]
 use_train_config = false
-seed = 42
+seed = 100
 
 [test.files]
-target_folder = '2025-02-24-06__1-2-3__VarIdeal__Slack'
-filename_target_model = '2025-02-24--06-00-00_pyf_sim_PPO_mask_TS-20480001'
+target_folder = '2025-02-26-09__1-2-3__VarIdeal__Slack'
+filename_target_model = '2025-02-27--06-21-51_pyf_sim_PPO_mask_TS-20480001'
+# target_folder = '2025-02-24-06__1-2-3__VarIdeal__Slack'
+# filename_target_model = '2025-02-24--06-00-00_pyf_sim_PPO_mask_TS-20480001'
 # target_folder = '2025-02-24-05__1-2-3__VarIdeal__Slack'
 # filename_target_model = '2025-02-24--00-00-00_pyf_sim_PPO_mask_TS-20480001'
 # target_folder = '2025-02-21-02__1-2-3__VarIdeal__Slack'
@@ -114,7 +116,7 @@ normalise_obs = true
 [test.runs]
 num_episodes = 1
 perform_agent = true
-perform_benchmark = false
+perform_benchmark = true
 
 
 [tensorboard]
