@@ -118,7 +118,7 @@ perform_benchmark = false
 
 
 [tensorboard]
-use_train_config = false
+use_train_config = true
 
 [tensorboard.files]
 # exp_folder = '2025-02-24-05__1-2-3__VarIdeal__Slack'
