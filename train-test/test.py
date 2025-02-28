@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import time
 import warnings
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, cast
 
@@ -20,20 +21,20 @@ from pyforcesim.config import (
     DEC_TYPE,
     EXP_TYPE,
     FOLDER_MODEL_SAVEPOINTS,
-    RNG_SEED,
+    RNG_SEEDS,
     TEST_FILENAME_TARGET_MODEL,
     TEST_NORMALISE_OBS,
     TEST_NUM_EPISODES,
     TEST_PERFORM_AGENT,
     TEST_PERFORM_BENCHMARK,
-    TEST_RNG_SEED,
+    TEST_RNG_SEEDS,
     TEST_TARGET_FOLDER,
     TEST_USE_TRAIN_CONFIG,
 )
 from pyforcesim.constants import TimeUnitsTimedelta
 from pyforcesim.rl.gym_env import JSSEnv
 from pyforcesim.types import BuilderFuncFamilies
-from train import make_env
+from train import get_relevant_seed, make_env
 
 if TYPE_CHECKING:
     from pyforcesim.rl.agents import ValidateAllocationAgent, ValidateSequencingAgent
@@ -58,15 +59,19 @@ if matches is None:
     raise ValueError(f'Experiment type could not be extracted out of: {TEST_TARGET_FOLDER}')
 
 USER_EXP_TYPE: Final[str] = f'{matches.group(2)}_{matches.group(3)}'
-USER_RNG_SEED: Final[int] = TEST_RNG_SEED
+USER_RNG_SEEDS: Final[tuple[int, ...]] = TEST_RNG_SEEDS
 
 ROOT_FOLDER = USER_FOLDER
 ROOT_EXP_TYPE = USER_EXP_TYPE
-ROOT_RNG_SEED = USER_RNG_SEED
-if TEST_USE_TRAIN_CONFIG:
-    ROOT_FOLDER = BASE_FOLDER
-    ROOT_EXP_TYPE = EXP_TYPE
-    ROOT_RNG_SEED = RNG_SEED
+ROOT_RNG_SEEDS = USER_RNG_SEEDS
+# if TEST_USE_TRAIN_CONFIG and RNG_SEEDS is None:
+#     raise ValueError(
+#         'Eval seeds can not be None. Do not use train config if it contains no seeds'
+#     )
+# elif TEST_USE_TRAIN_CONFIG:
+#     ROOT_FOLDER = BASE_FOLDER
+#     ROOT_EXP_TYPE = EXP_TYPE
+#     ROOT_RNG_SEEDS = RNG_SEEDS
 
 VAL_EXP_TYPE: Final[str] = f'{ROOT_EXP_TYPE}_validate'
 VAL_EXP_EPISODES: Final[int] = 1
@@ -104,7 +109,7 @@ def export_gantt_chart(
     cum_reward: float,
     auto_open_html: bool = False,
 ) -> None:
-    seed = env.seed if env.seed is not None else 'n.a.'
+    seed = env.seeds if env.seeds is not None else 'n.a.'
     gantt_chart = env.last_gantt_chart
     # ** KPIs
     if gantt_chart is None:
@@ -178,7 +183,7 @@ def export_dbs(
     is_benchmark: bool,
     episode_num: int,
 ) -> None:
-    seed = env.seed if env.seed is not None else 'n.a.'
+    seed = env.seeds if env.seeds is not None else 'n.a.'
     filename_base = f'{ALGO_TYPE}_{TIMESTEPS}_Episode_{episode_num}_Seed_{seed}'
     filename_job_db = f'{filename_base}-job-db'
     filename_op_db = f'{filename_base}-op-db'
@@ -248,7 +253,7 @@ def callback(locals, *_):
 
 def eval_agent_policy(
     num_episodes: int,
-    seed: int | None,
+    seeds: Sequence[int],
     sim_randomise_reset: bool,
 ) -> None:
     env = make_env(
@@ -257,7 +262,7 @@ def eval_agent_policy(
         normalise_obs=False,
         normalise_rewards=False,
         gantt_chart=True,
-        seed=seed,
+        seeds=seeds,
         verify_env=False,
         sim_randomise_reset=sim_randomise_reset,
     )
@@ -294,13 +299,13 @@ def eval_agent_policy(
 
 def eval_agent_benchmark(
     num_episodes: int,
-    seed: int | None,
+    seeds: Sequence[int],
     sim_randomise_reset: bool,
 ) -> None:
     env = JSSEnv(
         VAL_EXP_TYPE,
         agent_type=DEC_TYPE,
-        seed=seed,
+        seeds=seeds,
         sim_randomise_reset=sim_randomise_reset,
         gantt_chart_on_termination=True,
         sim_check_agent_feasibility=True,
@@ -308,7 +313,8 @@ def eval_agent_benchmark(
     )
     loggers.base.info('[MODEL EVAL - ValAgent] Start evaluation with validation agent...')
     episodes_cum_rewards: list[float] = []
-    _obs, _ = env.reset(seed=ROOT_RNG_SEED)
+    seed = get_relevant_seed(ROOT_RNG_SEEDS)
+    _obs, _ = env.reset(seed=seed)
 
     for episode_num in range(num_episodes):
         if episode_num != 0:
@@ -356,7 +362,7 @@ def benchmark() -> None:
     env = JSSEnv(
         ROOT_EXP_TYPE,
         agent_type=DEC_TYPE,
-        seed=ROOT_RNG_SEED,
+        seeds=ROOT_RNG_SEEDS,
         sim_randomise_reset=False,
         sim_check_agent_feasibility=True,
         builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
@@ -385,12 +391,12 @@ def main() -> None:
     t1 = time.perf_counter()
     if TEST_PERFORM_AGENT:
         eval_agent_policy(
-            num_episodes=TEST_NUM_EPISODES, seed=ROOT_RNG_SEED, sim_randomise_reset=False
+            num_episodes=TEST_NUM_EPISODES, seeds=ROOT_RNG_SEEDS, sim_randomise_reset=False
         )
     print('--------------------------------------------------------------------')
     if TEST_PERFORM_BENCHMARK:
         eval_agent_benchmark(
-            num_episodes=TEST_NUM_EPISODES, seed=ROOT_RNG_SEED, sim_randomise_reset=False
+            num_episodes=TEST_NUM_EPISODES, seeds=ROOT_RNG_SEEDS, sim_randomise_reset=False
         )
     t2 = time.perf_counter()
     dur = t2 - t1

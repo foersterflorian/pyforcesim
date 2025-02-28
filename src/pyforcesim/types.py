@@ -337,8 +337,8 @@ class ConfTrainModelInputs:
 
 @dataclass(kw_only=True)
 class ConfTrainModelSeeds:
-    rng: int | None
-    eval: int
+    rng: tuple[int, ...] | None
+    eval: tuple[int, ...]
 
 
 @dataclass(kw_only=True)
@@ -376,7 +376,7 @@ class ConfTrainSB3:
 @dataclass(kw_only=True)
 class ConfTest:
     use_train_config: bool
-    seed: int
+    seeds: tuple[int, ...]
     files: ConfTestFiles
     inputs: ConfTestInputs
     runs: ConfTestRuns

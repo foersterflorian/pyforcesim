@@ -1,7 +1,7 @@
 import os
 import time
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +23,7 @@ from pyforcesim.config import (
     CONTINUE_LEARNING,
     DEC_TYPE,
     EVAL_FREQ,
-    EVAL_SEED,
+    EVAL_SEEDS,
     EXP_TYPE,
     FILENAME_PRETRAINED_MODEL,
     FOLDER_MODEL_SAVEPOINTS,
@@ -38,7 +38,7 @@ from pyforcesim.config import (
     POLICY_KWARGS,
     RANDOMISE_RESET,
     REWARD_THRESHOLD,
-    RNG_SEED,
+    RNG_SEEDS,
     SHOW_PROGRESSBAR,
     STEPS_TILL_SAVE,
     STEPS_TILL_UPDATE,
@@ -142,6 +142,16 @@ def _get_num_cpu_cores(
         return num_procs
 
 
+def get_relevant_seed(
+    seeds: Sequence[int] | None,
+) -> int | None:
+    seed: int | None = None
+    if seeds is not None:
+        seed = seeds[0]  # use first seed as initial
+
+    return seed
+
+
 def make_subproc_env(
     experiment_type: str,
     tensorboard_path: Path | None,
@@ -149,7 +159,7 @@ def make_subproc_env(
     gantt_chart: bool = False,
     normalise_obs: bool = True,
     normalise_rewards: bool = False,
-    seed: int | None = None,
+    seeds: Sequence[int] | None = None,
     verify_env: bool = True,
     sim_randomise_reset: bool = False,
 ) -> Any:
@@ -161,7 +171,7 @@ def make_subproc_env(
         experiment_type=experiment_type,
         agent_type=DEC_TYPE,
         gantt_chart_on_termination=gantt_chart,
-        seed=seed,
+        seeds=seeds,
         sim_randomise_reset=sim_randomise_reset,
         sim_check_agent_feasibility=sim_check_agent_feasibility,
         builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
@@ -174,23 +184,28 @@ def make_subproc_env(
             experiment_type=experiment_type,
             agent_type=DEC_TYPE,
             gantt_chart_on_termination=gantt_chart,
-            seed=seed,
+            seeds=seeds,
             sim_randomise_reset=sim_randomise_reset,
             sim_check_agent_feasibility=sim_check_agent_feasibility,
             builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
         )
 
     def make_multi_env(ident: int, change_seeds: bool) -> Callable[[], Monitor]:
-        seed_per_env = seed
+        seed_per_env: int | None = None
+        if seeds is not None:
+            seed_per_env = seeds[0]
+
+        training_seeds: tuple[int, ...] | None = None
         if seed_per_env is not None and change_seeds:
             seed_per_env += ident
+            training_seeds = (seed_per_env,)
 
         def _initialise_env() -> Monitor:
             env = JSSEnv(
                 experiment_type=experiment_type,
                 agent_type=DEC_TYPE,
                 gantt_chart_on_termination=gantt_chart,
-                seed=seed_per_env,
+                seeds=training_seeds,
                 sim_randomise_reset=sim_randomise_reset,
                 sim_check_agent_feasibility=sim_check_agent_feasibility,
                 builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
@@ -207,6 +222,8 @@ def make_subproc_env(
         [make_multi_env(ident, change_seeds=False) for ident in range(num_procs)],
         start_method='spawn',
     )  # type: ignore
+
+    seed = get_relevant_seed(seeds)
     env.seed(seed=seed)
     if normalise_obs:
         env = VecNormalize(env, norm_obs=True, norm_reward=normalise_rewards, clip_obs=10.0)
@@ -220,7 +237,7 @@ def make_env(
     gantt_chart: bool = False,
     normalise_obs: bool = True,
     normalise_rewards: bool = False,
-    seed: int | None = None,
+    seeds: Sequence[int] | None = None,
     verify_env: bool = True,
     sim_randomise_reset: bool = False,
 ) -> Any:
@@ -232,7 +249,7 @@ def make_env(
         experiment_type=experiment_type,
         agent_type=DEC_TYPE,
         gantt_chart_on_termination=gantt_chart,
-        seed=seed,
+        seeds=seeds,
         sim_randomise_reset=sim_randomise_reset,
         sim_check_agent_feasibility=sim_check_agent_feasibility,
         builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
@@ -245,7 +262,7 @@ def make_env(
             experiment_type=experiment_type,
             agent_type=DEC_TYPE,
             gantt_chart_on_termination=gantt_chart,
-            seed=seed,
+            seeds=seeds,
             sim_randomise_reset=sim_randomise_reset,
             sim_check_agent_feasibility=sim_check_agent_feasibility,
             builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
@@ -255,6 +272,8 @@ def make_env(
         tb_path = str(tensorboard_path)
     env = Monitor(env, filename=tb_path, allow_early_resets=True)
     env = DummyVecEnv([lambda: env])  # type: ignore
+
+    seed = get_relevant_seed(seeds)
     env.seed(seed=seed)
     if normalise_obs:
         env = VecNormalize(env, norm_obs=True, norm_reward=normalise_rewards, clip_obs=10.0)
@@ -264,8 +283,8 @@ def make_env(
 
 def train(
     continue_learning: bool,
-    seed: int | None,
-    eval_seed: int,
+    seeds: Sequence[int] | None,
+    eval_seeds: Sequence[int],
     normalise_rewards: bool,
     sim_randomise_reset: bool = False,
     use_mp: bool = False,
@@ -285,7 +304,7 @@ def train(
             num_procs=num_procs,
             normalise_obs=NORMALISE_OBS,
             normalise_rewards=normalise_rewards,
-            seed=seed,
+            seeds=seeds,
             sim_randomise_reset=sim_randomise_reset,
         )
     else:
@@ -294,7 +313,7 @@ def train(
             tensorboard_path,
             normalise_obs=NORMALISE_OBS,
             normalise_rewards=normalise_rewards,
-            seed=seed,
+            seeds=seeds,
             sim_randomise_reset=sim_randomise_reset,
         )
     # ** Checkpoint
@@ -315,7 +334,7 @@ def train(
         tensorboard_path,
         normalise_obs=NORMALISE_OBS,
         normalise_rewards=False,
-        seed=eval_seed,
+        seeds=eval_seeds,
     )
     # ** reward threshold callback
     reward_thresh_callback: StopTrainingOnRewardThreshold | None = None
@@ -328,7 +347,7 @@ def train(
         callback_on_new_best=reward_thresh_callback,
         eval_env=eval_env,
         best_model_save_path=str(model_folder),
-        n_eval_episodes=NUM_EVAL_EPISODES,
+        n_eval_episodes=len(eval_seeds),
         eval_freq=EVAL_FREQ,
         deterministic=True,
         use_masking=True,
@@ -345,6 +364,7 @@ def train(
             env.training = True
             print('Normalization info loaded successfully.')
     else:
+        seed = get_relevant_seed(seeds)
         model = MaskablePPO(
             'MlpPolicy',
             env,
@@ -379,8 +399,8 @@ def main() -> None:
     )
     train(
         continue_learning=CONTINUE_LEARNING,
-        seed=RNG_SEED,
-        eval_seed=EVAL_SEED,
+        seeds=RNG_SEEDS,
+        eval_seeds=EVAL_SEEDS,
         normalise_rewards=NORMALISE_REWARDS,
         sim_randomise_reset=RANDOMISE_RESET,
         use_mp=USE_MULTIPROCESSING,

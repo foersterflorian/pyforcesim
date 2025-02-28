@@ -85,7 +85,7 @@ ts_till_update = 2048
 total_updates = 10_000
 updates_till_eval = 2
 updates_till_savepoint = 16
-num_eval_episodes = 1
+num_eval_episodes = 1 # based upon number of eval seeds
 reward_threshold = nan # nan: do not apply
 
 [train.env]
@@ -96,7 +96,7 @@ show_progressbar = false
 
 
 [test]
-use_train_config = false
+use_train_config = false # check removal
 seed = 42
 
 [test.files]

@@ -3,9 +3,10 @@ from __future__ import annotations
 import math
 import os
 import tomllib
+from collections.abc import Sequence
 from datetime import datetime as Datetime
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast, overload
 from zoneinfo import ZoneInfo
 
 from pyforcesim.types import (
@@ -70,6 +71,41 @@ def load_cfg(path: Path) -> dict[str, Any]:
     print(f'Sucessfully loaded config from: {path}')
 
     return cfg
+
+
+@overload
+def _parse_int_sequence(
+    seq: list[float] | float,
+    param: str,
+    mandatory: Literal[True],
+) -> tuple[int, ...]: ...
+
+
+@overload
+def _parse_int_sequence(
+    seq: list[float] | float,
+    param: str,
+    mandatory: Literal[False],
+) -> tuple[int, ...] | None: ...
+
+
+def _parse_int_sequence(
+    seq: list[float] | float,
+    param: str,
+    mandatory: bool,
+) -> tuple[int, ...] | None:
+    parsed: tuple[int, ...] | None
+    if not isinstance(seq, Sequence) and math.isnan(seq):
+        parsed = None
+    elif isinstance(seq, Sequence):
+        parsed = tuple((int(seed) for seed in seq))
+    else:
+        raise ValueError(f'Could not parse values for >{param}< from config')
+
+    if mandatory and parsed is None:
+        raise ValueError(f'Parameter >{param}< was not set, but is mandatory')
+
+    return parsed
 
 
 def _parse_lib_cfg(cfg: dict[str, Any]) -> ConfLib:
@@ -201,12 +237,10 @@ def _parse_train_cfg(cfg: dict[str, Any]) -> ConfTrain:
         normalise_obs=normalise_obs, normalise_rew=normalise_rew
     )
     # train.model.seed
-    rng = cast(float, cfg['train']['model']['seeds']['rng'])
-    if math.isnan(rng):
-        rng = None
-    else:
-        rng = int(rng)
-    eval = int(cfg['train']['model']['seeds']['eval'])
+    rng = cast('list[float] | float', cfg['train']['model']['seeds']['rng'])
+    rng = _parse_int_sequence(rng, param='train-rng', mandatory=False)
+    eval = cast('list[float] | float', cfg['train']['model']['seeds']['eval'])
+    eval = _parse_int_sequence(eval, param='train-eval', mandatory=True)
     train_model_seeds = ConfTrainModelSeeds(rng=rng, eval=eval)
     # train.model.arch
     sb3_arch = cast(SB3ActorCriticNetworkArch, cfg['train']['model']['arch']['sb3_arch'])
@@ -255,7 +289,8 @@ def _parse_train_cfg(cfg: dict[str, Any]) -> ConfTrain:
 def _parse_test_cfg(cfg: dict[str, Any]) -> ConfTest:
     # test
     use_train_cfg = cast(bool, cfg['test']['use_train_config'])
-    rng_seed = cast(int, cfg['test']['seed'])
+    rng_seed = cast('list[float] | float', cfg['test']['seed'])
+    rng_seed = _parse_int_sequence(rng_seed, param='test-rng', mandatory=True)
     # test.files
     target_folder = cast(str, cfg['test']['files']['target_folder'])
     filename_target_model = cast(str, cfg['test']['files']['filename_target_model'])
@@ -277,7 +312,7 @@ def _parse_test_cfg(cfg: dict[str, Any]) -> ConfTest:
 
     return ConfTest(
         use_train_config=use_train_cfg,
-        seed=rng_seed,
+        seeds=rng_seed,
         files=test_files,
         inputs=test_inputs,
         runs=test_runs,
@@ -338,8 +373,8 @@ BASE_FOLDER: Final[str] = f'results/{EXPERIMENT_FOLDER}'
 NORMALISE_OBS: Final[bool] = CFG.train.model.inputs.normalise_obs
 NORMALISE_REWARDS: Final[bool] = CFG.train.model.inputs.normalise_rew
 # ** model seeding
-RNG_SEED: Final[int | None] = CFG.train.model.seeds.rng
-EVAL_SEED: Final[int] = CFG.train.model.seeds.eval
+RNG_SEEDS: Final[tuple[int, ...] | None] = CFG.train.model.seeds.rng
+EVAL_SEEDS: Final[tuple[int, ...]] = CFG.train.model.seeds.eval
 # ** model architecture
 net_arch = CFG.train.model.arch.sb3_arch
 POLICY_KWARGS: Final[SB3PolicyArgs] = {'net_arch': net_arch}
@@ -358,7 +393,7 @@ SHOW_PROGRESSBAR: Final[bool] = CFG.train.sb3.show_progressbar
 
 # ** tests
 TEST_USE_TRAIN_CONFIG: Final[bool] = CFG.test.use_train_config
-TEST_RNG_SEED: Final[int] = CFG.test.seed
+TEST_RNG_SEEDS: Final[tuple[int, ...]] = CFG.test.seeds
 # ** files
 TEST_FILENAME_TARGET_MODEL: Final[str] = CFG.test.files.filename_target_model
 TEST_TARGET_FOLDER: Final[str] = CFG.test.files.target_folder

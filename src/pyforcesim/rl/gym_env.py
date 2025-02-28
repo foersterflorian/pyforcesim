@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator, Sequence
 from dataclasses import asdict
 from datetime import timedelta as Timedelta
 from typing import TYPE_CHECKING, Any, Final, cast
@@ -61,6 +62,19 @@ NORM_TD: Final[Timedelta] = pyf_dt.timedelta_from_val(1, time_unit=TimeUnitsTime
 BUILDER_FUNCS: Final[dict[BuilderFuncFamilies, EnvBuilderFunc]] = {
     BuilderFuncFamilies.SINGLE_PRODUCTION_AREA: standard_env_single_area,
 }
+
+
+def iterate_seeds(
+    seeds: Sequence[int],
+) -> Iterator[int]:
+    max_idx = len(seeds) - 1
+    idx: int = 0
+
+    while True:
+        yield seeds[idx]
+        idx += 1
+        if idx > max_idx:
+            idx = 0
 
 
 def get_builder_func_WIP_config() -> EnvBuilderAdditionalConfig:
@@ -146,7 +160,7 @@ class JSSEnv(gym.Env):
         experiment_type: str,
         agent_type: AgentDecisionTypes,
         gantt_chart_on_termination: bool = False,
-        seed: int | None = DEFAULT_SEED,
+        seeds: Sequence[int] | None = (DEFAULT_SEED,),
         sim_randomise_reset: bool = False,
         sim_check_agent_feasibility: bool = True,
         builder_func_family: BuilderFuncFamilies = BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
@@ -157,7 +171,12 @@ class JSSEnv(gym.Env):
             get_builder_func_WIP_config()
         )
         # exp type example: '1-2-3_VarIdeal_validate'
-        self.seed = seed
+        self.seeds: Iterator[int] | None = None
+        self.seeds_used: list[int | None] = []
+        if seeds is not None:
+            self.seeds = iterate_seeds(seeds)
+        self.seed = self._get_seed()
+
         self.seed_layout = seed_layout
         self.sim_randomise_reset = sim_randomise_reset
         self.sim_check_agent_feasibility = sim_check_agent_feasibility
@@ -300,6 +319,15 @@ class JSSEnv(gym.Env):
         self.jobs_early: int = 0
         self.jobs_punctual: int = 0
 
+    def _get_seed(self) -> int | None:
+        seed: int | None
+        if self.seeds is None:
+            seed = None
+        else:
+            seed = next(self.seeds)
+
+        return seed
+
     def _build_env(
         self,
         seed: int | None,
@@ -387,14 +415,27 @@ class JSSEnv(gym.Env):
         options: dict[str, Any] | None = None,
     ) -> tuple[npt.NDArray[np.float32], dict]:
         logger.debug('Resetting environment')
-        super().reset(seed=seed)
         self.terminated = False
         self.truncated = False
         # re-init simulation environment
         if self.sim_randomise_reset:
+            assert (
+                seed is None
+            ), '[Gym-Env] Reset Env with randomise reset option, but a seed was provided.'
             self._build_env(seed=seed)
         else:
-            self._build_env(seed=self.seed)
+            assert self.seeds is not None, (
+                '[Gym-Env] Reset Env without randomise reset option, '
+                'but no seeds are present in the GymEnv.'
+            )
+            # use provided seed, if given
+            if seed is None:
+                seed = self._get_seed()
+            self._build_env(seed=seed)
+
+        self.seeds_used.append(seed)
+        self.seed = seed
+        super().reset(seed=self.seed)
 
         logger.debug('Environment re-initialised')
         # evaluate if all needed components are registered
@@ -405,7 +446,6 @@ class JSSEnv(gym.Env):
         # run till first decision should be made
         # transient condition implemented --> triggers a point in time
         # at which agent makes decisions
-
         # ** Run till settling process is finished
         while not self.agent.dispatching_signal:
             # empty event list, simulation run ended
