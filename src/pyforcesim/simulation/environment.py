@@ -49,6 +49,7 @@ from pyforcesim.constants import (
     POLICIES_SEQ_TYPE,
     ROUNDING_PRECISION,
     SEQUENCING_WAITING_TIME,
+    SLACK_DEFAULT_LOWER_BOUND,
     SOURCE_GENERATION_WAITING_TIME,
     TIMEZONE_CEST,
     SimResourceTypes,
@@ -4977,7 +4978,7 @@ class Operation:
         self.target_exec_system = target_exec_system
         self.target_station_group = target_stat_group
         self.time_creation = time_creation
-        self.stat_monitor.init_slack_planned(by_date=True)
+        self.stat_monitor.init_slack_range(SLACK_DEFAULT_LOWER_BOUND, by_date=True)
 
 
 class Job(salabim.Component):
