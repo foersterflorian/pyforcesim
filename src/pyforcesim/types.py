@@ -259,6 +259,7 @@ class ConfLibSimSlack:
     threshold_upper: float
     threshold_lower: float
     min_range: float
+    max_range: float
     adaption: bool
     adaption_min_upper_bound: float
     adaption_min_lower_bound: float

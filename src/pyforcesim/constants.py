@@ -120,6 +120,7 @@ SLACK_USE_THRESHOLD_UPPER: Final[bool] = CFG.lib.sim.slack.use_threshold_upper
 SLACK_THRESHOLD_UPPER: Final[Timedelta] = Timedelta(hours=CFG.lib.sim.slack.threshold_upper)
 SLACK_THRESHOLD_LOWER: Final[Timedelta] = Timedelta(hours=CFG.lib.sim.slack.threshold_lower)
 SLACK_MIN_RANGE: Final[Timedelta] = Timedelta(hours=CFG.lib.sim.slack.min_range)
+SLACK_MAX_RANGE: Final[Timedelta] = Timedelta(hours=CFG.lib.sim.slack.max_range)
 # value to use as slack if initial value is not set as upper bound
 SLACK_OVERWRITE_UPPER_BOUND: Final[Timedelta] = Timedelta(
     hours=CFG.lib.sim.slack.overwrite_upper_bound
