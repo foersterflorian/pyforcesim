@@ -83,7 +83,7 @@ def _parse_lib_cfg(cfg: dict[str, Any]) -> ConfLib:
     slack_overwrite_upper_bound = cast(
         float, cfg['lib']['sim']['slack']['overwrite_upper_bound']
     )
-    slack_threshold_lower = cast(float, cfg['lib']['sim']['slack']['threshold_lower'])
+    default_lower_bound = cast(float, cfg['lib']['sim']['slack']['default_lower_bound'])
     slack_threshold_upper = cast(float, cfg['lib']['sim']['slack']['threshold_upper'])
     slack_min_range = cast(float, cfg['lib']['sim']['slack']['min_range'])
     slack_max_range = cast(float, cfg['lib']['sim']['slack']['max_range'])
@@ -98,7 +98,7 @@ def _parse_lib_cfg(cfg: dict[str, Any]) -> ConfLib:
         init_as_upper_bound=slack_init_as_upper_bound,
         use_threshold_upper=slack_use_threshold_upper,
         overwrite_upper_bound=slack_overwrite_upper_bound,
-        threshold_lower=slack_threshold_lower,
+        default_lower_bound=default_lower_bound,
         threshold_upper=slack_threshold_upper,
         min_range=slack_min_range,
         max_range=slack_max_range,

@@ -28,7 +28,7 @@ from pyforcesim.constants import (
     CFG_WIP_TARGET_MIN,
     CFG_WIP_TARGET_NUM_LEVELS,
     DEFAULT_SEED,
-    SLACK_THRESHOLD_LOWER,
+    SLACK_DEFAULT_LOWER_BOUND,
     SLACK_THRESHOLD_UPPER,
     TimeUnitsTimedelta,
 )
@@ -235,7 +235,7 @@ class JSSEnv(gym.Env):
             # observation jobs:
             # N_queue_slots * (target_SGI, order time, lower bound slack,
             # upper bound slack, current slack)
-            lower_bound_slack_min = SLACK_THRESHOLD_LOWER / NORM_TD
+            lower_bound_slack_min = SLACK_DEFAULT_LOWER_BOUND / NORM_TD
             upper_bound_slack_min = SLACK_THRESHOLD_UPPER / NORM_TD
             if lower_bound_slack_min > 0:
                 lower_bound_slack_min = 0

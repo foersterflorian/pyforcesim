@@ -257,7 +257,7 @@ class ConfLibSimSlack:
     use_threshold_upper: bool
     overwrite_upper_bound: float
     threshold_upper: float
-    threshold_lower: float
+    default_lower_bound: float
     min_range: float
     max_range: float
     adaption: bool

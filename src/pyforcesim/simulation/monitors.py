@@ -22,11 +22,11 @@ from pyforcesim.constants import (
     SLACK_ADAPTION,
     SLACK_ADAPTION_MIN_LOWER_BOUND,
     SLACK_ADAPTION_MIN_UPPER_BOUND,
+    SLACK_DEFAULT_LOWER_BOUND,
     SLACK_INIT_AS_UPPER_BOUND,
     SLACK_MAX_RANGE,
     SLACK_MIN_RANGE,
     SLACK_OVERWRITE_UPPER_BOUND,
-    SLACK_THRESHOLD_LOWER,
     SLACK_THRESHOLD_UPPER,
     SLACK_USE_THRESHOLD_UPPER,
     UTIL_PROPERTIES,
@@ -371,8 +371,8 @@ class LoadMonitor(Monitor[L]):
         self.slack_upper_bound_init: Timedelta | None = None
         self.slack_upper_bound_adaption_delta: Timedelta = Timedelta()
         self.slack_upper_bound_hours: float = 0.0
-        self.slack_lower_bound: Timedelta = SLACK_THRESHOLD_LOWER
-        self.slack_lower_bound_hours: float = SLACK_THRESHOLD_LOWER / self.NORM_TD
+        self.slack_lower_bound: Timedelta = SLACK_DEFAULT_LOWER_BOUND
+        self.slack_lower_bound_hours: float = SLACK_DEFAULT_LOWER_BOUND / self.NORM_TD
 
     @property
     def released(self) -> bool:
@@ -401,7 +401,6 @@ class LoadMonitor(Monitor[L]):
                 self.slack_upper_bound = SLACK_OVERWRITE_UPPER_BOUND
 
         self.assert_slack_range()
-
         self.slack_upper_bound_hours = self.slack_upper_bound / self.NORM_TD
         self.slack_upper_bound_init = self.slack_upper_bound
 
@@ -412,7 +411,7 @@ class LoadMonitor(Monitor[L]):
         ):
             loggers.monitors.debug(
                 (
-                    '[MONITOR]: Slack lower bound before range adaption: >%s< '
+                    '[MONITOR]: Slack lower bound before (min) range adaption: >%s< '
                     '(%.4f), upper bound: >%s<, slack_init: %s'
                 ),
                 self.slack_lower_bound,
@@ -440,7 +439,7 @@ class LoadMonitor(Monitor[L]):
         if abs(self.slack_upper_bound - self.slack_lower_bound) > SLACK_MAX_RANGE:
             loggers.monitors.debug(
                 (
-                    '[MONITOR]: Slack lower bound before range adaption: >%s< '
+                    '[MONITOR]: Slack lower bound before (max) range adaption: >%s< '
                     '(%.4f), upper bound: >%s<, slack_init: %s'
                 ),
                 self.slack_lower_bound,
@@ -451,6 +450,16 @@ class LoadMonitor(Monitor[L]):
             # upper bound is at least "adaption_min_upper_bound" cfg option
             self.slack_lower_bound = self.slack_upper_bound - SLACK_MAX_RANGE
             self.slack_lower_bound_hours = self.slack_lower_bound / self.NORM_TD
+            loggers.monitors.debug(
+                (
+                    '[MONITOR]: Slack lower bound adapted for max range: >%s< '
+                    '(%.4f), upper bound: (%.4f), max_range: %s'
+                ),
+                self.slack_lower_bound,
+                self.slack_lower_bound_hours,
+                self.slack_upper_bound_hours,
+                SLACK_MAX_RANGE,
+            )
 
     def release(self) -> None:
         """certain actions performed on release"""
@@ -636,7 +645,9 @@ class OperationMonitor(LoadMonitor['Operation']):
 
         if lead_time_delta != Timedelta():
             upper_bound_calc = self.slack_upper_bound + lead_time_delta
-            upper_bound_adapted = max(upper_bound_calc, SLACK_ADAPTION_MIN_UPPER_BOUND)
+            # ?? use fixed min upper bound?
+            # upper_bound_adapted = max(upper_bound_calc, SLACK_ADAPTION_MIN_UPPER_BOUND)
+            upper_bound_adapted = upper_bound_calc
             self.slack_upper_bound_adaption_delta += (
                 upper_bound_adapted - self.slack_upper_bound
             )

@@ -115,18 +115,22 @@ TIMEZONE_CEST: Final[ZoneInfo] = ZoneInfo('Europe/Berlin')
 TIMEZONE_UTC: Final[Timezone] = Timezone.utc
 DEFAULT_DATETIME: Final[Datetime] = Datetime(1970, 1, 1, tzinfo=TIMEZONE_UTC)
 SLACK_INIT_AS_UPPER_BOUND: Final[bool] = CFG.lib.sim.slack.init_as_upper_bound
-# only takes effect if initial slack used as upper bound
+# vvv - only takes effect if initial slack used as upper bound - vvv
 SLACK_USE_THRESHOLD_UPPER: Final[bool] = CFG.lib.sim.slack.use_threshold_upper
 SLACK_THRESHOLD_UPPER: Final[Timedelta] = Timedelta(hours=CFG.lib.sim.slack.threshold_upper)
-SLACK_THRESHOLD_LOWER: Final[Timedelta] = Timedelta(hours=CFG.lib.sim.slack.threshold_lower)
+# vvv - slack: default values and ranges - vvv
+SLACK_DEFAULT_LOWER_BOUND: Final[Timedelta] = Timedelta(
+    hours=CFG.lib.sim.slack.default_lower_bound
+)
 SLACK_MIN_RANGE: Final[Timedelta] = Timedelta(hours=CFG.lib.sim.slack.min_range)
 SLACK_MAX_RANGE: Final[Timedelta] = Timedelta(hours=CFG.lib.sim.slack.max_range)
-# value to use as slack if initial value is not set as upper bound
+# vvv - value to use as slack if initial value is not set as upper bound - vvv
 SLACK_OVERWRITE_UPPER_BOUND: Final[Timedelta] = Timedelta(
     hours=CFG.lib.sim.slack.overwrite_upper_bound
 )
 # slack adaption
 SLACK_ADAPTION: Final[bool] = CFG.lib.sim.slack.adaption
+# !! vvv - currently without effect - vvv
 SLACK_ADAPTION_MIN_UPPER_BOUND: Final[Timedelta] = Timedelta(
     hours=CFG.lib.sim.slack.adaption_min_upper_bound
 )
