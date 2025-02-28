@@ -443,63 +443,6 @@ class LoadMonitor(Monitor[L]):
             self.slack_range_init,
         )
 
-    # def _assert_slack_range_old(self) -> None:
-    #     if (
-    #         self.slack_upper_bound <= self.slack_lower_bound
-    #         or abs(self.slack_upper_bound - self.slack_lower_bound) < SLACK_MIN_RANGE
-    #     ):
-    #         loggers.monitors.debug(
-    #             (
-    #                 '[MONITOR]: Slack lower bound before (min) range adaption: >%s< '
-    #                 '(%.4f), upper bound: >%s<, slack_init: %s'
-    #             ),
-    #             self.slack_lower_bound,
-    #             self.slack_lower_bound_hours,
-    #             self.slack_upper_bound,
-    #             self.slack_init,
-    #         )
-    #         # upper bound is at least "adaption_min_upper_bound" cfg option
-    #         lower_bound_adapted = self.slack_upper_bound - SLACK_MIN_RANGE
-    #         # ?? keep hard slack min bound or use ranges in future?
-    #         # self.slack_lower_bound = max(lower_bound_adapted, SLACK_ADAPTION_MIN_LOWER_BOUND)
-    #         self.slack_lower_bound = lower_bound_adapted
-    #         self.slack_lower_bound_hours = self.slack_lower_bound / self.NORM_TD
-    #         loggers.monitors.debug(
-    #             (
-    #                 '[MONITOR]: Slack lower bound adapted for min range: >%s< '
-    #                 '(%.4f), upper bound: (%.4f), min_range: %s'
-    #             ),
-    #             self.slack_lower_bound,
-    #             self.slack_lower_bound_hours,
-    #             self.slack_upper_bound_hours,
-    #             SLACK_MIN_RANGE,
-    #         )
-
-    #     if abs(self.slack_upper_bound - self.slack_lower_bound) > SLACK_MAX_RANGE:
-    #         loggers.monitors.debug(
-    #             (
-    #                 '[MONITOR]: Slack lower bound before (max) range adaption: >%s< '
-    #                 '(%.4f), upper bound: >%s<, slack_init: %s'
-    #             ),
-    #             self.slack_lower_bound,
-    #             self.slack_lower_bound_hours,
-    #             self.slack_upper_bound,
-    #             self.slack_init,
-    #         )
-    #         # upper bound is at least "adaption_min_upper_bound" cfg option
-    #         self.slack_lower_bound = self.slack_upper_bound - SLACK_MAX_RANGE
-    #         self.slack_lower_bound_hours = self.slack_lower_bound / self.NORM_TD
-    #         loggers.monitors.debug(
-    #             (
-    #                 '[MONITOR]: Slack lower bound adapted for max range: >%s< '
-    #                 '(%.4f), upper bound: (%.4f), max_range: %s'
-    #             ),
-    #             self.slack_lower_bound,
-    #             self.slack_lower_bound_hours,
-    #             self.slack_upper_bound_hours,
-    #             SLACK_MAX_RANGE,
-    #         )
-
     def release(self) -> None:
         """certain actions performed on release"""
         self._init_slack()
