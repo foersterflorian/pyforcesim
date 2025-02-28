@@ -364,6 +364,7 @@ class LoadMonitor(Monitor[L]):
         )
         self._released: bool = False
         self.remaining_order_time = self.target_object.order_time
+        self.slack_planned: Timedelta | None = None
         self.slack: Timedelta = Timedelta()
         self.slack_init: Timedelta = Timedelta()
         self.slack_init_hours: float = 0.0
@@ -489,7 +490,21 @@ class JobMonitor(LoadMonitor['Job']):
             obj=obj,
             current_state=current_state,
         )
+        self.slack_range_init: Timedelta | None = None
         self._slack_considered_ops: set[LoadID] = set()
+
+    def _init_slack_range(
+        self,
+        lower_bound: Timedelta,
+    ) -> None:
+        self.slack_planned = Timedelta()
+        for op in self.target_object.operations:
+            assert (
+                op.stat_monitor.slack_planned is not None
+            ), 'tried summation of planned slack times from which at least one was not set'
+            self.slack_planned += op.stat_monitor.slack_planned
+
+        self.slack_range_init = self.slack_planned - lower_bound
 
     def _KPI_remaining_order_time(self) -> None:
         # !! make sure that all open operations' KPIs are calculated
@@ -575,6 +590,11 @@ class JobMonitor(LoadMonitor['Job']):
         )
 
     @override
+    def release(self) -> None:
+        super().release()
+        self._init_slack_range(SLACK_DEFAULT_LOWER_BOUND)
+
+    @override
     def calc_KPI(self) -> None:
         super().calc_KPI()  # especially time proportions
         for op in self.target_object.open_operations:
@@ -602,6 +622,36 @@ class OperationMonitor(LoadMonitor['Operation']):
     @property
     def slack_adapted(self) -> bool:
         return self._slack_adapted
+
+    def init_slack_planned(
+        self,
+        by_date: bool = True,
+    ) -> None:
+        if by_date:
+            self.slack_planned = self._init_slack_planned_by_date()
+        else:
+            self.slack_planned = self._init_slack_planned_by_lead_time()
+
+    def _init_slack_planned_by_date(self) -> Timedelta:
+        planned_start_date = self.target_object.time_planned_starting
+        planned_end_date = self.target_object.time_planned_ending
+
+        if planned_start_date is None or planned_end_date is None:
+            raise ValueError(
+                'Can not calculate slack range by dates if dates are not provided.'
+            )
+
+        planned_lead_time = planned_end_date - planned_start_date
+        slack_range_init = planned_lead_time - self.target_object.order_time
+
+        return slack_range_init
+
+    def _init_slack_planned_by_lead_time(self) -> Timedelta:
+        exec_system = self.target_object.target_exec_system
+        planned_lead_time = exec_system.lead_time_planned
+        slack_range_init = planned_lead_time - self.target_object.order_time
+
+        return slack_range_init
 
     def _KPI_remaining_order_time(self) -> None:
         time_actual_starting = self.target_object.time_actual_starting

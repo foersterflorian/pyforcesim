@@ -4848,25 +4848,17 @@ class Operation:
         self._exec_system_identifier = exec_system_identifier
         self._target_station_group_identifier = target_station_group_identifier
         self.custom_identifier = custom_identifier
-
         # process information
         # time characteristics
         self.proc_time = proc_time
         self.setup_time = setup_time
         self.order_time = self.proc_time + self.setup_time
-        # self.remaining_order_time = self.order_time
         # inter-process time characteristics
-        # time of release
         self.time_release = DEFAULT_DATETIME
-        # time of first operation starting point
         self.time_actual_starting: Datetime | None = None
-        # starting date deviation
         self.starting_date_deviation: Timedelta | None = None
-        # time of last operation ending point
         self.time_actual_ending: Datetime | None = None
-        # ending date deviation
         self.ending_date_deviation: Timedelta | None = None
-        # lead time
         self.lead_time = Timedelta()
         # starting and end dates
         # validate time zone information for given datetime objects
@@ -4985,6 +4977,7 @@ class Operation:
         self.target_exec_system = target_exec_system
         self.target_station_group = target_stat_group
         self.time_creation = time_creation
+        self.stat_monitor.init_slack_planned(by_date=True)
 
 
 class Job(salabim.Component):
