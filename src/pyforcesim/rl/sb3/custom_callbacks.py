@@ -97,6 +97,10 @@ class MaskableEvalCallback(EvalCallback):
             self.last_mean_reward = float(mean_reward)
 
             logger.info(
+                'Eval all rewards: %s',
+                episode_rewards,
+            )
+            logger.info(
                 'Eval num_timesteps=%d, episode_reward=%.2f +/- %.2f',
                 self.num_timesteps,
                 mean_reward,

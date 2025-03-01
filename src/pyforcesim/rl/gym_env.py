@@ -171,6 +171,7 @@ class JSSEnv(gym.Env):
             get_builder_func_WIP_config()
         )
         # exp type example: '1-2-3_VarIdeal_validate'
+        self._verify_seed_options(seeds, sim_randomise_reset)
         self.seeds: Iterator[int] | None = None
         self.seeds_used: list[int | None] = []
         if seeds is not None:
@@ -255,12 +256,15 @@ class JSSEnv(gym.Env):
             # observation jobs:
             # N_queue_slots * (target_SGI, order time, lower bound slack,
             # upper bound slack, current slack)
-            lower_bound_slack_min = SLACK_DEFAULT_LOWER_BOUND / NORM_TD
-            upper_bound_slack_min = SLACK_THRESHOLD_UPPER / NORM_TD
-            if lower_bound_slack_min > 0:
-                lower_bound_slack_min = 0
-            if upper_bound_slack_min > 0:
-                upper_bound_slack_min = 0
+            # lower_bound_slack_min = SLACK_DEFAULT_LOWER_BOUND / NORM_TD
+            # upper_bound_slack_min = SLACK_THRESHOLD_UPPER / NORM_TD
+            # if lower_bound_slack_min > 0:
+            #     lower_bound_slack_min = 0
+            # if upper_bound_slack_min > 0:
+            #     upper_bound_slack_min = 0
+
+            lower_bound_slack_min = -100
+            upper_bound_slack_min = -100
 
             job_low = np.array(
                 [
@@ -268,14 +272,14 @@ class JSSEnv(gym.Env):
                     0,
                     lower_bound_slack_min,
                     upper_bound_slack_min,
-                    -100,
+                    -1000,
                 ]
             )
             job_high = np.array(
                 [
                     max_SGI,
                     100,
-                    lower_bound_slack_min,
+                    100,
                     100,
                     1000,
                 ]
@@ -319,6 +323,21 @@ class JSSEnv(gym.Env):
         self.jobs_tardy: int = 0
         self.jobs_early: int = 0
         self.jobs_punctual: int = 0
+
+    @staticmethod
+    def _verify_seed_options(
+        seeds: Sequence[int] | None,
+        sim_randomise_reset: bool,
+    ) -> None:
+        if sim_randomise_reset and seeds is not None:
+            raise ValueError(
+                '[Gym-Env] Env with randomise reset option, but a seed was provided.'
+            )
+        elif not sim_randomise_reset and seeds is None:
+            raise ValueError(
+                '[Gym-Env] Env without randomise reset option, '
+                'but no seeds are present in the GymEnv.'
+            )
 
     def _get_seed(self) -> int | None:
         seed: int | None
@@ -420,15 +439,8 @@ class JSSEnv(gym.Env):
         self.truncated = False
         # re-init simulation environment
         if self.sim_randomise_reset:
-            assert (
-                seed is None
-            ), '[Gym-Env] Reset Env with randomise reset option, but a seed was provided.'
             self._build_env(seed=seed)
         else:
-            assert self.seeds is not None, (
-                '[Gym-Env] Reset Env without randomise reset option, '
-                'but no seeds are present in the GymEnv.'
-            )
             # use provided seed, if given
             if seed is None:
                 seed = self._get_seed()

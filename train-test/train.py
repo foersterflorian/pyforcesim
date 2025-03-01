@@ -258,6 +258,7 @@ def make_env(
     if verify_env:
         check_env(env, warn=True)
         # recreate to ensure that nothing was altered
+        del env
         env = JSSEnv(
             experiment_type=experiment_type,
             agent_type=DEC_TYPE,
