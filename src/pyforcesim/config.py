@@ -289,7 +289,7 @@ def _parse_train_cfg(cfg: dict[str, Any]) -> ConfTrain:
 def _parse_test_cfg(cfg: dict[str, Any]) -> ConfTest:
     # test
     use_train_cfg = cast(bool, cfg['test']['use_train_config'])
-    rng_seed = cast('list[float] | float', cfg['test']['seed'])
+    rng_seed = cast('list[float] | float', cfg['test']['seeds'])
     rng_seed = _parse_int_sequence(rng_seed, param='test-rng', mandatory=True)
     # test.files
     target_folder = cast(str, cfg['test']['files']['target_folder'])

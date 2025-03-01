@@ -176,6 +176,7 @@ class JSSEnv(gym.Env):
         if seeds is not None:
             self.seeds = iterate_seeds(seeds)
         self.seed = self._get_seed()
+        self.last_seed: int | None = None
 
         self.seed_layout = seed_layout
         self.sim_randomise_reset = sim_randomise_reset
@@ -434,6 +435,7 @@ class JSSEnv(gym.Env):
             self._build_env(seed=seed)
 
         self.seeds_used.append(seed)
+        self.last_seed = self.seed
         self.seed = seed
         super().reset(seed=self.seed)
 

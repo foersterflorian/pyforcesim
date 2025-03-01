@@ -23,7 +23,7 @@ adaption_min_upper_bound = 1.0 # in hours -- minimum upper bound if slack is ada
 adaption_min_lower_bound = 0.0 # in hours -- minimum lower bound if slack is adapted
 
 [lib.gym_env]
-sim_dur_weeks = 39 # 39
+sim_dur_weeks = 2 # 39
 buffer_size = 20
 job_pool_size_min = 5  # >1: use batching with shuffling
 job_pool_size_max = 5  # >1: use batching with shuffling
@@ -75,7 +75,7 @@ normalise_rew = true
 
 [train.model.seeds]
 rng = nan # nan: use random state
-eval = 42
+eval = [42]
 
 [train.model.arch]
 sb3_arch = {pi = [128, 64], vf = [128, 64]}
@@ -97,7 +97,7 @@ show_progressbar = false
 
 [test]
 use_train_config = false # check removal
-seed = 42
+seeds = [42, 100]
 
 [test.files]
 target_folder = '2025-02-26-09__1-2-3__VarIdeal__Slack'

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 import warnings
@@ -33,7 +34,7 @@ from pyforcesim.config import (
 )
 from pyforcesim.constants import TimeUnitsTimedelta
 from pyforcesim.rl.gym_env import JSSEnv
-from pyforcesim.types import BuilderFuncFamilies
+from pyforcesim.types import BuilderFuncFamilies, TestResults
 from train import get_relevant_seed, make_env
 
 if TYPE_CHECKING:
@@ -109,7 +110,9 @@ def export_gantt_chart(
     cum_reward: float,
     auto_open_html: bool = False,
 ) -> None:
-    seed = env.seeds if env.seeds is not None else 'n.a.'
+    # use last seed: at this point VecEnv already reset, thus new seed is
+    # set for the next run
+    seed = env.last_seed if env.last_seed is not None else 'n.a.'
     gantt_chart = env.last_gantt_chart
     # ** KPIs
     if gantt_chart is None:
@@ -183,7 +186,9 @@ def export_dbs(
     is_benchmark: bool,
     episode_num: int,
 ) -> None:
-    seed = env.seeds if env.seeds is not None else 'n.a.'
+    # use last seed: at this point VecEnv already reset, thus new seed is
+    # set for the next run
+    seed = env.last_seed if env.last_seed is not None else 'n.a.'
     filename_base = f'{ALGO_TYPE}_{TIMESTEPS}_Episode_{episode_num}_Seed_{seed}'
     filename_job_db = f'{filename_base}-job-db'
     filename_op_db = f'{filename_base}-op-db'
@@ -213,6 +218,23 @@ def export_dbs(
         raise ValueError('Either job DB or operation DB >>None<<')
 
 
+def export_results(
+    results: TestResults,
+    filename: str,
+) -> None:
+    save_pth = common.prepare_save_paths(
+        base_folder=ROOT_FOLDER,
+        target_folder=None,
+        filename=filename,
+        suffix='json',
+    )
+
+    with open(save_pth, 'w') as file:
+        json.dump(results, file)
+
+    print(f'Saved results successfully under: >{save_pth}<')
+
+
 def callback(locals, *_):
     done = cast(bool, locals['done'])
 
@@ -223,7 +245,6 @@ def callback(locals, *_):
     env = cast('Monitor | JSSEnv', vec_env.envs[0])
     if isinstance(env, Monitor):
         env = cast(JSSEnv, env.env)
-    # env.test_on_callback()
 
     cum_rewards = cast(npt.NDArray[np.float32], locals['current_rewards'])
     cum_reward = cum_rewards[0]
@@ -252,10 +273,10 @@ def callback(locals, *_):
 
 
 def eval_agent_policy(
-    num_episodes: int,
+    # num_episodes: int,
     seeds: Sequence[int],
     sim_randomise_reset: bool,
-) -> None:
+) -> TestResults:
     env = make_env(
         ROOT_EXP_TYPE,
         tensorboard_path=None,
@@ -280,6 +301,7 @@ def eval_agent_policy(
     model = load_model(env=env)
 
     loggers.base.info('[MODEL EVAL] Start evaluation...')
+    num_episodes = len(seeds)
     episodes_cum_rewards, _episode_lengths = evaluate_policy(
         model=model,
         env=env,
@@ -289,19 +311,31 @@ def eval_agent_policy(
         callback=callback,
         return_episode_rewards=True,
     )
-
-    mean_episode_reward = np.mean(episodes_cum_rewards)
+    episodes_cum_rewards = cast(list[float], episodes_cum_rewards)
+    seeds_used = cast(list[int | None], env.get_attr('seeds_used')[0])
+    # if terminated VecEnvs are reset automatically (do not count these)
+    seeds_used = seeds_used[:-1]
+    mean_episode_reward = cast(float, np.mean(episodes_cum_rewards))
+    std_episode_reward = cast(float, np.std(episodes_cum_rewards))
+    results: TestResults = TestResults(
+        seeds=seeds_used,
+        rewards=episodes_cum_rewards,
+        rewards_mean=mean_episode_reward,
+        rewards_std=std_episode_reward,
+    )
     print(f'[AGENT EVAL] Rewards for {num_episodes} episodes: \n\t{episodes_cum_rewards}')
     print(
         f'[AGENT EVAL] Mean reward: {mean_episode_reward:.4f} - Num episodes: {num_episodes}'
     )
 
+    return results
+
 
 def eval_agent_benchmark(
-    num_episodes: int,
+    # num_episodes: int,
     seeds: Sequence[int],
     sim_randomise_reset: bool,
-) -> None:
+) -> TestResults:
     env = JSSEnv(
         VAL_EXP_TYPE,
         agent_type=DEC_TYPE,
@@ -316,6 +350,7 @@ def eval_agent_benchmark(
     seed = get_relevant_seed(ROOT_RNG_SEEDS)
     _obs, _ = env.reset(seed=seed)
 
+    num_episodes = len(seeds)
     for episode_num in range(num_episodes):
         if episode_num != 0:
             _obs, _ = env.reset()
@@ -348,7 +383,15 @@ def eval_agent_benchmark(
             episode_num=(episode_num + 1),
         )
 
-    mean_episode_reward = np.mean(episodes_cum_rewards)
+    seeds_used = env.seeds_used
+    mean_episode_reward = cast(float, np.mean(episodes_cum_rewards))
+    std_episode_reward = cast(float, np.std(episodes_cum_rewards))
+    results: TestResults = TestResults(
+        seeds=seeds_used,
+        rewards=episodes_cum_rewards,
+        rewards_mean=mean_episode_reward,
+        rewards_std=std_episode_reward,
+    )
     print(f'[BENCHMARK] Rewards for {num_episodes} episodes: \n\t{episodes_cum_rewards}')
     print(
         f'[BENCHMARK]: Cycle Time = {env.cycle_time}, Utilisation = {env.sim_utilisation:.4%}'
@@ -356,6 +399,8 @@ def eval_agent_benchmark(
     print(
         f'[BENCHMARK] Mean reward: {mean_episode_reward:.4f} - Num episodes: {num_episodes}'
     )
+
+    return results
 
 
 def benchmark() -> None:
@@ -382,6 +427,20 @@ def benchmark() -> None:
     )
 
 
+def run_agent() -> TestResults:
+    results_agent = eval_agent_policy(seeds=ROOT_RNG_SEEDS, sim_randomise_reset=False)
+    export_results(results_agent, 'results_agent')
+
+    return results_agent
+
+
+def run_benchmark() -> TestResults:
+    results_bench = eval_agent_benchmark(seeds=ROOT_RNG_SEEDS, sim_randomise_reset=False)
+    export_results(results_bench, 'results_benchmark')
+
+    return results_bench
+
+
 def main() -> None:
     warnings.filterwarnings(
         'ignore',
@@ -390,17 +449,22 @@ def main() -> None:
     )
     t1 = time.perf_counter()
     if TEST_PERFORM_AGENT:
-        eval_agent_policy(
-            num_episodes=TEST_NUM_EPISODES, seeds=ROOT_RNG_SEEDS, sim_randomise_reset=False
-        )
+        # eval_agent_policy(
+        #     num_episodes=TEST_NUM_EPISODES, seeds=ROOT_RNG_SEEDS, sim_randomise_reset=False
+        # )
+        results_agent = run_agent()
     print('--------------------------------------------------------------------')
     if TEST_PERFORM_BENCHMARK:
-        eval_agent_benchmark(
-            num_episodes=TEST_NUM_EPISODES, seeds=ROOT_RNG_SEEDS, sim_randomise_reset=False
-        )
+        # eval_agent_benchmark(
+        #     num_episodes=TEST_NUM_EPISODES, seeds=ROOT_RNG_SEEDS, sim_randomise_reset=False
+        # )
+        results_bench = run_benchmark()
     t2 = time.perf_counter()
     dur = t2 - t1
     print(f'Duration for run: {dur:.4f} sec')
+    print('######## Results of run ######## ')
+    print('Agent: ', results_agent)
+    print('Benchmark: ', results_bench)
 
 
 if __name__ == '__main__':

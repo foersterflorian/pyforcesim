@@ -411,6 +411,14 @@ class ConfTensorboardFiles:
     exp_folder: str
 
 
+# ** test results
+class TestResults(TypedDict):
+    seeds: list[int | None]
+    rewards: list[float]
+    rewards_mean: float
+    rewards_std: float
+
+
 # ** database
 PandasDateColParseInfo: TypeAlias = dict[str, dict[str, bool]]
 PandasDatetimeCols: TypeAlias = list[str]
