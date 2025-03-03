@@ -26,13 +26,14 @@ PORT: Final[int] = 6006
 
 
 def start_tensorboard(
+    port: int,
     expose_network: bool = False,
 ) -> None:
     command_parts: list[str] = [
         'pdm run',
         'tensorboard',
         f'--logdir="{LOG_DIR}"',
-        f'--port={PORT}',
+        f'--port={port}',
     ]
     if expose_network:
         command_parts.append('--bind_all')
@@ -58,6 +59,13 @@ def main() -> None:
         action='store_true',
     )
     parser.add_argument(
+        '-p',
+        '--port',
+        help='expose TensorBoard port to network',
+        type=int,
+        default=PORT,
+    )
+    parser.add_argument(
         '-e',
         '--expose',
         help='expose TensorBoard port to network',
@@ -74,7 +82,7 @@ def main() -> None:
         expose_network = True
 
     try:
-        start_tensorboard(expose_network)
+        start_tensorboard(args.port, expose_network)
     except KeyboardInterrupt:
         print('KeyboardInterrupt: Tensorboard host stopped.')
 
