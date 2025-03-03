@@ -113,6 +113,9 @@ def export_gantt_chart(
     # use last seed: at this point VecEnv already reset, thus new seed is
     # set for the next run
     seed = env.last_seed if env.last_seed is not None else 'n.a.'
+    if is_benchmark:
+        seed = env.seed if env.seed is not None else 'n.a.'
+
     gantt_chart = env.last_gantt_chart
     # ** KPIs
     if gantt_chart is None:
@@ -189,6 +192,8 @@ def export_dbs(
     # use last seed: at this point VecEnv already reset, thus new seed is
     # set for the next run
     seed = env.last_seed if env.last_seed is not None else 'n.a.'
+    if is_benchmark:
+        seed = env.seed if env.seed is not None else 'n.a.'
     filename_base = f'{ALGO_TYPE}_{TIMESTEPS}_Episode_{episode_num}_Seed_{seed}'
     filename_job_db = f'{filename_base}-job-db'
     filename_op_db = f'{filename_base}-op-db'
@@ -448,23 +453,21 @@ def main() -> None:
         message=r'^[\s]*.*to get variables from other wrappers is deprecated.*$',
     )
     t1 = time.perf_counter()
+    results_agent: TestResults | None = None
+    results_bench: TestResults | None = None
     if TEST_PERFORM_AGENT:
-        # eval_agent_policy(
-        #     num_episodes=TEST_NUM_EPISODES, seeds=ROOT_RNG_SEEDS, sim_randomise_reset=False
-        # )
         results_agent = run_agent()
     print('--------------------------------------------------------------------')
     if TEST_PERFORM_BENCHMARK:
-        # eval_agent_benchmark(
-        #     num_episodes=TEST_NUM_EPISODES, seeds=ROOT_RNG_SEEDS, sim_randomise_reset=False
-        # )
         results_bench = run_benchmark()
     t2 = time.perf_counter()
     dur = t2 - t1
     print(f'Duration for run: {dur:.4f} sec')
     print('######## Results of run ######## ')
-    print('Agent: ', results_agent)
-    print('Benchmark: ', results_bench)
+    if results_agent is not None:
+        print('Agent: ', results_agent)
+    if results_bench is not None:
+        print('Benchmark: ', results_bench)
 
 
 if __name__ == '__main__':
