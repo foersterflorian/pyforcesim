@@ -243,8 +243,9 @@ def _parse_train_cfg(cfg: dict[str, Any]) -> ConfTrain:
     eval = _parse_int_sequence(eval, param='train-eval', mandatory=True)
     train_model_seeds = ConfTrainModelSeeds(rng=rng, eval=eval)
     # train.model.arch
+    batch_size = cast(int, cfg['train']['model']['arch']['batch_size'])
     sb3_arch = cast(SB3ActorCriticNetworkArch, cfg['train']['model']['arch']['sb3_arch'])
-    train_model_arch = ConfTrainModelArch(sb3_arch=sb3_arch)
+    train_model_arch = ConfTrainModelArch(batch_size=batch_size, sb3_arch=sb3_arch)
     # train.model
     train_model = ConfTrainModel(
         inputs=train_model_inputs, seeds=train_model_seeds, arch=train_model_arch
@@ -376,6 +377,7 @@ NORMALISE_REWARDS: Final[bool] = CFG.train.model.inputs.normalise_rew
 RNG_SEEDS: Final[tuple[int, ...] | None] = CFG.train.model.seeds.rng
 EVAL_SEEDS: Final[tuple[int, ...]] = CFG.train.model.seeds.eval
 # ** model architecture
+BATCH_SIZE: Final[int] = CFG.train.model.arch.batch_size
 net_arch = CFG.train.model.arch.sb3_arch
 POLICY_KWARGS: Final[SB3PolicyArgs] = {'net_arch': net_arch}
 # ** runs

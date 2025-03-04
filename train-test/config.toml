@@ -25,15 +25,15 @@ adaption_min_lower_bound = 0.0 # in hours -- minimum lower bound if slack is ada
 [lib.gym_env]
 sim_dur_weeks = 39 # 39
 buffer_size = 20
-job_pool_size_min = 5  # >1: use batching with shuffling
-job_pool_size_max = 5  # >1: use batching with shuffling
+job_pool_size_min = 1  # >1: use batching with shuffling
+job_pool_size_max = 10  # >1: use batching with shuffling
 dispatcher_seq_rule = 'EDD'
 dispatcher_alloc_rule = 'LOAD_TIME_REMAINING'
 
 [lib.gym_env.WIP]
 factor_WIP = nan # nan: do not apply
-use_WIP_targets = true # use linearly generated WIP-levels from table "WIP_targets"
-WIP_relative_targets = [0.35,] # ignored if "use_WIP_targets" = true
+use_WIP_targets = false # use linearly generated WIP-levels from table "WIP_targets"
+WIP_relative_targets = [2.75, 3.875, 5.0] # ignored if "use_WIP_targets" = true
 # [0.5, 3, 6]
 # [0.5,]
 # [1.5, 0.5, 2.5, 5, 3.5]
@@ -64,7 +64,7 @@ model_name = 'PPO_mask'
 filename_pretrained_model = '2025-01-17--15-36-17_pyf_sim_PPO_mask_TS-1310720'
 
 [train.experiment]
-exp_number = 10
+exp_number = 13
 env_structure = '1-2-3'
 job_generation_method = 'VarIdeal'
 feedback_mechanism = 'Slack'
@@ -78,11 +78,12 @@ rng = nan # nan: use random state
 eval = [1, 42, 100, 300, 427]
 
 [train.model.arch]
-sb3_arch = {pi = [128, 64], vf = [128, 64]}
+batch_size = 1024
+sb3_arch = {pi = [128, 96, 64, 32, 32], vf = [128, 96, 64, 32, 32]}
 
 [train.runs]
 ts_till_update = 2048
-total_updates = 10_000
+total_updates = 100_000
 updates_till_eval = 2
 updates_till_savepoint = 16
 num_eval_episodes = 1 # based upon number of eval seeds
@@ -97,21 +98,11 @@ show_progressbar = false
 
 [test]
 use_train_config = false # check removal
-seeds = [42, 100]
+seeds = [1, 42, 100, 300, 427]
 
 [test.files]
-target_folder = '2025-02-26-09__1-2-3__VarIdeal__Slack'
-filename_target_model = '2025-02-27--06-21-51_pyf_sim_PPO_mask_TS-20480001'
-# target_folder = '2025-02-24-06__1-2-3__VarIdeal__Slack'
-# filename_target_model = '2025-02-24--06-00-00_pyf_sim_PPO_mask_TS-20480001'
-# target_folder = '2025-02-24-05__1-2-3__VarIdeal__Slack'
-# filename_target_model = '2025-02-24--00-00-00_pyf_sim_PPO_mask_TS-20480001'
-# target_folder = '2025-02-21-02__1-2-3__VarIdeal__Slack'
-# filename_target_model = '2025-02-22--00-00-00_pyf_sim_PPO_mask_TS-20480001'
-# target_folder = '2025-02-20-01__1-2-3__VarIdeal__Slack'
-# filename_target_model = '2025-02-21--06-44-31_pyf_sim_PPO_mask_TS-20480001'
-# target_folder = '2025-02-18-01__1-2-3__VarIdeal__Slack'
-# filename_target_model = '2025-02-19--02-55-18_pyf_sim_PPO_mask_TS-20480001'
+target_folder = '2025-03-01-10__1-2-3__VarIdeal__Slack'
+filename_target_model = '2025-03-01--12-43-09_pyf_sim_PPO_mask_TS-20480001'
 
 [test.inputs]
 normalise_obs = true
@@ -126,6 +117,4 @@ perform_benchmark = true
 use_train_config = true
 
 [tensorboard.files]
-# exp_folder = '2025-02-24-05__1-2-3__VarIdeal__Slack'
 exp_folder = '2025-02-20-01__1-2-3__VarIdeal__Slack'
-# exp_folder = '2025-02-18-01__1-2-3__VarIdeal__Slack'

@@ -343,6 +343,7 @@ class ConfTrainModelSeeds:
 
 @dataclass(kw_only=True)
 class ConfTrainModelArch:
+    batch_size: int
     sb3_arch: SB3ActorCriticNetworkArch
 
 

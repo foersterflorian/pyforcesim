@@ -20,6 +20,7 @@ import sb3_monkeypatch
 from pyforcesim import common
 from pyforcesim.config import (
     BASE_FOLDER,
+    BATCH_SIZE,
     CONTINUE_LEARNING,
     DEC_TYPE,
     EVAL_FREQ,
@@ -369,6 +370,7 @@ def train(
         model = MaskablePPO(
             'MlpPolicy',
             env,
+            batch_size=BATCH_SIZE,
             verbose=1,
             tensorboard_log=str(tensorboard_path),
             seed=seed,
