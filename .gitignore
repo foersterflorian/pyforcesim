@@ -21,6 +21,7 @@ models/
 
 # specific scripts
 scripts/connect_WS.sh
+scripts/copy_results.sh
 tb_test.py
 
 # temp files and logs
