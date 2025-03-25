@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Iterator, Sequence
 from dataclasses import asdict
 from datetime import timedelta as Timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, cast
 
 import gymnasium as gym
@@ -11,6 +12,7 @@ import numpy as np
 import numpy.typing as npt
 from pandas import DataFrame
 
+from pyforcesim import common
 from pyforcesim import datetime as pyf_dt
 from pyforcesim.constants import (
     CFG_ALPHA,
@@ -165,6 +167,7 @@ class JSSEnv(gym.Env):
         sim_check_agent_feasibility: bool = True,
         builder_func_family: BuilderFuncFamilies = BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
         seed_layout: int | None = DEFAULT_SEED,
+        save_states_actions: bool = False,
     ) -> None:
         super().__init__()
         BUILDER_FUNC_WIP_CFG: Final[EnvBuilderAdditionalConfig] = (
@@ -305,6 +308,8 @@ class JSSEnv(gym.Env):
         # self.action_space.sample = self.random_action  # type: ignore
         self.terminated: bool = False
         self.truncated: bool = False
+
+        # saving state and actions
 
         # process control
         self.gantt_chart_on_termination = gantt_chart_on_termination
@@ -541,3 +546,36 @@ class JSSEnv(gym.Env):
 
     def test_on_callback(self) -> None:
         print('CALL FROM JSSEnv')
+
+
+def save_batches(
+    path: Path,
+    batch_size: int,
+    include_timestamp: bool = False,
+) -> Generator[None, npt.NDArray, None]:
+    assert path.exists(), 'path for saving batches not existing'
+    path = path.resolve()
+    save_path = common.prepare_save_paths(
+        str(path),
+        'states_actions',
+        None,
+        None,
+        create_folder=True,
+    )
+    # send observation, send action
+    batch: list[npt.NDArray[np.float32]] = []
+    counter: int = 1
+    while True:
+        obs = yield None
+        action = yield None
+        obs_act = np.concatenate((action, obs), dtype=np.float32)
+        batch.append(obs_act)
+
+        if len(batch) == batch_size:
+            filename: str = f'obs-act_batch-{counter}_batch-size-{batch_size}'
+            pth_batch = common.prepare_save_paths(
+                str(save_path), None, filename, '.npz', include_timestamp=include_timestamp
+            )
+            np.savez_compressed(pth_batch, *batch)
+            counter += 1
+            batch = []
