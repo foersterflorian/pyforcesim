@@ -202,7 +202,12 @@ def _parse_train_cfg(cfg: dict[str, Any]) -> ConfTrain:
         n_procs = None
     else:
         n_procs = int(n_procs)
-    train_system = ConfTrainSystem(multiprocessing=use_mp, number_processes=n_procs)
+    save_state_actions = cast(bool, cfg['train']['system']['save_state_actions'])
+    train_system = ConfTrainSystem(
+        multiprocessing=use_mp,
+        number_processes=n_procs,
+        save_state_actions=save_state_actions,
+    )
     # train.files
     overwrite_folders = cast(bool, cfg['train']['files']['overwrite_folders'])
     continue_learning = cast(bool, cfg['train']['files']['continue_learning'])
@@ -349,6 +354,7 @@ CFG: Final[Conf] = parse_cfg(_cfg_raw)
 # ** system
 USE_MULTIPROCESSING: Final[bool] = CFG.train.system.multiprocessing
 NUM_PROCS: Final[int | None] = CFG.train.system.number_processes
+SAVE_STATE_ACTIONS: Final[bool] = CFG.train.system.save_state_actions
 # ** files
 OVERWRITE_FOLDERS: Final[bool] = CFG.train.files.overwrite_folders
 CONTINUE_LEARNING: Final[bool] = CFG.train.files.continue_learning

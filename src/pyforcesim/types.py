@@ -309,6 +309,7 @@ class ConfTrain:
 class ConfTrainSystem:
     multiprocessing: bool
     number_processes: int | None
+    save_state_actions: bool
 
 
 @dataclass(kw_only=True)

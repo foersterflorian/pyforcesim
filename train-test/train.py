@@ -40,6 +40,7 @@ from pyforcesim.config import (
     RANDOMISE_RESET,
     REWARD_THRESHOLD,
     RNG_SEEDS,
+    SAVE_STATE_ACTIONS,
     SHOW_PROGRESSBAR,
     STEPS_TILL_SAVE,
     STEPS_TILL_UPDATE,
@@ -163,6 +164,7 @@ def make_subproc_env(
     seeds: Sequence[int] | None = None,
     verify_env: bool = True,
     sim_randomise_reset: bool = False,
+    states_actions_path: Path | None = None,
 ) -> Any:
     sim_check_agent_feasibility: bool = True
     if verify_env:
@@ -176,6 +178,7 @@ def make_subproc_env(
         sim_randomise_reset=sim_randomise_reset,
         sim_check_agent_feasibility=sim_check_agent_feasibility,
         builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
+        states_actions_path=states_actions_path,
     )
 
     if verify_env:
@@ -189,6 +192,7 @@ def make_subproc_env(
             sim_randomise_reset=sim_randomise_reset,
             sim_check_agent_feasibility=sim_check_agent_feasibility,
             builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
+            states_actions_path=states_actions_path,
         )
 
     def make_multi_env(ident: int, change_seeds: bool) -> Callable[[], Monitor]:
@@ -241,6 +245,7 @@ def make_env(
     seeds: Sequence[int] | None = None,
     verify_env: bool = True,
     sim_randomise_reset: bool = False,
+    states_actions_path: Path | None = None,
 ) -> Any:
     sim_check_agent_feasibility: bool = True
     if verify_env:
@@ -254,6 +259,7 @@ def make_env(
         sim_randomise_reset=sim_randomise_reset,
         sim_check_agent_feasibility=sim_check_agent_feasibility,
         builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
+        states_actions_path=states_actions_path,
     )
 
     if verify_env:
@@ -268,6 +274,7 @@ def make_env(
             sim_randomise_reset=sim_randomise_reset,
             sim_check_agent_feasibility=sim_check_agent_feasibility,
             builder_func_family=BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
+            states_actions_path=states_actions_path,
         )
     tb_path: str | None = None
     if tensorboard_path is not None:
@@ -291,10 +298,14 @@ def train(
     sim_randomise_reset: bool = False,
     use_mp: bool = False,
     num_procs: int | None = None,
+    save_states_actions: bool = False,
 ) -> None:
     _ = prepare_base_folder(BASE_FOLDER, OVERWRITE_FOLDERS)
     tensorboard_path = prepare_tb_path(BASE_FOLDER, FOLDER_TB, OVERWRITE_FOLDERS)
     model_folder = prepare_model_path(BASE_FOLDER, FOLDER_MODEL_SAVEPOINTS, OVERWRITE_FOLDERS)
+    state_action_folder: Path | None = None
+    if save_states_actions:
+        state_action_folder = Path(BASE_FOLDER).resolve()
     tensorboard_command = f'pdm run tensorboard --logdir="{tensorboard_path}"'
     print('tensorboard command: ', tensorboard_command)
 
@@ -308,6 +319,7 @@ def train(
             normalise_rewards=normalise_rewards,
             seeds=seeds,
             sim_randomise_reset=sim_randomise_reset,
+            states_actions_path=state_action_folder,
         )
     else:
         env = make_env(
@@ -317,6 +329,7 @@ def train(
             normalise_rewards=normalise_rewards,
             seeds=seeds,
             sim_randomise_reset=sim_randomise_reset,
+            states_actions_path=state_action_folder,
         )
     # ** Checkpoint
     n_envs: int = 1
@@ -408,6 +421,7 @@ def main() -> None:
         sim_randomise_reset=RANDOMISE_RESET,
         use_mp=USE_MULTIPROCESSING,
         num_procs=NUM_PROCS,
+        save_states_actions=SAVE_STATE_ACTIONS,
     )
 
 

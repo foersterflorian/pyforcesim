@@ -167,7 +167,7 @@ class JSSEnv(gym.Env):
         sim_check_agent_feasibility: bool = True,
         builder_func_family: BuilderFuncFamilies = BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
         seed_layout: int | None = DEFAULT_SEED,
-        save_states_actions: bool = False,
+        states_actions_path: Path | None = None,
     ) -> None:
         super().__init__()
         BUILDER_FUNC_WIP_CFG: Final[EnvBuilderAdditionalConfig] = (
@@ -310,7 +310,10 @@ class JSSEnv(gym.Env):
         self.truncated: bool = False
 
         # saving state and actions
-
+        self.state_saver: Generator[None, npt.NDArray, None] | None = None
+        if states_actions_path is not None:
+            self.state_saver = save_batches(states_actions_path, batch_size=1024)
+            next(self.state_saver)
         # process control
         self.gantt_chart_on_termination = gantt_chart_on_termination
         # external properties to handle callbacks and termination actions
@@ -399,6 +402,10 @@ class JSSEnv(gym.Env):
         # ** Calculate Reward
         reward = self.agent.calc_reward()
 
+        # ** state saving
+        if self.state_saver is not None:
+            self.state_saver.send(np.array([action], dtype=np.float32))
+
         # ** Run till next action is needed
         # execute with provided action till next decision should be made
         while not self.agent.dispatching_signal:
@@ -431,6 +438,8 @@ class JSSEnv(gym.Env):
             self.terminated,
             self.truncated,
         )
+        if self.state_saver is not None:
+            self.state_saver.send(observation)
 
         return observation, reward, self.terminated, self.truncated, info
 
@@ -482,6 +491,9 @@ class JSSEnv(gym.Env):
         info = {}
 
         logger.info('Environment reset finished.')
+
+        if self.state_saver is not None:
+            self.state_saver.send(observation)
 
         return observation, info
 
@@ -557,7 +569,7 @@ def save_batches(
     path = path.resolve()
     save_path = common.prepare_save_paths(
         str(path),
-        'states_actions',
+        'states-actions',
         None,
         None,
         create_folder=True,
@@ -568,7 +580,7 @@ def save_batches(
     while True:
         obs = yield None
         action = yield None
-        obs_act = np.concatenate((action, obs), dtype=np.float32)
+        obs_act = np.concatenate((action, obs), axis=0, dtype=np.float32)
         batch.append(obs_act)
 
         if len(batch) == batch_size:
