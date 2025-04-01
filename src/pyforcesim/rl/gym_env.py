@@ -439,7 +439,10 @@ class JSSEnv(gym.Env):
             self.truncated,
         )
         if self.state_saver is not None:
-            self.state_saver.send(observation)
+            assert (
+                self.agent.feat_vec_raw is not None
+            ), 'tried to process non raw feature vector'
+            self.state_saver.send(self.agent.feat_vec_raw)
 
         return observation, reward, self.terminated, self.truncated, info
 
@@ -493,7 +496,10 @@ class JSSEnv(gym.Env):
         logger.info('Environment reset finished.')
 
         if self.state_saver is not None:
-            self.state_saver.send(observation)
+            assert (
+                self.agent.feat_vec_raw is not None
+            ), 'tried to process non raw feature vector'
+            self.state_saver.send(self.agent.feat_vec_raw)
 
         return observation, info
 

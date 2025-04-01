@@ -67,6 +67,7 @@ class Agent(Generic[S], ABC):
         self.cum_reward: float = 0.0
         # RL related properties
         self.feat_vec: npt.NDArray[np.float32] | None = None
+        self.feat_vec_raw: npt.NDArray[np.float32] | None = None
         # action chosen by RL agent
         self._action: int | None = None
         self._action_mask: npt.NDArray[np.bool_] = np.empty((1,), dtype=np.bool_)
@@ -520,6 +521,7 @@ class AllocationAgent(Agent['ProductionArea']):
 
         # concat job information
         res_info_arr_all = np.concatenate((res_info_arr_all, job_info_arr), dtype=np.float32)
+        self.feat_vec_raw = res_info_arr_all
         # action mask
         self.action_mask = np.array(action_mask, dtype=np.bool_)
 
@@ -917,7 +919,7 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
         feat_vec_len = num_q_slots * len(job_info)
         pad_len = feat_vec_len - len(job_data)
         job_info_arr = np.array(job_data, dtype=np.float32)
-        job_info_arr = np.pad(job_info_arr, (0, pad_len), constant_values=0)
+        job_info_arr_padded = np.pad(job_info_arr, (0, pad_len), constant_values=0)
         pad_len_actions = num_q_slots - num_jobs
         action_mask_arr = np.array(action_mask, dtype=np.bool_)
         self.action_mask = np.pad(
@@ -927,7 +929,8 @@ class SequencingAgent(Agent['LogicalQueue[Job]']):
         )
 
         # concat information
-        info_arr = np.concatenate((res_info_arr, job_info_arr), dtype=np.float32)
+        info_arr = np.concatenate((res_info_arr, job_info_arr_padded), dtype=np.float32)
+        self.feat_vec_raw = np.concatenate((res_info_arr, job_info_arr), dtype=np.float32)
 
         return info_arr
 
