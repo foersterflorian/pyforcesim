@@ -65,7 +65,7 @@ model_name = 'PPO_mask'
 filename_pretrained_model = '2025-01-17--15-36-17_pyf_sim_PPO_mask_TS-1310720'
 
 [train.experiment]
-exp_number = 21
+exp_number = 22
 env_structure = '1-2-3'
 job_generation_method = 'VarIdeal'
 feedback_mechanism = 'Slack'

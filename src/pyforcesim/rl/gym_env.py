@@ -438,6 +438,14 @@ class JSSEnv(gym.Env):
             self.terminated,
             self.truncated,
         )
+        # TODO: add check to not save obs/act if environment is terminated
+        assert self.agent.feat_vec_raw is not None
+        length_rfc = len(self.agent.feat_vec_raw)
+        if (length_rfc - 2) % 5 != 0:
+            raise RuntimeError(
+                f'Dubious feature vector with different size: \n{self.agent.feat_vec_raw}'
+            )
+
         if self.state_saver is not None:
             assert (
                 self.agent.feat_vec_raw is not None
@@ -586,6 +594,14 @@ def save_batches(
     while True:
         obs = yield None
         action = yield None
+
+        if len(action) > 1:
+            raise RuntimeError(f'Action with length greater than 1: \n{action}')
+        length_obs = len(obs)
+        # TODO add check to not include non-feasible obs/act-pairs
+        if (length_obs - 2) % 5 != 0:
+            raise RuntimeError(f'Dubious feature vector with different size: \n{obs}')
+
         obs_act = np.concatenate((action, obs), axis=0, dtype=np.float32)
         batch.append(obs_act)
 
