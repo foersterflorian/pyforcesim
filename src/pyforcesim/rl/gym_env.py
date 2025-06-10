@@ -439,18 +439,19 @@ class JSSEnv(gym.Env):
             self.truncated,
         )
         # TODO: add check to not save obs/act if environment is terminated
-        assert self.agent.feat_vec_raw is not None
-        length_rfc = len(self.agent.feat_vec_raw)
-        if (length_rfc - 2) % 5 != 0:
-            raise RuntimeError(
-                f'Dubious feature vector with different size: \n{self.agent.feat_vec_raw}'
-            )
-
-        if self.state_saver is not None:
+        # assert self.agent.feat_vec_raw is not None
+        # length_rfc = len(self.agent.feat_vec_raw)
+        # if (length_rfc - 2) % 5 != 0:
+        #     raise RuntimeError(
+        #         f'Dubious feature vector with different size: \n{self.agent.feat_vec_raw}'
+        #     )
+        if self.state_saver is not None and not (self.terminated or self.truncated):
             assert (
                 self.agent.feat_vec_raw is not None
-            ), 'tried to process non raw feature vector'
+            ), 'tried to process non-existent raw feature vector'
             self.state_saver.send(self.agent.feat_vec_raw)
+
+        # TODO postprocess of observation vector with compression through encoder
 
         return observation, reward, self.terminated, self.truncated, info
 
@@ -578,6 +579,8 @@ def save_batches(
     path: Path,
     batch_size: int,
     include_timestamp: bool = False,
+    num_features_machine: int = 2,
+    num_features_job: int = 5,
 ) -> Generator[None, npt.NDArray, None]:
     assert path.exists(), 'path for saving batches not existing'
     path = path.resolve()
@@ -595,12 +598,16 @@ def save_batches(
         obs = yield None
         action = yield None
 
-        if len(action) > 1:
+        if len(action) == 0:
+            raise RuntimeError(f'Action with length 0: \n{action}')
+        elif len(action) > 1:
             raise RuntimeError(f'Action with length greater than 1: \n{action}')
         length_obs = len(obs)
         # TODO add check to not include non-feasible obs/act-pairs
-        if (length_obs - 2) % 5 != 0:
-            raise RuntimeError(f'Dubious feature vector with different size: \n{obs}')
+        if (length_obs - num_features_machine) % num_features_job != 0:
+            raise RuntimeError(
+                f'Dubious feature vector with different size: shape={obs.shape}\n{obs}'
+            )
 
         obs_act = np.concatenate((action, obs), axis=0, dtype=np.float32)
         batch.append(obs_act)
@@ -613,3 +620,8 @@ def save_batches(
             np.savez_compressed(pth_batch, *batch)
             counter += 1
             batch = []
+
+
+def postprocess_observation(path_model_checkpoint: Path):
+    # needs to install LSTM package
+    ...
