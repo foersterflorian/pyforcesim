@@ -16,7 +16,7 @@ dependencies = [
     "gymnasium>=0.29.1",
     "typing-extensions>=4.12.2",
     "SQLAlchemy>=2.0.36",
-    "lstm-aenc @ file:///${PROJECT_ROOT}/packages/lstm_aenc-0.1.0-py3-none-any.whl",
+    "lstm-aenc @ file:///${PROJECT_ROOT}/packages/lstm_aenc-0.1.1-py3-none-any.whl",
 ]
 requires-python = ">=3.11"
 readme = "README.md"

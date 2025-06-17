@@ -8,8 +8,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, cast
 
 import gymnasium as gym
+import joblib
+import lstm_aenc
+import lstm_aenc.models
+import lstm_aenc.train
 import numpy as np
 import numpy.typing as npt
+import torch
 from pandas import DataFrame
 
 from pyforcesim import common
@@ -50,6 +55,7 @@ from pyforcesim.types import (
 
 if TYPE_CHECKING:
     from pandas import Timedelta as PDTimedelta
+    from sklearn.preprocessing import RobustScaler
 
     from pyforcesim.types import (
         EnvBuilderAdditionalConfig,
@@ -168,6 +174,7 @@ class JSSEnv(gym.Env):
         builder_func_family: BuilderFuncFamilies = BuilderFuncFamilies.SINGLE_PRODUCTION_AREA,
         seed_layout: int | None = DEFAULT_SEED,
         states_actions_path: Path | None = None,
+        obs_encoder_checkpoint: Path | None = None,
     ) -> None:
         super().__init__()
         BUILDER_FUNC_WIP_CFG: Final[EnvBuilderAdditionalConfig] = (
@@ -198,6 +205,10 @@ class JSSEnv(gym.Env):
         self.sequencing: bool = False
         if agent_type == AgentDecisionTypes.SEQ:
             self.sequencing = True
+
+        self.obs_postprocessor: ObsPostprocessor | None = None
+        if obs_encoder_checkpoint is not None:
+            self.obs_postprocessor = ObsPostprocessor(obs_encoder_checkpoint)
 
         self.builder_func = BUILDER_FUNCS[builder_func_family]
         self.builder_kw = asdict(self.exp_type)
@@ -237,7 +248,7 @@ class JSSEnv(gym.Env):
                 dtype=np.float32,
                 seed=self.seed,
             )
-        elif agent_type == AgentDecisionTypes.SEQ:
+        elif agent_type == AgentDecisionTypes.SEQ and self.obs_postprocessor is None:
             assert isinstance(
                 self.agent, agents.SequencingAgent
             ), 'tried SEQ setup for non-sequencing agent'
@@ -253,7 +264,6 @@ class JSSEnv(gym.Env):
 
             min_SGI = 0
             max_SGI = 100
-            # observation: N_machines * (res_sys_SGI, avail, WIP_time)
             machine_low = np.array([min_SGI, 0])
             machine_high = np.array([max_SGI, 1])
             # observation jobs:
@@ -293,12 +303,15 @@ class JSSEnv(gym.Env):
             low = np.append(machine_low, job_low)
             high = np.append(machine_high, job_high)
 
-            self.observation_space = gym.spaces.Box(
+            self.observation_space = gym.spaces.Box(  # type: ignore
                 low=low,
                 high=high,
                 dtype=np.float32,
                 seed=self.seed,
             )
+        elif agent_type == AgentDecisionTypes.SEQ and self.obs_postprocessor is not None:
+            # TODO: add difference with observation encoder
+            ...
         else:
             raise NotImplementedError('Other agent types not supported')
 
@@ -420,13 +433,18 @@ class JSSEnv(gym.Env):
 
             self.sim_env.step()
 
-        # Calculate Reward
-        # in agent class, not implemented yet
-        # call from here
-        # reward = self.agent.calc_reward()
-        observation = self.agent.feat_vec
-        if observation is None:
-            raise ValueError('No Observation in step!')
+        # post-processed information
+        observation: npt.NDArray[np.float32]
+        if self.obs_postprocessor is None:
+            assert (
+                self.agent.feat_vec is not None
+            ), 'tried to access non-existing feature vector'
+            observation = self.agent.feat_vec
+            if observation is None:
+                raise ValueError('No Observation in step!')
+        else:
+            # TODO add observation encoding
+            ...
 
         # additional info
         info = {}
@@ -455,7 +473,7 @@ class JSSEnv(gym.Env):
 
         return observation, reward, self.terminated, self.truncated, info
 
-    def reset(
+    def reset(  # type: ignore
         self,
         seed: int | None = None,
         options: dict[str, Any] | None = None,
@@ -622,6 +640,56 @@ def save_batches(
             batch = []
 
 
-def postprocess_observation(path_model_checkpoint: Path):
-    # needs to install LSTM package
-    ...
+class ObsPostprocessor:
+    __slots__ = (
+        'device',
+        'path_scaler',
+        'scaler',
+        'path_model_checkpoint',
+        'checkpoint',
+        'encoder',
+    )
+
+    def __init__(
+        self,
+        path_scaler: Path,
+        path_model_checkpoint: Path,
+    ) -> None:
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.path_scaler = path_scaler
+        logger.info('Loading scaler from file...')
+        self.scaler: RobustScaler = joblib.load(self.path_scaler)
+        assert isinstance(self.scaler, RobustScaler), 'scaler instance type unknown'
+        logger.info('Loaded scaler successfully.')
+
+        self.path_model_checkpoint = path_model_checkpoint
+        self.checkpoint = lstm_aenc.train.load_checkpoint(path_model_checkpoint)
+        self.encoder = lstm_aenc.models.Encoder.from_dump(self.checkpoint['model']['enc'])
+        self.encoder.to(self.device)
+        self.encoder.eval()
+
+    def process_obs(
+        self,
+        raw_obs: npt.NDArray[np.float32],
+    ) -> npt.NDArray[np.float32]:
+        """encodes raw observation sequences from a buffer to a fixed-length vector
+
+        Parameters
+        ----------
+        raw_obs : npt.NDArray[np.float32]
+            raw observations in shape (N, 5) where N is the sequence length
+
+        Returns
+        -------
+        npt.NDArray[np.float32]
+            encoded observation in shape (32,)
+        """
+
+        # test case: sequences with 5 features and differing lengths
+        scaled_obs = self.scaler.transform(raw_obs)  # (N, 5)
+        X = torch.from_numpy(scaled_obs).unsqueeze(0).to(self.device)  # (1, N, 5)
+
+        with torch.no_grad():
+            obs_enc = cast(torch.Tensor, self.encoder(X))
+
+        return obs_enc.squeeze().cpu().numpy()  # (32,)

@@ -5,7 +5,7 @@
 groups = ["default", "general", "notebooks", "rl", "tests"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:63b2bf22177d4ba5356ba60bc47999050e5f31f0361a90484940e1a59f48fab8"
+content_hash = "sha256:b24f22dff614e974c21b86c529dc377347a9f38837bf4d545b481ae6ff1bedf2"
 
 [[metadata.targets]]
 requires_python = ">=3.11"
@@ -1229,9 +1229,9 @@ files = [
 
 [[package]]
 name = "lstm-aenc"
-version = "0.1.0"
+version = "0.1.1"
 requires_python = ">=3.11"
-path = "./packages/lstm_aenc-0.1.0-py3-none-any.whl"
+path = "./packages/lstm_aenc-0.1.1-py3-none-any.whl"
 summary = "lightweight LSTM-Autoencoder package"
 groups = ["default"]
 dependencies = [
@@ -1241,7 +1241,7 @@ dependencies = [
     "torch>=2.6.0",
 ]
 files = [
-    {file = "lstm_aenc-0.1.0-py3-none-any.whl", hash = "sha256:cdef9c58da7d7155d66dd33162ba0028a0c35ed55f9978322257175555986dd4"},
+    {file = "lstm_aenc-0.1.1-py3-none-any.whl", hash = "sha256:bd2989541b86b4ad2ac3482ce215bfec87ade772f22017d72a5afd90febe8c7b"},
 ]
 
 [[package]]
