@@ -24,6 +24,12 @@ scripts/connect_WS.sh
 scripts/copy_results.sh
 tb_test.py
 
+# user-defined local builds
+packages/
+
+# user model weights
+weights/
+
 # temp files and logs
 file_system_backend/
 logs*
